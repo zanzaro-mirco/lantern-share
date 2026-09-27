@@ -1,0 +1,82 @@
+name: Verify Lantern PoC
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  desktop:
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: JVM tests and desktop application
+        shell: bash
+        run: bash ./gradlew :protocol:jvmTest :connectivity:jvmTest :desktopApp:classes :desktopApp:createDistributable --console=plain
+      - name: Native Keychain integration in disposable macOS runner
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          LANTERN_DISPOSABLE_KEYCHAIN: 'true'
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/lantern-test.keychain-db"
+          password="$(openssl rand -hex 32)"
+          original_default="$(security default-keychain -d user | xargs)"
+          cleanup() {
+            security default-keychain -d user -s "$original_default"
+            security list-keychains -d user -s "$original_default"
+            security delete-keychain "$keychain"
+          }
+          trap cleanup EXIT
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
+          unset password
+          bash ./gradlew -PmacKeychain=true :connectivity:jvmTest --tests '*MacKeychainNativeTest' --console=plain
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-${{ matrix.os }}
+          path: '**/build/reports/tests/'
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - run: bash ./gradlew -Pandroid=true :androidApp:assembleDebug :androidApp:lintDebug --console=plain
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.3'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Shared iOS framework and protocol tests
+        run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 :protocol:iosSimulatorArm64Test --console=plain
+      - name: Generate Xcode project
+        run: |
+          git clone --depth 1 --branch 2.43.0 https://github.com/yonaskolb/XcodeGen.git "$RUNNER_TEMP/XcodeGen"
+          swift run --package-path "$RUNNER_TEMP/XcodeGen" xcodegen generate --spec iosApp/project.yml --project iosApp
+      - name: Compile unsigned simulator app
+        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

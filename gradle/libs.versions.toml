@@ -1,0 +1,29 @@
+[versions]
+kotlin = "2.1.21"
+compose = "1.8.2"
+agp = "8.7.2"
+coroutines = "1.10.2"
+serialization = "1.8.1"
+sqldelight = "2.1.0"
+jmdns = "3.6.1"
+bouncycastle = "1.83"
+activity = "1.10.1"
+
+[libraries]
+coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+serialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+sqlite = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+sqliteAndroid = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+jmdns = { module = "org.jmdns:jmdns", version.ref = "jmdns" }
+bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
+activity = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+
+[plugins]
+multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+compose = { id = "org.jetbrains.compose", version.ref = "compose" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }

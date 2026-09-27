@@ -1,0 +1,31 @@
+CREATE TABLE trusted (
+  id TEXT NOT NULL PRIMARY KEY,
+  admission TEXT NOT NULL
+);
+CREATE TABLE setting (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE message (
+  id TEXT NOT NULL PRIMARY KEY,
+  sender TEXT NOT NULL,
+  session TEXT NOT NULL,
+  body TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  received INTEGER NOT NULL DEFAULT 0
+);
+peers:
+SELECT * FROM trusted;
+trust:
+INSERT OR REPLACE INTO trusted VALUES (?, ?);
+untrust:
+DELETE FROM trusted WHERE id = ?;
+getSetting:
+SELECT value FROM setting WHERE key = ?;
+putSetting:
+INSERT OR REPLACE INTO setting VALUES (?, ?);
+getMessage:
+SELECT * FROM message WHERE id = ?;
+insertMessage:
+INSERT INTO message(id, sender, session, body, signature) VALUES (?, ?, ?, ?, ?);
+history:
+SELECT * FROM message ORDER BY rowid DESC LIMIT 200;
+ack:
+UPDATE message SET received = 1 WHERE id = ?;
