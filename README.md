@@ -104,6 +104,6 @@ Il [contratto PoC](docs/PROTOCOLLO_POC.md) precede e descrive l'implementazione 
 
 I test integrativi usano chiavi nuove, filesystem/SQLite reali, TLS reale e solo discovery simulata. Non equivalgono a prove multicast, hardware mobile o installazione Mac. Rapporti HTML: `protocol/build/reports/tests/jvmTest/` e `connectivity/build/reports/tests/jvmTest/`.
 
-La CI è eseguita nel repository privato [lantern-share](https://github.com/zanzaro-mirco/lantern-share/actions). Il commit `af69849` ha superato tutti i job: Android, desktop Windows/Linux/Mac Intel/ARM64 e build dell'app iOS precedente alla nuova identità. Gli esiti dell'incremento corrente sono in STATO_SVILUPPO.md. Sono conservati rapporti di test; nessuna release è pubblicata.
+La CI è eseguita nel repository privato [lantern-share](https://github.com/zanzaro-mirco/lantern-share/actions). Il commit `6aa051f` ha superato tutti i job: Android, desktop Windows/Linux/Mac Intel/ARM64, build iOS e cinque XCTest dell'identità sul Keychain reale del simulatore. Dettagli e limiti sono in STATO_SVILUPPO.md. Sono conservati rapporti di test; nessuna release è pubblicata.
 
 Procedura e scheda risultati: [docs/COLLAUDO.md](docs/COLLAUDO.md).

@@ -1,6 +1,6 @@
 # Stato sviluppo — 28 settembre 2026
 
-## CI remota e identità iOS — incremento in verifica
+## CI remota e identità iOS — incremento verificato in simulatore
 
 Prima CI reale, commit `e348fca`: **desktop Windows, Linux, Mac ARM64 e Mac Intel riusciti**, incluse build con runtime e test nativi Portachiavi Mac. Il framework Kotlin iOS e i test di protocollo sono arrivati a completamento; l'app Swift si è fermata per runtime iOS 18.4 assente. Android si è fermato nel setup dell'SDK per il pacchetto legacy `tools`. Questi risultati aggiornano i precedenti resoconti che dichiaravano la CI non ancora eseguita. Non sono prove su dispositivi fisici.
 
@@ -12,7 +12,22 @@ Implementato l'adattatore Swift `LanternIdentity`: chiave P-256, certificato aut
 
 La prima compilazione nativa ha rilevato un difetto di Swift Certificates 1.6.0 (`kSecAttrKeyTypeECDSA` non disponibile su iOS). Selezionata la release ufficiale 1.7.0 che usa `kSecAttrKeyTypeECSECPrimeRandom`, con Swift tools 5.9; lock e fonti aggiornati. Rimossi DocC/SymbolKit, non richiesti dalla nuova versione. Nessuna patch locale alla libreria e nessun bypass di sicurezza.
 
-**In verifica al momento di questo aggiornamento:** build Swift e test del nuovo adattatore. iOS non ha ancora listener/connessione TLS, associazione, messaggistica o repository SQLite. Il prossimo incremento è collegare Network.framework al protocollo condiviso e introdurre la persistenza iOS, mantenendo esplicito lo stato non autorizzato prima della doppia conferma. Fase 0 aperta.
+La [CI 36394483320](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36394483320) ha compilato con successo l'app iOS con il nuovo adattatore e lock Swift; tutti i job desktop/Android sono passati. Il bundle XCTest si è fermato al link prima di eseguire i test, cercando un framework Crypto generato ma assente. Rimossa la dipendenza package duplicata dal target di test ospitato dall'app nel commit `98502d1`.
+
+La [CI 36432550052](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36432550052), commit `5505384`, ha superato il link ed eseguito cinque XCTest, tutti falliti per `errSecMissingEntitlement` (-34018) sull'host unsigned. Aggiunti anche il requisito plist di avvio Compose e l'isolamento dei flag Kotlin al target app. Il commit `6aa051f` configura entitlement e firma locale ad hoc esclusivamente per il simulatore, senza credenziali Apple Developer. Nessun test viene saltato per mascherare il rifiuto del Keychain.
+
+**Esito finale:** [CI 36433898550](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36433898550), commit `6aa051f`, interamente riuscita: Android, desktop Windows/Linux/Mac Intel/Mac ARM64 e iOS. **Cinque XCTest eseguiti, zero fallimenti**, sul simulatore iPhone 16 / iOS 18.4 con Xcode 16.3. Verificati riapertura con certificato/ID invariati, firme con chiave ordinaria e SecIdentity destinata a TLS, rifiuto del testo alterato, rifiuto di chiave/certificato mancanti e pin cambiato, attributi Keychain locali e legati allo sblocco. Il precedente errore di link e il rifiuto degli entitlement sono risolti. Il bundle `.xcresult` è conservato nell'artefatto `ios-verification` della CI.
+
+Comando nativo effettivamente riuscito (ID del simulatore creato dal workflow):
+
+```sh
+xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug \
+  -destination "platform=iOS Simulator,id=$device_id" \
+  -resultBundlePath build/ios-identity-tests.xcresult \
+  -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
+```
+
+**Non verificato su dispositivi fisici:** iPhone reale, protezione con dispositivo bloccato, riavvio completo del dispositivo, aggiornamento/reinstallazione e prove LAN tra piattaforme. Il test degli attributi non è una prova hardware di blocco/sblocco. iOS non ha ancora listener/connessione TLS, associazione, messaggistica o repository SQLite. Il prossimo incremento è collegare Network.framework al protocollo condiviso e introdurre la persistenza iOS, mantenendo esplicito lo stato non autorizzato prima della doppia conferma. Fase 0 aperta; nessuna release pubblicata e nessuna credenziale di firma reale utilizzata.
 
 ## Incremento Portachiavi macOS — aggiornamento più recente
 
