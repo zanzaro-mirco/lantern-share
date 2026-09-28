@@ -1,5 +1,7 @@
 # Stato sviluppo — 28 settembre 2026
 
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. L'incremento identità iOS è concluso in simulatore; il prossimo passo circoscritto consigliato è persistenza SQLDelight iOS e nome dispositivo persistente, prima di trasporto/associazione. Le sezioni sotto la verifica iOS sono resoconti storici: non reinterpretare i loro vecchi limiti come situazione attuale.
+
 ## CI remota e identità iOS — incremento verificato in simulatore
 
 Prima CI reale, commit `e348fca`: **desktop Windows, Linux, Mac ARM64 e Mac Intel riusciti**, incluse build con runtime e test nativi Portachiavi Mac. Il framework Kotlin iOS e i test di protocollo sono arrivati a completamento; l'app Swift si è fermata per runtime iOS 18.4 assente. Android si è fermato nel setup dell'SDK per il pacchetto legacy `tools`. Questi risultati aggiornano i precedenti resoconti che dichiaravano la CI non ancora eseguita. Non sono prove su dispositivi fisici.
@@ -29,7 +31,7 @@ xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debu
 
 **Non verificato su dispositivi fisici:** iPhone reale, protezione con dispositivo bloccato, riavvio completo del dispositivo, aggiornamento/reinstallazione e prove LAN tra piattaforme. Il test degli attributi non è una prova hardware di blocco/sblocco. iOS non ha ancora listener/connessione TLS, associazione, messaggistica o repository SQLite. Il prossimo incremento è collegare Network.framework al protocollo condiviso e introdurre la persistenza iOS, mantenendo esplicito lo stato non autorizzato prima della doppia conferma. Fase 0 aperta; nessuna release pubblicata e nessuna credenziale di firma reale utilizzata.
 
-## Incremento Portachiavi macOS — aggiornamento più recente
+## Storico — incremento Portachiavi macOS precedente all'identità iOS
 
 Implementato l'adattatore desktop `MacKeychainIdentityStore` usando il provider Apple del JDK 17, senza cambiare versioni o lock. L'ingresso Mac lo seleziona automaticamente; Windows/Linux mantengono PKCS#12. La migrazione importa chiave e certificato originali, preservando ID e associazioni; mantiene il backup cifrato e azzera il buffer applicativo della passphrase. Dopo l'importazione riapre il provider e verifica pin e firma.
 

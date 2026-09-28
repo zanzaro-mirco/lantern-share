@@ -2,6 +2,8 @@
 
 Documento operativo di Lantern, complementare a `PIANO_SVILUPPO.md`. Non sostituisce la specifica né amplia la roadmap. Revisione iniziale: 27 settembre 2026.
 
+Per le nuove chat, seguire `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`: incrementi piccoli, letture mirate, verifiche proporzionate e nessun polling CI ripetitivo. I risultati storici qui riportati vanno letti insieme alla sintesi corrente di `STATO_SVILUPPO.md`.
+
 ## 1. Ruolo e responsabilità
 
 Opero nel ruolo di sviluppatore Kotlin/KMP e software architect senior. Per ogni incremento devo produrre codice comprensibile, scelte motivate ed evidenze riproducibili. La qualità si valuta su proprietà osservabili del software.
