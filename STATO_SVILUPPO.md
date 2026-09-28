@@ -1,8 +1,16 @@
 # Stato sviluppo — 28 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate; la persistenza nativa e la UI attendono la verifica CI su simulatore descritta sotto. Il prossimo incremento, dopo tale esito, è il trasporto TLS iOS con pinning, senza anticipare l'associazione. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate e verificate in CI su simulatore. Un primo collaudo fisico Android ↔ Windows ha confermato la scoperta ma rilevato un errore di firma TLS Android; la correzione compila ed è in attesa di riprova sul telefono. Solo dopo tale riprova il prossimo incremento torna a essere il trasporto TLS iOS con pinning. Le sezioni storiche non descrivono lo stato corrente.
 
-## Persistenza SQLDelight iOS — implementata, verifica nativa pendente
+## Correzione firma TLS Android — implementata, collaudo fisico pendente
+
+Nel primo collaudo reale Android ↔ Windows entrambi i dispositivi si sono scoperti sulla LAN, ma l'associazione si è fermata prima del codice di confronto con `SSLHandshakeException`. Il log reale Android ha identificato `KeyStoreException: Incompatible digest` durante `CryptoUpcalls.ecSignDigestWithPrivateKey`: la chiave non esportabile era autorizzata per `SHA-256`, mentre Conscrypt TLS 1.3 usa `NONEwithECDSA` su un digest già calcolato per `CertificateVerify`.
+
+La generazione della chiave autorizza ora sia `SHA-256` sia `NONE`, senza modificare protocollo, pinning o formato dell'identità. All'apertura viene eseguita una firma di compatibilità senza contenuti; una vecchia chiave incompatibile produce un messaggio esplicito e non viene sostituita silenziosamente. Poiché le autorizzazioni Android Keystore sono immutabili, sul dispositivo di prova occorre cancellare una volta i dati dopo l'installazione del nuovo APK: l'ID cambia e qualsiasi associazione precedente deve essere ripetuta.
+
+Verifica locale riuscita: `:androidApp:assembleDebug`, `:androidApp:lintDebug` e `:connectivity:jvmTest`; build completata in 56 secondi. Questi controlli non esercitano Android Keystore/Conscrypt reali. **Da verificare sul telefono:** creazione della nuova chiave, handshake TLS 1.3, confronto codice, doppia conferma e testo bidirezionale con Windows. Fase 0 aperta.
+
+## Persistenza SQLDelight iOS — implementata e verificata in CI
 
 Lo schema SQLDelight e i contratti `DeviceRepository` esistenti sono ora condivisi anche con iOS. Il nuovo adattatore usa `native-driver` 2.1.0, conserva `lantern.db` nella cartella Application Support dell'app, serializza l'accesso con un lock nativo e rende esplicita la chiusura del driver. La logica delle query è stata estratta in un componente comune senza cambiare schema, formato dei dati o comportamento degli adattatori JVM/Android.
 
@@ -12,9 +20,11 @@ Aggiunto un test Kotlin/Native che crea un database reale in una directory tempo
 
 La [CI 36471901305](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36471901305), commit `28e7015`, ha compilato il repository iOS, il framework UI e i test di protocollo; Android e tutti i job desktop/Mac sono riusciti. Il nuovo test SQLite si è fermato in compilazione perché due chiamate Foundation richiedevano l'opt-in `ExperimentalForeignApi`. L'opt-in è stato aggiunto esclusivamente al test.
 
-La [CI 36473189762](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36473189762), commit `86f90fb`, ha superato compilazione ed esecuzione del test SQLite: salvataggio, chiusura e riapertura sono quindi verificati sul simulatore. Si è poi fermata al link dell'app Xcode per simboli `_sqlite3_*` irrisolti in entrambe le architetture del simulatore; il framework Kotlin statico richiede che il target consumatore colleghi la libreria SQLite di sistema. Aggiunto `-lsqlite3` ai soli linker flags del target app. La nuova CI è pendente; gli XCTest ospitati non sono ancora stati rieseguiti con questo incremento.
+La [CI 36473189762](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36473189762), commit `86f90fb`, ha superato compilazione ed esecuzione del test SQLite: salvataggio, chiusura e riapertura sono quindi verificati sul simulatore. Si è poi fermata al link dell'app Xcode per simboli `_sqlite3_*` irrisolti in entrambe le architetture del simulatore; il framework Kotlin statico richiede che il target consumatore colleghi la libreria SQLite di sistema. Aggiunto `-lsqlite3` ai soli linker flags del target app.
 
-Verificato su Windows: `:persistence:jvmMainClasses`, `:ui:jvmMainClasses`, `:connectivity:jvmTest` e la compilazione metadata comune sono riusciti; i lock del driver nativo sono stati risolti per iPhone arm64 e simulatori arm64/x64. In CI il framework iOS compila e il test salvataggio-riapertura passa; resta pendente la verifica dell'app Xcode con il link SQLite corretto. **Nessun dispositivo fisico è stato provato.** Fase 0 aperta.
+La [CI 36474723744](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36474723744), commit `1efb3da`, è interamente riuscita: framework e test iOS condivisi, test SQLite di salvataggio/riapertura, link dell'app simulatore e cinque XCTest Keychain, oltre ad Android e desktop Windows/Linux/Mac Intel/ARM64.
+
+Verificato su Windows: `:persistence:jvmMainClasses`, `:ui:jvmMainClasses`, `:connectivity:jvmTest` e la compilazione metadata comune sono riusciti; i lock del driver nativo sono stati risolti per iPhone arm64 e simulatori arm64/x64. In CI il framework iOS, il test salvataggio-riapertura e l'app Xcode con SQLite collegato sono riusciti. **Nessun dispositivo Apple fisico è stato provato.** Fase 0 aperta.
 
 ## CI remota e identità iOS — incremento verificato in simulatore
 

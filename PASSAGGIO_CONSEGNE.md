@@ -4,21 +4,21 @@
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository privato: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'incremento identità iOS è chiuso e verificato: **non ricominciare il debug già risolto**. La persistenza SQLDelight iOS e il nome dispositivo nella UI sono implementati. La CI 36473189762 del commit `86f90fb` ha compilato ed eseguito con successo il test di salvataggio/riapertura, poi il link Xcode è fallito per la libreria SQLite di sistema non collegata. Aggiunto `-lsqlite3` al target app; la nuova CI è pendente. Baseline identità verificata: commit `6aa051f`, CI riuscita https://github.com/zanzaro-mirco/lantern-share/actions/runs/36433898550. Confermare con `git status` e log prima di lavorare.
+L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. La CI 36474723744 del commit `1efb3da` è interamente riuscita, inclusi salvataggio/riapertura SQLite, link app e cinque XCTest Keychain. Il primo collaudo fisico Android ↔ Windows ha confermato la scoperta ma fallito l'associazione per `KeyStoreException: Incompatible digest`; la correzione Android compila ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
-- Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. Limiti di prodotto e pairing interrotto descritti nel contratto PoC.
+- Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. Il collaudo fisico Android ↔ Windows ha scoperto che Conscrypt richiede `DIGEST_NONE` per la firma TLS: correzione implementata e compilata, non ancora riprovata su hardware.
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
-- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo e nome dispositivo persistente sono implementati; repository e framework compilano in CI e il test di riapertura passa. Il link app corretto con SQLite attende verifica. **Mancano trasporto TLS, associazione e messaggistica.**
+- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo, nome persistente, link app e test di riapertura sono verificati in CI. **Mancano trasporto TLS, associazione e messaggistica.**
 - CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
 - Nessun collaudo fisico Android–iPhone–Mac. Fase 0 aperta; fase 1 solo avviata. Nessuna release pubblicata.
 
 ## Incremento corrente e prossimo passo
 
-La persistenza SQLite iOS è stata implementata riutilizzando schema e contratti Kotlin, con driver nativo 2.1.0, ownership/chiusura esplicite, accesso fuori dal thread UI e test reale di salvataggio/riapertura. Prima di proseguire occorre registrare l'esito della CI nativa del commit corrente; non dichiararla verificata dal solo host Windows.
+La chiave Android nuova autorizza `SHA-256` e `NONE`, richiesti rispettivamente dalle firme applicative e da Conscrypt TLS 1.3. Una vecchia chiave incompatibile viene rifiutata con istruzione esplicita, senza rigenerazione silenziosa. Build APK, lint e test JVM sono riusciti; Android Keystore e handshake reali attendono la riprova dell'utente dopo cancellazione dati.
 
-Il prossimo incremento concreto sarà **NWListener/NWConnection TLS con pinning**, limitato al trasporto e all'integrazione del protocollo Kotlin. L'associazione resta separata e successiva. Se l'utente sceglie un'altra priorità, seguire la sua istruzione.
+Il prossimo passo concreto è reinstallare l'APK corretto, cancellare una volta i dati della vecchia identità Android e ripetere associazione e testo Android ↔ Windows. Se riesce, il successivo incremento sarà **NWListener/NWConnection TLS con pinning**, limitato al trasporto e all'integrazione del protocollo Kotlin; l'associazione iOS resta separata.
 
 ## Mappa minima dei sorgenti
 

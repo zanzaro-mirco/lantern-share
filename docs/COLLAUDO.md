@@ -49,5 +49,6 @@ La prova automatica nativa richiede un account/Portachiavi usa e getta, `LANTERN
 | Mac ARM ↔ Mac Intel | non provato | non provato | non provato | non provato | |
 | Mac ↔ Windows | non provato | non provato | non provato | non provato | |
 | Mac ↔ Linux | non provato | non provato | non provato | non provato | |
+| Android ↔ Windows | riuscita 28/09/2026 | fallita: digest Keystore, correzione da riprovare | non provato | non provato | log hardware disponibile |
 
 Estendere a tutte le dieci coppie di piattaforme, entrambe le direzioni e stesso sistema operativo come nel piano. Il successo dei test loopback non compila alcuna cella di questo registro.

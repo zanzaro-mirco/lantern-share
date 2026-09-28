@@ -61,6 +61,8 @@ Prerequisiti: SDK Android con API 35 e build-tools 35.0.0, licenze accettate dal
 
 APK: `androidApp/build/outputs/apk/debug/androidApp-debug.apk`. Installazione manuale su dispositivo di test autorizzato con `adb install -r ...`. Il build debug usa esclusivamente la chiave debug locale del toolchain, mai credenziali release. Non è stata eseguita un'installazione su dispositivi in questa sessione.
 
+Le build precedenti alla correzione della firma TLS 1.3 potevano creare una chiave Android Keystore limitata a `SHA-256`; Conscrypt richiede anche `NONE` perché firma un digest TLS già calcolato. Dopo aver installato la build corretta, una chiave incompatibile viene rifiutata senza rotazione silenziosa: cancellare una volta i dati di Lantern e riaprire l'app per creare consapevolmente una nuova identità. L'ID cambia e le eventuali associazioni devono essere ripetute.
+
 L'identità Android risiede in Android Keystore; backup dell'app disabilitato. In questa prova l'app **si arresta in background**. Tornare in primo piano e attivare nuovamente il servizio. Cambio rete: arrestare, chiudere e riaprire l'Activity. Foreground service e reazione automatica al cambio rete sono ancora aperti.
 
 ## Mac obbligatorio, due architetture

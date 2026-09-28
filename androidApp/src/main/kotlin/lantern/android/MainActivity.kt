@@ -39,7 +39,12 @@ class MainActivity : ComponentActivity() {
         } catch (error: Exception) {
             repository?.close()
             repository = null
-            setContent { Text("Avvio non riuscito: ${error.javaClass.simpleName}") }
+            val message = if (error is IncompatibleAndroidIdentityException) {
+                error.message.orEmpty()
+            } else {
+                "Avvio non riuscito: ${error.javaClass.simpleName}"
+            }
+            setContent { Text(message) }
         }
     }
 
