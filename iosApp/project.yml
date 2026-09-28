@@ -34,7 +34,6 @@ targets:
     sources: [Tests]
     dependencies:
       - target: Lantern
-      - package: LanternIdentity
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
