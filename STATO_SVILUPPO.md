@@ -1,14 +1,16 @@
 # Stato sviluppo — 28 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate e verificate in CI su simulatore. Un primo collaudo fisico Android ↔ Windows ha confermato la scoperta ma rilevato un errore di firma TLS Android; la correzione compila ed è in attesa di riprova sul telefono. Solo dopo tale riprova il prossimo incremento torna a essere il trasporto TLS iOS con pinning. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate e verificate in CI su simulatore. La correzione della firma TLS Android è stata riprovata su hardware: Android e Windows si scoprono, completano il collegamento e comunicano. Su decisione dell'utente, i collaudi fisici iPhone e Mac Intel/Apple Silicon passano alla fase 1. La fase 0 resta aperta soltanto fino alla ripetizione Android ↔ Windows con WAN disattivata; il prossimo incremento software è il trasporto TLS iOS con pinning. Le sezioni storiche non descrivono lo stato corrente.
 
-## Correzione firma TLS Android — implementata, collaudo fisico pendente
+## Correzione firma TLS Android — implementata e verificata su hardware
 
 Nel primo collaudo reale Android ↔ Windows entrambi i dispositivi si sono scoperti sulla LAN, ma l'associazione si è fermata prima del codice di confronto con `SSLHandshakeException`. Il log reale Android ha identificato `KeyStoreException: Incompatible digest` durante `CryptoUpcalls.ecSignDigestWithPrivateKey`: la chiave non esportabile era autorizzata per `SHA-256`, mentre Conscrypt TLS 1.3 usa `NONEwithECDSA` su un digest già calcolato per `CertificateVerify`.
 
 La generazione della chiave autorizza ora sia `SHA-256` sia `NONE`, senza modificare protocollo, pinning o formato dell'identità. All'apertura viene eseguita una firma di compatibilità senza contenuti; una vecchia chiave incompatibile produce un messaggio esplicito e non viene sostituita silenziosamente. Poiché le autorizzazioni Android Keystore sono immutabili, sul dispositivo di prova occorre cancellare una volta i dati dopo l'installazione del nuovo APK: l'ID cambia e qualsiasi associazione precedente deve essere ripetuta.
 
-Verifica locale riuscita: `:androidApp:assembleDebug`, `:androidApp:lintDebug` e `:connectivity:jvmTest`; build completata in 56 secondi. Questi controlli non esercitano Android Keystore/Conscrypt reali. **Da verificare sul telefono:** creazione della nuova chiave, handshake TLS 1.3, confronto codice, doppia conferma e testo bidirezionale con Windows. Fase 0 aperta.
+Verifica locale riuscita: `:androidApp:assembleDebug`, `:androidApp:lintDebug` e `:connectivity:jvmTest`; build completata in 56 secondi. Questi controlli non esercitano Android Keystore/Conscrypt reali. Dopo reinstallazione e rinnovo dell'identità, l'utente ha confermato sul telefono che il percorso prima bloccato completa il collegamento con Windows e che la comunicazione funziona. Non sono ancora documentati separatamente testo in entrambe le direzioni e riavvio dei due processi.
+
+**Stato delle fasi:** la fase 0 richiede ora soltanto il percorso fisico Android ↔ Windows sulla LAN senza Internet. Collegamento e comunicazione sono riusciti, ma la WAN disattivata non è stata documentata e la fase resta quindi aperta. La fase 1 include il completamento del percorso Apple e i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon.
 
 ## Persistenza SQLDelight iOS — implementata e verificata in CI
 
@@ -24,7 +26,7 @@ La [CI 36473189762](https://github.com/zanzaro-mirco/lantern-share/actions/runs/
 
 La [CI 36474723744](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36474723744), commit `1efb3da`, è interamente riuscita: framework e test iOS condivisi, test SQLite di salvataggio/riapertura, link dell'app simulatore e cinque XCTest Keychain, oltre ad Android e desktop Windows/Linux/Mac Intel/ARM64.
 
-Verificato su Windows: `:persistence:jvmMainClasses`, `:ui:jvmMainClasses`, `:connectivity:jvmTest` e la compilazione metadata comune sono riusciti; i lock del driver nativo sono stati risolti per iPhone arm64 e simulatori arm64/x64. In CI il framework iOS, il test salvataggio-riapertura e l'app Xcode con SQLite collegato sono riusciti. **Nessun dispositivo Apple fisico è stato provato.** Fase 0 aperta.
+Verificato su Windows: `:persistence:jvmMainClasses`, `:ui:jvmMainClasses`, `:connectivity:jvmTest` e la compilazione metadata comune sono riusciti; i lock del driver nativo sono stati risolti per iPhone arm64 e simulatori arm64/x64. In CI il framework iOS, il test salvataggio-riapertura e l'app Xcode con SQLite collegato sono riusciti. **Nessun dispositivo Apple fisico è stato provato:** tale verifica è ora un criterio della fase 1.
 
 ## CI remota e identità iOS — incremento verificato in simulatore
 

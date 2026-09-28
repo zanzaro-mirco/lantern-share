@@ -1,12 +1,12 @@
-# Collaudo reale della fase 0 — NON ANCORA ESEGUITO
+# Piano di collaudo reale — fase 0 Android/Windows, fase 1 Apple
 
 ## Preparazione
 
-Usare Android 10+, iPhone iOS 16+, Mac macOS 13+ Apple Silicon e Mac Intel. Annotare OS, architettura, commit/hash delle sorgenti, JDK, build, IP e interfaccia selezionata. Servono inoltre Windows 11 e Ubuntu 24.04 per le coppie successive. Non riutilizzare identità copiate tra dispositivi.
+La fase 0 usa Android 10+ e Windows 11 reali. La fase 1 aggiunge iPhone iOS 16+ e Mac macOS 13+ sia Apple Silicon sia Intel; Ubuntu 24.04 e le altre coppie seguono la matrice di prodotto. Annotare OS, architettura, commit/hash delle sorgenti, JDK, build, IP e interfaccia selezionata. Non riutilizzare identità copiate tra dispositivi.
 
 Router/AP con rete LAN isolata da Internet, client isolation disabilitato. Testare Wi-Fi/Wi-Fi e Wi-Fi/Ethernet. Disattivare la WAN dopo installazione e prima delle prove. Consentire rete locale all'app, non disabilitare globalmente il firewall.
 
-**Blocco attuale:** iOS implementa identità Keychain e sonda Bonjour, ma non trasporto e associazione. Le prove 3–10 relative a iPhone non sono ancora eseguibili; richiedono il collegamento autenticato completo. Non compilare “superato” per tali celle.
+**Blocco della fase 1:** iOS implementa identità Keychain e sonda Bonjour, ma non trasporto e associazione. Le prove 3–10 relative a iPhone non sono ancora eseguibili; richiedono il collegamento autenticato completo. Non compilare “superato” per tali celle.
 
 Prova parziale iPhone già predisposta: annotare l'ID mostrato, terminare completamente il processo e riaprire; l'ID deve restare uguale. Verificare che un errore Keychain blocchi la scoperta e non sia sostituito da una nuova identità. Il blocco/sblocco del dispositivo e la conservazione dei dati dopo aggiornamento richiedono dispositivo fisico; i test del simulatore non li certificano.
 
@@ -49,6 +49,6 @@ La prova automatica nativa richiede un account/Portachiavi usa e getta, `LANTERN
 | Mac ARM ↔ Mac Intel | non provato | non provato | non provato | non provato | |
 | Mac ↔ Windows | non provato | non provato | non provato | non provato | |
 | Mac ↔ Linux | non provato | non provato | non provato | non provato | |
-| Android ↔ Windows | riuscita 28/09/2026 | fallita: digest Keystore, correzione da riprovare | non provato | non provato | log hardware disponibile |
+| Android ↔ Windows | riuscita 28/09/2026 | riuscita dopo correzione digest Keystore | comunicazione riuscita; direzioni non annotate | non provato | conferma utente su hardware, 28/09/2026; log disponibile per il guasto precedente |
 
-Estendere a tutte le dieci coppie di piattaforme, entrambe le direzioni e stesso sistema operativo come nel piano. Il successo dei test loopback non compila alcuna cella di questo registro.
+Il percorso fisico Android ↔ Windows ha confermato scoperta, collegamento e comunicazione; prima di chiudere la fase 0 resta da documentare la ripetizione con WAN disattivata. Le righe che coinvolgono iPhone o Mac appartengono alla fase 1; estendere poi il registro a tutte le dieci coppie, entrambe le direzioni e stesso sistema operativo come richiesto dalla prima versione. Il successo dei test loopback non compila alcuna cella di questo registro.
