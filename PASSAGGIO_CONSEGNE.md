@@ -4,13 +4,13 @@
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository privato: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'incremento identità iOS è chiuso e verificato: **non ricominciare il debug già risolto**. La persistenza SQLDelight iOS e il nome dispositivo nella UI sono implementati. La CI 36471901305 del commit `28e7015` ha compilato repository e framework iOS ma si è fermata sulla compilazione del nuovo test per l'opt-in Foundation mancante; la correzione è limitata al test e attende verifica. Baseline identità verificata: commit `6aa051f`, CI riuscita https://github.com/zanzaro-mirco/lantern-share/actions/runs/36433898550. Confermare con `git status` e log prima di lavorare.
+L'incremento identità iOS è chiuso e verificato: **non ricominciare il debug già risolto**. La persistenza SQLDelight iOS e il nome dispositivo nella UI sono implementati. La CI 36473189762 del commit `86f90fb` ha compilato ed eseguito con successo il test di salvataggio/riapertura, poi il link Xcode è fallito per la libreria SQLite di sistema non collegata. Aggiunto `-lsqlite3` al target app; la nuova CI è pendente. Baseline identità verificata: commit `6aa051f`, CI riuscita https://github.com/zanzaro-mirco/lantern-share/actions/runs/36433898550. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
 - Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. Limiti di prodotto e pairing interrotto descritti nel contratto PoC.
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
-- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo e nome dispositivo persistente sono implementati; repository e framework compilano in CI, mentre il test corretto di riapertura attende il nuovo run. **Mancano trasporto TLS, associazione e messaggistica.**
+- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo e nome dispositivo persistente sono implementati; repository e framework compilano in CI e il test di riapertura passa. Il link app corretto con SQLite attende verifica. **Mancano trasporto TLS, associazione e messaggistica.**
 - CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
 - Nessun collaudo fisico Android–iPhone–Mac. Fase 0 aperta; fase 1 solo avviata. Nessuna release pubblicata.
 
