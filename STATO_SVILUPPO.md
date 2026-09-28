@@ -1,6 +1,16 @@
 # Stato sviluppo — 28 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. L'incremento identità iOS è concluso in simulatore; il prossimo passo circoscritto consigliato è persistenza SQLDelight iOS e nome dispositivo persistente, prima di trasporto/associazione. Le sezioni sotto la verifica iOS sono resoconti storici: non reinterpretare i loro vecchi limiti come situazione attuale.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate; la persistenza nativa e la UI attendono la verifica CI su simulatore descritta sotto. Il prossimo incremento, dopo tale esito, è il trasporto TLS iOS con pinning, senza anticipare l'associazione. Le sezioni storiche non descrivono lo stato corrente.
+
+## Persistenza SQLDelight iOS — implementata, verifica nativa pendente
+
+Lo schema SQLDelight e i contratti `DeviceRepository` esistenti sono ora condivisi anche con iOS. Il nuovo adattatore usa `native-driver` 2.1.0, conserva `lantern.db` nella cartella Application Support dell'app, serializza l'accesso con un lock nativo e rende esplicita la chiusura del driver. La logica delle query è stata estratta in un componente comune senza cambiare schema, formato dei dati o comportamento degli adattatori JVM/Android.
+
+La schermata Compose iOS legge il nome persistito all'avvio e permette di salvarne uno valido. Apertura, lettura e scrittura del database avvengono su una coda non UI; gli errori restano visibili. Il trasporto TLS, l'associazione e la messaggistica iOS rimangono esplicitamente non disponibili.
+
+Aggiunto un test Kotlin/Native che crea un database reale in una directory temporanea del simulatore, salva il nome, chiude il driver, riapre lo stesso database e verifica il valore. Il workflow iOS esegue ora anche `:persistence:iosSimulatorArm64Test` e conserva il relativo report.
+
+Verificato su Windows: `:persistence:jvmMainClasses`, `:ui:jvmMainClasses`, `:connectivity:jvmTest` e la compilazione metadata comune sono riusciti; i lock del driver nativo sono stati risolti per iPhone arm64 e simulatori arm64/x64. Windows non può compilare né eseguire il target Apple. **La compilazione del framework/app iOS e il test salvataggio-riapertura sul simulatore sono pendenti fino all'esito CI; nessun dispositivo fisico è stato provato.** Fase 0 aperta.
 
 ## CI remota e identità iOS — incremento verificato in simulatore
 

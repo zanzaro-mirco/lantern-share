@@ -79,7 +79,7 @@ jobs:
         run: xcodebuild -downloadPlatform iOS -buildVersion 18.4
       - uses: gradle/actions/setup-gradle@v4
       - name: Shared iOS framework and protocol tests
-        run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 :protocol:iosSimulatorArm64Test --console=plain
+        run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
       - name: Generate Xcode project
         run: |
           git clone --depth 1 --branch 2.43.0 https://github.com/yonaskolb/XcodeGen.git "$RUNNER_TEMP/XcodeGen"
@@ -99,4 +99,5 @@ jobs:
           path: |
             build/ios-identity-tests.xcresult
             iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+            persistence/build/reports/tests/
             protocol/build/reports/tests/

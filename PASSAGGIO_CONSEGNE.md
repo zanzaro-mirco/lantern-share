@@ -4,21 +4,21 @@
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository privato: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'incremento identità iOS è chiuso e verificato: **non ricominciare il debug già risolto**. Ultimo commit di codice verificato: `6aa051f`; CI riuscita: https://github.com/zanzaro-mirco/lantern-share/actions/runs/36433898550. I commit successivi a questa baseline, fino a questo passaggio, aggiornano soltanto documentazione. Confermare con `git status` e log prima di lavorare.
+L'incremento identità iOS è chiuso e verificato: **non ricominciare il debug già risolto**. La persistenza SQLDelight iOS e il nome dispositivo nella UI sono implementati nel working tree corrente; la verifica nativa CI è ancora da registrare. Baseline precedente verificata: commit `6aa051f`, CI riuscita https://github.com/zanzaro-mirco/lantern-share/actions/runs/36433898550. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
 - Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. Limiti di prodotto e pairing interrotto descritti nel contratto PoC.
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
-- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. **Mancano trasporto TLS, associazione, messaggistica e repository SQLite iOS.**
+- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo e nome dispositivo persistente sono implementati; compilazione e test di riapertura nativi attendono la CI. **Mancano trasporto TLS, associazione e messaggistica.**
 - CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
 - Nessun collaudo fisico Android–iPhone–Mac. Fase 0 aperta; fase 1 solo avviata. Nessuna release pubblicata.
 
-## Prossimo incremento consigliato, circoscritto
+## Incremento corrente e prossimo passo
 
-Implementare **la persistenza SQLite iOS**, come fondamento per il successivo trasporto autenticato. Riutilizzare schema SQLDelight e contratti di dominio, aggiungere il driver nativo della versione già scelta e una composizione iOS con ownership/chiusura esplicite. Collegare il nome dispositivo persistente alla UI iOS esistente e verificare salvataggio/riapertura. Non riscrivere gli adattatori JVM/Android e non inventare un secondo schema Swift.
+La persistenza SQLite iOS è stata implementata riutilizzando schema e contratti Kotlin, con driver nativo 2.1.0, ownership/chiusura esplicite, accesso fuori dal thread UI e test reale di salvataggio/riapertura. Prima di proseguire occorre registrare l'esito della CI nativa del commit corrente; non dichiararla verificata dal solo host Windows.
 
-In questo incremento il trasporto e l'associazione iOS restano dichiaratamente non disponibili. Il passo successivo sarà NWListener/NWConnection TLS con pinning e integrazione del protocollo Kotlin. Se l'utente sceglie un'altra priorità, seguire la sua istruzione.
+Il prossimo incremento concreto sarà **NWListener/NWConnection TLS con pinning**, limitato al trasporto e all'integrazione del protocollo Kotlin. L'associazione resta separata e successiva. Se l'utente sceglie un'altra priorità, seguire la sua istruzione.
 
 ## Mappa minima dei sorgenti
 
@@ -27,13 +27,13 @@ In questo incremento il trasporto e l'associazione iOS restano dichiaratamente n
 | Contratti e stato | `domain/src/commonMain/kotlin/lantern/domain/Contracts.kt` |
 | Protocollo v0 | `protocol/src/commonMain/kotlin/lantern/protocol/Wire.kt` |
 | Motore JVM/Android | `connectivity/src/jvmAndAndroidMain/kotlin/lantern/connectivity/` |
-| Schema e repository | `persistence/src/commonMain/sqldelight/lantern/persistence/Store.sq`, `persistence/src/jvmAndAndroidMain/` |
+| Schema e repository | `persistence/src/commonMain/sqldelight/lantern/persistence/Store.sq`, `persistence/src/commonMain/kotlin/`, `persistence/src/iosMain/`, `persistence/src/jvmAndAndroidMain/` |
 | Identità Apple | `iosApp/AppleIdentity/Sources/LanternIdentity/` |
 | App e test iOS | `iosApp/LanternApp.swift`, `iosApp/Tests/AppleIdentityTests.swift` |
 | Ingresso Compose iOS | `ui/src/iosMain/kotlin/lantern/ui/IosEntry.kt` |
 | Build Apple | `iosApp/project.yml`, `iosApp/Package.resolved`, `.github/workflows/verify.yml` |
 
-Per la persistenza leggere anche `persistence/build.gradle.kts` e l'adattatore JDBC esistente; aprire gli altri sorgenti solo quando servono.
+Per la persistenza leggere anche `persistence/build.gradle.kts`, `IosRepository.kt` e il test iOS di riapertura; aprire gli altri sorgenti solo quando servono.
 
 ## Vincoli verificati: non annullare le correzioni
 

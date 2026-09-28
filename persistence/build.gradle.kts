@@ -13,6 +13,8 @@ kotlin {
             dependsOn(jvmAndAndroidMain)
             dependencies { api(libs.sqlite) }
         }
+        iosMain.dependencies { implementation(libs.sqliteNative) }
+        iosTest.dependencies { implementation(kotlin("test")) }
         if (withAndroid) getByName("androidMain").dependsOn(jvmAndAndroidMain)
     }
 }
