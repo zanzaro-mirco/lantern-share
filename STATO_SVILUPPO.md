@@ -6,6 +6,8 @@ Prima CI reale, commit `e348fca`: **desktop Windows, Linux, Mac ARM64 e Mac Inte
 
 Correzione `af69849`: installazione esplicita di `platform-tools` per Android e runtime iOS 18.4 per Xcode 16.3. Versioni Kotlin/Gradle/Compose invariate.
 
+Esito correzione: [CI 36392913603](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36392913603) **tutta riuscita**, inclusa app iOS unsigned su simulatore e Android. Verifica locale dopo rinomina in `lantern-share`: comando Gradle completo con multicast, test, distributable Windows, APK e lint riuscito in 1m08s; 26 test senza fallimenti/saltati. Non equivale a collaudo LAN tra dispositivi fisici.
+
 Implementato l'adattatore Swift `LanternIdentity`: chiave P-256, certificato autofirmato tramite Swift Certificates Apple, pin persistente e SecIdentity nel Keychain, firma SHA-256/ECDSA; apertura fuori dal thread UI e ID mostrato nella schermata Compose. Dati parziali o incoerenti bloccano l'avvio senza rigenerazione automatica. Aggiunti cinque XCTest con Keychain reale del simulatore, dipendenze Swift esatte e integrazione XcodeGen/CI. Decisioni in `docs/ADR-002-IDENTITA-IOS.md`.
 
 **In verifica al momento di questo aggiornamento:** build Swift e test del nuovo adattatore. iOS non ha ancora listener/connessione TLS, associazione, messaggistica o repository SQLite. Il prossimo incremento è collegare Network.framework al protocollo condiviso e introdurre la persistenza iOS, mantenendo esplicito lo stato non autorizzato prima della doppia conferma. Fase 0 aperta.

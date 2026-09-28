@@ -87,7 +87,9 @@ Serve un Mac con Xcode **16.3** per questa baseline, JDK 17 e XcodeGen 2.43.0. X
 bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 :protocol:iosSimulatorArm64Test
 cd iosApp
 xcodegen generate
-xcodebuild -project Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+mkdir -p Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+cp Package.resolved Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+xcodebuild -project Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=NO build
 ```
 
 Su Mac Intel usare `iosX64` per il simulatore. Aprire il progetto generato in Xcode per il dispositivo reale; **la firma per iPhone va configurata dall'utente**, non da questi script. Deployment target iOS 16. `Info.plist` contiene descrizione rete locale e `_lantern._tcp`. Nessun entitlement di background promette ricezione continua.
@@ -102,6 +104,6 @@ Il [contratto PoC](docs/PROTOCOLLO_POC.md) precede e descrive l'implementazione 
 
 I test integrativi usano chiavi nuove, filesystem/SQLite reali, TLS reale e solo discovery simulata. Non equivalgono a prove multicast, hardware mobile o installazione Mac. Rapporti HTML: `protocol/build/reports/tests/jvmTest/` e `connectivity/build/reports/tests/jvmTest/`.
 
-La CI è definita in `.github/workflows/verify.yml`, ma non è stata eseguita da questa cartella (inizialmente priva di `.git` e di remote). Non sono stati creati repository remoti né pubblicati artefatti.
+La CI è eseguita nel repository privato [lantern-share](https://github.com/zanzaro-mirco/lantern-share/actions). Il commit `af69849` ha superato tutti i job: Android, desktop Windows/Linux/Mac Intel/ARM64 e build dell'app iOS precedente alla nuova identità. Gli esiti dell'incremento corrente sono in STATO_SVILUPPO.md. Sono conservati rapporti di test; nessuna release è pubblicata.
 
 Procedura e scheda risultati: [docs/COLLAUDO.md](docs/COLLAUDO.md).

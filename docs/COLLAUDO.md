@@ -6,7 +6,9 @@ Usare Android 10+, iPhone iOS 16+, Mac macOS 13+ Apple Silicon e Mac Intel. Anno
 
 Router/AP con rete LAN isolata da Internet, client isolation disabilitato. Testare Wi-Fi/Wi-Fi e Wi-Fi/Ethernet. Disattivare la WAN dopo installazione e prima delle prove. Consentire rete locale all'app, non disabilitare globalmente il firewall.
 
-**Blocco attuale:** iOS implementa solo la sonda Bonjour. Le prove 3–10 relative a iPhone non sono ancora eseguibili; richiedono prima il trasporto e l'identità nativi. Non compilare “superato” per tali celle.
+**Blocco attuale:** iOS implementa identità Keychain e sonda Bonjour, ma non trasporto e associazione. Le prove 3–10 relative a iPhone non sono ancora eseguibili; richiedono il collegamento autenticato completo. Non compilare “superato” per tali celle.
+
+Prova parziale iPhone già predisposta: annotare l'ID mostrato, terminare completamente il processo e riaprire; l'ID deve restare uguale. Verificare che un errore Keychain blocchi la scoperta e non sia sostituito da una nuova identità. Il blocco/sblocco del dispositivo e la conservazione dei dati dopo aggiornamento richiedono dispositivo fisico; i test del simulatore non li certificano.
 
 ## Sequenza per ciascuna coppia
 

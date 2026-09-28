@@ -23,3 +23,14 @@ Checksum Wrapper JAR 8.9 verificato contro il servizio Gradle: `498495120a03b9a6
 Mac non è un target Kotlin/Native dell'app desktop: è JVM con runtime incluso, generato separatamente su Intel e Apple Silicon. I target `iosArm64`, `iosSimulatorArm64`, `iosX64` sono dichiarati nei moduli KMP. Nessun target web.
 
 Non esiste una matrice ufficiale unica per tutti i componenti: la matrice Kotlin/AGP restringe la scelta, le release ufficiali documentano le singole librerie, build e test verificano la combinazione. Xcode successivi a 16.3 non sono attestati da questa baseline e richiedono un incremento della toolchain verificato.
+# Dipendenze native iOS — 28 settembre 2026
+
+Adattatore Swift locale `iosApp/AppleIdentity`: Swift Certificates 1.6.0, Swift Crypto 3.9.0, Swift ASN.1 1.3.0, DocC Plugin 1.4.3 e SymbolKit 1.0.0. Versioni esatte nel manifest, commit Git dei tag ufficiali in `iosApp/Package.resolved`. Le dipendenze DocC sono transitive di sviluppo. Swift tools 5.8, Xcode 16.3 e deployment iOS 16; nessuna variazione dello stack Kotlin. Il [manifest Apple 1.6.0](https://github.com/apple/swift-certificates/blob/1.6.0/Package.swift) supporta iOS 13+ e Swift 5.8, con Crypto 2.5..<4 e ASN.1 1.1+; le versioni scelte rispettano questi vincoli. La verifica effettiva Xcode è registrata separatamente in STATO_SVILUPPO.md.
+
+La CI copia il lock nel progetto Xcode generato e usa `-onlyUsePackageVersionsFromResolvedFile`. Per rigenerazione manuale, dopo XcodeGen:
+
+```sh
+mkdir -p iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+cp iosApp/Package.resolved iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+```
+

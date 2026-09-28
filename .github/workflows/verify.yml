@@ -84,12 +84,14 @@ jobs:
         run: |
           git clone --depth 1 --branch 2.43.0 https://github.com/yonaskolb/XcodeGen.git "$RUNNER_TEMP/XcodeGen"
           swift run --package-path "$RUNNER_TEMP/XcodeGen" xcodegen generate --spec iosApp/project.yml --project iosApp
+          mkdir -p iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+          cp iosApp/Package.resolved iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Compile unsigned simulator app
-        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=NO build
       - name: Test real iOS Keychain on simulator
         run: |
           device_id=$(xcrun simctl create LanternIdentityTests com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
-          xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=NO test
       - uses: actions/upload-artifact@v4
         if: always()
         with:
