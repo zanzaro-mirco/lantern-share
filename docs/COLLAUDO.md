@@ -49,6 +49,6 @@ La prova automatica nativa richiede un account/Portachiavi usa e getta, `LANTERN
 | Mac ARM ↔ Mac Intel | non provato | non provato | non provato | non provato | |
 | Mac ↔ Windows | non provato | non provato | non provato | non provato | |
 | Mac ↔ Linux | non provato | non provato | non provato | non provato | |
-| Android ↔ Windows | riuscita 28/09/2026 | riuscita dopo correzione digest Keystore | comunicazione riuscita; direzioni non annotate | non provato | conferma utente su hardware, 28/09/2026; log disponibile per il guasto precedente |
+| Android ↔ Windows | riuscita 28/09/2026 | riuscita dopo correzione digest Keystore | comunicazione riuscita; direzioni non annotate | non provato | conferma utente su hardware; crash su blocco corretto, riprova fisica pendente |
 
 Il percorso fisico Android ↔ Windows ha confermato scoperta, collegamento e comunicazione e chiude la fase 0. La ripetizione con WAN disattivata, la bidirezionalità esplicita e il riavvio passano alla fase 1 insieme alle righe che coinvolgono iPhone o Mac. Estendere poi il registro a tutte le dieci coppie, entrambe le direzioni e stesso sistema operativo come richiesto dalla prima versione. Il successo dei test loopback non compila alcuna cella di questo registro.

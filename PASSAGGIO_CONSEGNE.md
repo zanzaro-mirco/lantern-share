@@ -2,13 +2,13 @@
 
 ## Ripartenza rapida
 
-Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository privato: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
+Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Il trasporto TLS iOS con pinning è implementato ma la compilazione Swift e i nuovi XCTest Network.framework attendono la CI. Il collaudo fisico Android ↔ Windows ha inizialmente rilevato `KeyStoreException: Incompatible digest`; dopo la correzione l'utente ha confermato che collegamento e comunicazione funzionano. Confermare con `git status` e log prima di lavorare.
+L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Il trasporto TLS iOS con pinning è implementato ma la compilazione Swift e i nuovi XCTest Network.framework attendono la CI. Il collegamento Android ↔ Windows funziona; il successivo crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
-- Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. Il collaudo fisico Android ↔ Windows ha scoperto che Conscrypt richiede `DIGEST_NONE` per la firma TLS; la correzione è implementata, compilata e riprovata con comunicazione riuscita su hardware.
+- Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. `DIGEST_NONE` è verificato su hardware. Le chiusure TLS di blocco/rifiuto/arresto sono ora confinate a I/O; test/build/lint passano, riprova fisica del crash pendente.
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
 - iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; repository SQLDelight nativo, nome persistente e sonda Bonjour. `AppleTLSTransport` configura TLS 1.3 reciproco e pin esatti; il framing resta in Kotlin. **Compilazione/test nativi del trasporto pendenti; associazione e messaggistica non implementate.**
 - CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
@@ -18,7 +18,7 @@ L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulato
 
 La chiave Android nuova autorizza `SHA-256` e `NONE`, richiesti rispettivamente dalle firme applicative e da Conscrypt TLS 1.3. Una vecchia chiave incompatibile viene rifiutata con istruzione esplicita, senza rigenerazione silenziosa. Build APK, lint e test JVM sono riusciti; dopo cancellazione dati, anche il collegamento e la comunicazione Android ↔ Windows sono riusciti su hardware. Testo in entrambe le direzioni e riavvio non sono stati documentati separatamente.
 
-Il prossimo passo è controllare una volta il job iOS relativo al commit del trasporto. Se compila e gli XCTest passano, il prossimo incremento software della fase 1 sarà l'associazione iOS sopra questo canale; non anticipare la messaggistica. Le verifiche residue Android ↔ Windows e i collaudi fisici iPhone e Mac restano nella fase 1.
+Il prossimo passo è controllare una volta la CI del push che contiene trasporto iOS e correzione Android. Poi installare il nuovo APK e riprovare blocco/rifiuto/arresto su Android ↔ Windows. Se il job iOS compila e gli XCTest passano, il prossimo incremento software della fase 1 sarà l'associazione iOS sopra questo canale; non anticipare la messaggistica.
 
 ## Mappa minima dei sorgenti
 

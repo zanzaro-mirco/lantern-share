@@ -1,6 +1,14 @@
 # Stato sviluppo — 28 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Il trasporto TLS iOS con pinning è implementato e i test Kotlin locali passano; compilazione e XCTest Network.framework attendono la CI su macOS. Associazione e messaggistica iOS non sono state implementate. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Il trasporto TLS iOS con pinning è implementato e i test Kotlin locali passano; compilazione e XCTest Network.framework attendono la CI su macOS. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+
+## Chiusura TLS Android fuori dal thread UI — implementata, collaudo fisico pendente
+
+Il log reale mostrava `NetworkOnMainThreadException` in `ConscryptEngineSocket.close`, chiamato da `PeerConnection.close()` attraverso `Node.block()` dopo il tap su “Blocca localmente”. La chiusura di una socket TLS può inviare `close_notify` e quindi eseguire I/O: non può avvenire nel callback Compose sul main thread.
+
+`AsyncResourceCloser` confina ora le chiusure potenzialmente bloccanti nello scope `Dispatchers.IO` già posseduto dal nodo. Blocco e rifiuto aggiornano subito autorizzazione e UI, poi chiudono il canale in asincrono. Anche `stop()` stacca immediatamente il run e demanda socket/listener a I/O; `close()` attende il cleanup prima di terminare lo scope. Aggiunto un test che verifica l'esecuzione sul dispatcher proprietario; il test end-to-end esistente continua a coprire blocco e disconnessione TLS reali.
+
+Verifica locale riuscita: `:connectivity:jvmTest`, `:androidApp:assembleDebug` e `:androidApp:lintDebug`; 21 casi nel report, zero fallimenti e un test nativo Mac saltato come previsto. `BUILD SUCCESSFUL` in 19 secondi. Da verificare sul telefono: collegarsi a Windows e usare “Blocca localmente”, “Rifiuta” e “Arresta” senza crash.
 
 ## Trasporto TLS iOS con pinning — implementato, verifica nativa pendente
 

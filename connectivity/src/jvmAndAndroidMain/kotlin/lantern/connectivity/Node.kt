@@ -20,6 +20,7 @@ import lantern.domain.DiscoveryService
 import lantern.domain.Peer
 import lantern.domain.Reconnection
 import lantern.protocol.Wire
+import java.io.Closeable
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.security.cert.X509Certificate
@@ -44,8 +45,10 @@ class Node(
     override val state = mutable.asStateFlow()
     private val lifetime = SupervisorJob()
     private val scope = CoroutineScope(lifetime + Dispatchers.IO)
+    private val resourceCloser = AsyncResourceCloser(scope)
     private val authorization = PairingAuthorization(repository)
     @Volatile private var activeRun: ServiceRun? = null
+    @Volatile private var cleanupJob: Job? = null
     @Volatile private var closed = false
 
     val port: Int get() = activeRun?.server?.localPort ?: 0
@@ -170,14 +173,14 @@ class Node(
     @Synchronized
     override fun reject() {
         val peerId = authorization.cancel()
-        peerId?.let { activeRun?.channels?.get(it)?.close() }
+        peerId?.let { activeRun?.channels?.get(it)?.let(resourceCloser::close) }
         mutable.update { it.copy(pairingPeer = null, comparisonCode = null) }
     }
 
     @Synchronized
     override fun block(peerId: String) {
         authorization.revoke(peerId)
-        activeRun?.channels?.get(peerId)?.close()
+        activeRun?.channels?.get(peerId)?.let(resourceCloser::close)
         mutable.update {
             it.copy(
                 trusted = repository.trusted(),
@@ -293,19 +296,28 @@ class Node(
         val run = activeRun
         activeRun = null
         authorization.cancel()
-        run?.server?.let { closeSocket(it) }
-        run?.sockets?.toList()?.forEach(::closeSocket)
         run?.job?.cancel()
+        run?.let {
+            val resources = buildList<Closeable> {
+                it.server?.let(::add)
+                addAll(it.sockets.toList())
+            }
+            cleanupJob = resourceCloser.closeAll(resources)
+        }
         runCatching { discovery.stop() }
         mutable.update { it.copy(active = false, peers = emptyList(), connected = emptySet(), pairingPeer = null, comparisonCode = null, status = "Servizio arrestato") }
     }
 
     override fun close() {
-        synchronized(this) {
+        val pendingCleanup = synchronized(this) {
             closed = true
             stop()
+            cleanupJob
         }
-        runBlocking { lifetime.cancelAndJoin() }
+        runBlocking {
+            pendingCleanup?.join()
+            lifetime.cancelAndJoin()
+        }
     }
 
     private fun closeSocket(socket: java.io.Closeable) {

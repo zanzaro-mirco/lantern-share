@@ -6,6 +6,7 @@ import lantern.domain.PeerTransport
 import lantern.protocol.Frame
 import lantern.protocol.FrameType
 import lantern.protocol.Wire
+import java.io.Closeable
 import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -27,7 +28,7 @@ internal class PeerConnection(
     private val messages: MessageRepository,
     private val isActive: () -> Boolean,
     private val onEvent: (ConnectionEvent) -> Unit,
-) : PeerTransport {
+) : PeerTransport, Closeable {
     private val stream = FrameStream(socket.inputStream, socket.outputStream)
     private val pendingAcks = ConcurrentHashMap.newKeySet<String>()
     private val pairingAttempt = authorization.attemptFor(remoteId)

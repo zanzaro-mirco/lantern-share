@@ -65,6 +65,8 @@ Le build precedenti alla correzione della firma TLS 1.3 potevano creare una chia
 
 L'identità Android risiede in Android Keystore; backup dell'app disabilitato. In questa prova l'app **si arresta in background**. Tornare in primo piano e attivare nuovamente il servizio. Cambio rete: arrestare, chiudere e riaprire l'Activity. Foreground service e reazione automatica al cambio rete sono ancora aperti.
 
+La chiusura di una socket TLS può eseguire I/O per inviare `close_notify`. Blocco locale, rifiuto dell'associazione e arresto demandano quindi la chiusura delle risorse al dispatcher I/O del nodo; i callback Compose non chiudono direttamente socket sul main thread.
+
 ## Mac obbligatorio, due architetture
 
 Su macOS 13+ con JDK 17 nativo (arm64 su Apple Silicon; x86_64 su Intel):
