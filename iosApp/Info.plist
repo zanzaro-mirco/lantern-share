@@ -9,6 +9,7 @@
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>UILaunchScreen</key><dict/>
+<key>CADisableMinimumFrameDurationOnPhone</key><true/>
 <key>NSLocalNetworkUsageDescription</key><string>Lantern cerca dispositivi nella tua rete locale per la prova di condivisione.</string>
 <key>NSBonjourServices</key><array><string>_lantern._tcp</string></array>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

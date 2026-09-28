@@ -9,9 +9,6 @@ settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: dev.lantern.poc
     SWIFT_VERSION: '5.0'
-    ENABLE_USER_SCRIPT_SANDBOXING: NO
-    FRAMEWORK_SEARCH_PATHS: '$(inherited) $(SRCROOT)/../ui/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)'
-    OTHER_LDFLAGS: '$(inherited) -framework LanternUI'
 targets:
   Lantern:
     type: application
@@ -22,6 +19,9 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: Info.plist
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        FRAMEWORK_SEARCH_PATHS: '$(inherited) $(SRCROOT)/../ui/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)'
+        OTHER_LDFLAGS: '$(inherited) -framework LanternUI'
     preBuildScripts:
       - name: Build Kotlin framework
         basedOnDependencyAnalysis: false
