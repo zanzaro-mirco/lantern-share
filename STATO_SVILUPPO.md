@@ -10,6 +10,8 @@ La schermata Compose iOS legge il nome persistito all'avvio e permette di salvar
 
 Aggiunto un test Kotlin/Native che crea un database reale in una directory temporanea del simulatore, salva il nome, chiude il driver, riapre lo stesso database e verifica il valore. Il workflow iOS esegue ora anche `:persistence:iosSimulatorArm64Test` e conserva il relativo report.
 
+La [CI 36471901305](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36471901305), commit `28e7015`, ha compilato il repository iOS, il framework UI e i test di protocollo; Android e tutti i job desktop/Mac sono riusciti. Il nuovo test SQLite si è fermato in compilazione perché due chiamate Foundation richiedevano l'opt-in `ExperimentalForeignApi`, quindi non è stato eseguito e le fasi Xcode successive sono state saltate. Aggiunto l'opt-in esclusivamente al test; nessun codice di produzione è stato modificato dalla correzione. La nuova CI è pendente.
+
 Verificato su Windows: `:persistence:jvmMainClasses`, `:ui:jvmMainClasses`, `:connectivity:jvmTest` e la compilazione metadata comune sono riusciti; i lock del driver nativo sono stati risolti per iPhone arm64 e simulatori arm64/x64. Windows non può compilare né eseguire il target Apple. **La compilazione del framework/app iOS e il test salvataggio-riapertura sul simulatore sono pendenti fino all'esito CI; nessun dispositivo fisico è stato provato.** Fase 0 aperta.
 
 ## CI remota e identità iOS — incremento verificato in simulatore

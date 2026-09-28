@@ -3,10 +3,12 @@ package lantern.persistence
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSUUID
 
+@OptIn(ExperimentalForeignApi::class)
 class IosRepositoryTest {
     @Test
     fun deviceNameSurvivesDatabaseReopen() {
