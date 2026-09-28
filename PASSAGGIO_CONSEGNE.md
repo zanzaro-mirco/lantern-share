@@ -12,13 +12,13 @@ L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulato
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
 - iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo, nome persistente, link app e test di riapertura sono verificati in CI. **Mancano trasporto TLS, associazione e messaggistica.**
 - CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
-- La fase 0 richiede ora soltanto il percorso fisico Android ↔ Windows senza Internet: collegamento e comunicazione sono riusciti, ma la prova con WAN disattivata non è documentata. La fase 1 comprende il completamento Apple e i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon. Nessuna release pubblicata.
+- Fase 0 chiusa sulla prova fisica Android ↔ Windows riuscita. La fase 1 comprende il completamento Apple, i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon e le verifiche residue Android ↔ Windows con WAN disattivata, testo bidirezionale e riavvio. Nessuna release pubblicata.
 
 ## Incremento corrente e prossimo passo
 
 La chiave Android nuova autorizza `SHA-256` e `NONE`, richiesti rispettivamente dalle firme applicative e da Conscrypt TLS 1.3. Una vecchia chiave incompatibile viene rifiutata con istruzione esplicita, senza rigenerazione silenziosa. Build APK, lint e test JVM sono riusciti; dopo cancellazione dati, anche il collegamento e la comunicazione Android ↔ Windows sono riusciti su hardware. Testo in entrambe le direzioni e riavvio non sono stati documentati separatamente.
 
-Prima del prossimo incremento software resta una sola verifica della fase 0: ripetere Android ↔ Windows con WAN disattivata e annotarne l'esito. Il prossimo incremento software è **NWListener/NWConnection TLS con pinning**, limitato al trasporto e all'integrazione del protocollo Kotlin; l'associazione iOS resta separata. I collaudi fisici iPhone e Mac saranno eseguiti nella fase 1 soltanto quando i rispettivi percorsi saranno implementati.
+Il prossimo incremento software della fase 1 è **NWListener/NWConnection TLS con pinning**, limitato al trasporto e all'integrazione del protocollo Kotlin; l'associazione iOS resta separata. Le verifiche residue Android ↔ Windows e i collaudi fisici iPhone e Mac saranno eseguiti nella fase 1 quando i rispettivi percorsi di prova saranno disponibili.
 
 ## Mappa minima dei sorgenti
 

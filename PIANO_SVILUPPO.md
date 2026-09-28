@@ -120,7 +120,7 @@ Il codice deve essere pulito, leggibile, testabile e mantenibile. Sono richiesti
 - test dei comportamenti e delle condizioni di errore, build dei target disponibili e dichiarazione separata delle verifiche non eseguite;
 - revisione del codice a ogni incremento, decisioni e debito tecnico documentati, niente framework aggiuntivi o livelli architetturali senza necessità dimostrata.
 
-Il metodo operativo, i criteri di revisione e la definizione di completamento sono descritti in [ARCHITETTURA_E_QUALITA.md](ARCHITETTURA_E_QUALITA.md). I refactoring non modificano i requisiti di prodotto né i criteri di accettazione. I collaudi fisici sono attribuiti alle fasi dalla roadmap: Android ↔ Windows nella fase 0; iPhone e Mac Intel/Apple Silicon nella fase 1.
+Il metodo operativo, i criteri di revisione e la definizione di completamento sono descritti in [ARCHITETTURA_E_QUALITA.md](ARCHITETTURA_E_QUALITA.md). I refactoring non modificano i requisiti di prodotto né i criteri di accettazione. La fase 0 è chiusa sul percorso fisico Android ↔ Windows; i collaudi residui di tale percorso e quelli su iPhone e Mac Intel/Apple Silicon appartengono alla fase 1.
 
 ### Tecnologia e moduli
 
@@ -207,8 +207,8 @@ Stime per uno sviluppatore esperto in Kotlin, quasi a tempo pieno, con supporto 
 
 | Fase | Risultato verificabile | Stima |
 |---|---|---:|
-| 0. Prova tecnica | Android e Windows reali si scoprono, si autenticano e scambiano dati cifrati sulla LAN senza Internet | 2–3 settimane |
-| 1. Fondamenta e validazione Apple | Progetto KMP, CI, persistenza, identità e protocollo v1; percorso completo e collaudi fisici su iPhone e Mac Intel/Apple Silicon | 2–3 settimane |
+| 0. Prova tecnica | Android e Windows reali si scoprono, si autenticano e comunicano tramite il canale cifrato sulla LAN | 2–3 settimane |
+| 1. Fondamenta e validazione multipiattaforma | Progetto KMP, CI, persistenza, identità e protocollo v1; percorso Apple completo; collaudi residui Android ↔ Windows e collaudi fisici su iPhone e Mac Intel/Apple Silicon, inclusa la LAN senza Internet | 2–3 settimane |
 | 2. Rete e gruppo | Associazione, sessioni, riconnessione e collegamento manuale | 3–4 settimane |
 | 3. Chat | Testo, ricevute, cronologia, ricerca e recupero | 3–4 settimane |
 | 4. Contenuti | Immagini, file, ripresa e integrità | 3–5 settimane |
@@ -217,7 +217,7 @@ Stime per uno sviluppatore esperto in Kotlin, quasi a tempo pieno, con supporto 
 
 Totale indicativo: **19–29 settimane**, più un margine del 20–30%.
 
-La prova iniziale valida il percorso verticale su Android e Windows reali. La fase 1 deve completare e validare iOS e Mac su hardware reale prima dello sviluppo completo dell’interfaccia. Windows e Linux vengono verificati a ogni traguardo successivo.
+La prova iniziale ha validato il percorso verticale su Android e Windows reali. La fase 1 deve completare le verifiche residue Android ↔ Windows e validare iOS e Mac su hardware reale prima dello sviluppo completo dell’interfaccia. Windows e Linux vengono verificati a ogni traguardo successivo.
 
 ### Consegna specifica per Mac
 
@@ -235,7 +235,7 @@ Servono un Mac con Xcode, un iPhone e un Android reali, oltre a dispositivi o am
 
 ## 5. Collaudo e criteri di completamento
 
-Per la fase 0 è sufficiente il percorso reale Android ↔ Windows: scoperta, autenticazione e scambio di dati cifrati sulla LAN senza Internet. Tutti i collaudi fisici che coinvolgono iPhone o Mac, comprese entrambe le architetture Mac, appartengono alla fase 1 e restano obbligatori. La matrice completa delle piattaforme rimane un criterio della prima versione e della beta.
+La fase 0 è completata dal percorso reale Android ↔ Windows con scoperta, autenticazione e comunicazione sul canale TLS. La fase 1 comprende la ripetizione con WAN disattivata, il testo in entrambe le direzioni, il riavvio dei processi e tutti i collaudi fisici che coinvolgono iPhone o Mac, comprese entrambe le architetture Mac. Queste verifiche restano obbligatorie; la matrice completa delle piattaforme rimane un criterio della prima versione e della beta.
 
 ### Verifiche automatiche
 

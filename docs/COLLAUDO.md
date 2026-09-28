@@ -1,8 +1,8 @@
-# Piano di collaudo reale — fase 0 Android/Windows, fase 1 Apple
+# Piano di collaudo reale — fase 0 completata, fase 1 in corso
 
 ## Preparazione
 
-La fase 0 usa Android 10+ e Windows 11 reali. La fase 1 aggiunge iPhone iOS 16+ e Mac macOS 13+ sia Apple Silicon sia Intel; Ubuntu 24.04 e le altre coppie seguono la matrice di prodotto. Annotare OS, architettura, commit/hash delle sorgenti, JDK, build, IP e interfaccia selezionata. Non riutilizzare identità copiate tra dispositivi.
+La fase 0 è stata completata con Android 10+ e Windows 11 reali. La fase 1 completa su questa coppia le prove con WAN disattivata, bidirezionalità e riavvio, e aggiunge iPhone iOS 16+ e Mac macOS 13+ sia Apple Silicon sia Intel; Ubuntu 24.04 e le altre coppie seguono la matrice di prodotto. Annotare OS, architettura, commit/hash delle sorgenti, JDK, build, IP e interfaccia selezionata. Non riutilizzare identità copiate tra dispositivi.
 
 Router/AP con rete LAN isolata da Internet, client isolation disabilitato. Testare Wi-Fi/Wi-Fi e Wi-Fi/Ethernet. Disattivare la WAN dopo installazione e prima delle prove. Consentire rete locale all'app, non disabilitare globalmente il firewall.
 
@@ -51,4 +51,4 @@ La prova automatica nativa richiede un account/Portachiavi usa e getta, `LANTERN
 | Mac ↔ Linux | non provato | non provato | non provato | non provato | |
 | Android ↔ Windows | riuscita 28/09/2026 | riuscita dopo correzione digest Keystore | comunicazione riuscita; direzioni non annotate | non provato | conferma utente su hardware, 28/09/2026; log disponibile per il guasto precedente |
 
-Il percorso fisico Android ↔ Windows ha confermato scoperta, collegamento e comunicazione; prima di chiudere la fase 0 resta da documentare la ripetizione con WAN disattivata. Le righe che coinvolgono iPhone o Mac appartengono alla fase 1; estendere poi il registro a tutte le dieci coppie, entrambe le direzioni e stesso sistema operativo come richiesto dalla prima versione. Il successo dei test loopback non compila alcuna cella di questo registro.
+Il percorso fisico Android ↔ Windows ha confermato scoperta, collegamento e comunicazione e chiude la fase 0. La ripetizione con WAN disattivata, la bidirezionalità esplicita e il riavvio passano alla fase 1 insieme alle righe che coinvolgono iPhone o Mac. Estendere poi il registro a tutte le dieci coppie, entrambe le direzioni e stesso sistema operativo come richiesto dalla prima versione. Il successo dei test loopback non compila alcuna cella di questo registro.

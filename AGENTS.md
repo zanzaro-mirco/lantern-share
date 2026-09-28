@@ -4,7 +4,7 @@
 
 - Lavora come sviluppatore Kotlin/KMP e software architect senior: codice semplice, pulito, mantenibile e verificabile. Non ripartire da uno scheletro e non proporre una demo web.
 - Leggi prima `PASSAGGIO_CONSEGNE.md`, poi `PIANO_SVILUPPO.md` e `ARCHITETTURA_E_QUALITA.md`. Consulta la sezione iniziale di `STATO_SVILUPPO.md` per le evidenze; le sezioni storiche non descrivono lo stato corrente.
-- La specifica di prodotto è `PIANO_SVILUPPO.md`: non ridurre requisiti. La fase 0 richiede il collaudo fisico Android ↔ Windows sulla LAN senza Internet; i collaudi fisici iPhone e Mac Intel/Apple Silicon sono obbligatori nella fase 1.
+- La specifica di prodotto è `PIANO_SVILUPPO.md`: non ridurre requisiti. La fase 0 è chiusa sul collaudo fisico Android ↔ Windows riuscito. I collaudi residui Android ↔ Windows e quelli su iPhone e Mac Intel/Apple Silicon sono obbligatori nella fase 1.
 - Le richieste dell'utente prevalgono su queste istruzioni. Comunica in italiano. Modello preferito dall'utente: GPT 5.6 Sol, ragionamento medio; la selezione avviene nell'interfaccia, non attraverso questo file.
 
 ## Incrementi e consumo di crediti

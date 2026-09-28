@@ -1,6 +1,6 @@
 # Stato sviluppo — 28 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate e verificate in CI su simulatore. La correzione della firma TLS Android è stata riprovata su hardware: Android e Windows si scoprono, completano il collegamento e comunicano. Su decisione dell'utente, i collaudi fisici iPhone e Mac Intel/Apple Silicon passano alla fase 1. La fase 0 resta aperta soltanto fino alla ripetizione Android ↔ Windows con WAN disattivata; il prossimo incremento software è il trasporto TLS iOS con pinning. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate e verificate in CI su simulatore. La correzione della firma TLS Android è stata riprovata su hardware: Android e Windows si scoprono, completano il collegamento e comunicano. Su decisione dell'utente, la fase 0 è chiusa; la prova Android ↔ Windows con WAN disattivata, bidirezionalità e riavvio, oltre ai collaudi fisici iPhone e Mac Intel/Apple Silicon, passano alla fase 1. Il prossimo incremento software è il trasporto TLS iOS con pinning. Le sezioni storiche non descrivono lo stato corrente.
 
 ## Correzione firma TLS Android — implementata e verificata su hardware
 
@@ -10,7 +10,7 @@ La generazione della chiave autorizza ora sia `SHA-256` sia `NONE`, senza modifi
 
 Verifica locale riuscita: `:androidApp:assembleDebug`, `:androidApp:lintDebug` e `:connectivity:jvmTest`; build completata in 56 secondi. Questi controlli non esercitano Android Keystore/Conscrypt reali. Dopo reinstallazione e rinnovo dell'identità, l'utente ha confermato sul telefono che il percorso prima bloccato completa il collegamento con Windows e che la comunicazione funziona. Non sono ancora documentati separatamente testo in entrambe le direzioni e riavvio dei due processi.
 
-**Stato delle fasi:** la fase 0 richiede ora soltanto il percorso fisico Android ↔ Windows sulla LAN senza Internet. Collegamento e comunicazione sono riusciti, ma la WAN disattivata non è stata documentata e la fase resta quindi aperta. La fase 1 include il completamento del percorso Apple e i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon.
+**Stato delle fasi:** fase 0 chiusa sulla prova fisica Android ↔ Windows riuscita. La fase 1 include il completamento del percorso Apple, i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon e le verifiche residue Android ↔ Windows: WAN disattivata, testo esplicitamente bidirezionale e riavvio dei processi.
 
 ## Persistenza SQLDelight iOS — implementata e verificata in CI
 
