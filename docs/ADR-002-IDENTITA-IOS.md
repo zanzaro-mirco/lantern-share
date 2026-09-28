@@ -12,13 +12,13 @@ La chiave e il certificato vengono registrati separatamente nel Keychain; Securi
 
 ## Dipendenze e verifica
 
-Versioni esatte in `iosApp/AppleIdentity/Package.swift`: Swift Certificates 1.6.0, Swift Crypto 3.9.0, Swift ASN.1 1.3.0, DocC Plugin 1.4.3 e SymbolKit 1.0.0. Le ultime due sono dipendenze di documentazione transitive, non funzioni dell'app. Il package richiede Swift tools 5.8 ed è integrato tramite XcodeGen; deployment iOS 16 invariato. Il manifest del progetto blocca anche le dipendenze transitive per non dipendere dalla data di risoluzione.
+Versioni esatte in `iosApp/AppleIdentity/Package.swift`: Swift Certificates 1.7.0, Swift Crypto 3.9.0, Swift ASN.1 1.3.0. Il package richiede Swift tools 5.9 ed è integrato tramite XcodeGen; deployment iOS 16 invariato. Il manifest del progetto blocca anche le dipendenze transitive per non dipendere dalla data di risoluzione.
 
 Fonti ufficiali consultate:
 
-- [Manifest Swift Certificates 1.6.0](https://github.com/apple/swift-certificates/blob/1.6.0/Package.swift).
-- [Supporto SecKey di Swift Certificates](https://github.com/apple/swift-certificates/blob/1.6.0/Sources/X509/CertificatePrivateKey.swift).
-- [Conversione SecCertificate e costruzione X.509](https://github.com/apple/swift-certificates/blob/1.6.0/Sources/X509/Certificate.swift).
+- [Manifest Swift Certificates 1.7.0](https://github.com/apple/swift-certificates/blob/1.7.0/Package.swift).
+- [Supporto SecKey di Swift Certificates](https://github.com/apple/swift-certificates/blob/1.7.0/Sources/X509/CertificatePrivateKey.swift).
+- [Conversione SecCertificate e costruzione X.509](https://github.com/apple/swift-certificates/blob/1.7.0/Sources/X509/Certificate.swift).
 - [Apple: recuperare una chiave esistente](https://developer.apple.com/documentation/security/getting-an-existing-key).
 - [Apple: installare il runtime del simulatore](https://developer.apple.com/documentation/xcode/downloading-and-installing-additional-xcode-components).
 

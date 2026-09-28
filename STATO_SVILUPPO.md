@@ -10,6 +10,8 @@ Esito correzione: [CI 36392913603](https://github.com/zanzaro-mirco/lantern-shar
 
 Implementato l'adattatore Swift `LanternIdentity`: chiave P-256, certificato autofirmato tramite Swift Certificates Apple, pin persistente e SecIdentity nel Keychain, firma SHA-256/ECDSA; apertura fuori dal thread UI e ID mostrato nella schermata Compose. Dati parziali o incoerenti bloccano l'avvio senza rigenerazione automatica. Aggiunti cinque XCTest con Keychain reale del simulatore, dipendenze Swift esatte e integrazione XcodeGen/CI. Decisioni in `docs/ADR-002-IDENTITA-IOS.md`.
 
+La prima compilazione nativa ha rilevato un difetto di Swift Certificates 1.6.0 (`kSecAttrKeyTypeECDSA` non disponibile su iOS). Selezionata la release ufficiale 1.7.0 che usa `kSecAttrKeyTypeECSECPrimeRandom`, con Swift tools 5.9; lock e fonti aggiornati. Rimossi DocC/SymbolKit, non richiesti dalla nuova versione. Nessuna patch locale alla libreria e nessun bypass di sicurezza.
+
 **In verifica al momento di questo aggiornamento:** build Swift e test del nuovo adattatore. iOS non ha ancora listener/connessione TLS, associazione, messaggistica o repository SQLite. Il prossimo incremento è collegare Network.framework al protocollo condiviso e introdurre la persistenza iOS, mantenendo esplicito lo stato non autorizzato prima della doppia conferma. Fase 0 aperta.
 
 ## Incremento Portachiavi macOS — aggiornamento più recente
