@@ -96,7 +96,7 @@ Su Mac Intel usare `iosX64` per il simulatore. Aprire il progetto generato in Xc
 
 L'app apre l'identità nel Keychain e ne mostra l'ID persistente; poi la sonda elenca servizi desktop/Android tramite `NWBrowser`. Il package Swift locale e le versioni bloccate sono descritti nell'[ADR iOS](docs/ADR-002-IDENTITA-IOS.md). Il successivo incremento deve implementare NWListener/NWConnection TLS con verifica pin, associazione e driver SQLDelight iOS. Solo dopo tali implementazioni sarà possibile eseguire il collaudo completo iPhone.
 
-Per i test dell'identità su un simulatore iOS 18.4 con Xcode 16.3: `xcodebuild -downloadPlatform iOS -buildVersion 18.4`, generare il progetto, poi `xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' CODE_SIGNING_ALLOWED=NO test`. Nessuna credenziale di firma reale è richiesta per il simulatore. La CI crea un simulatore dedicato e conserva il risultato XCTest.
+Per i test dell'identità su un simulatore iOS 18.4 con Xcode 16.3: `xcodebuild -downloadPlatform iOS -buildVersion 18.4`, generare il progetto, poi dalla cartella principale `xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test`. La firma locale ad hoc include gli entitlement del simulatore necessari al Keychain; non usa certificati o credenziali Apple Developer. `Simulator.entitlements` è selezionato soltanto per SDK `iphonesimulator`, mai per dispositivo reale. La CI crea un simulatore dedicato e conserva il risultato XCTest.
 
 ## Verifiche e sicurezza
 

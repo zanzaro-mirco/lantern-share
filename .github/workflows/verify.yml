@@ -91,7 +91,7 @@ jobs:
       - name: Test real iOS Keychain on simulator
         run: |
           device_id=$(xcrun simctl create LanternIdentityTests com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
-          xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
       - uses: actions/upload-artifact@v4
         if: always()
         with:
