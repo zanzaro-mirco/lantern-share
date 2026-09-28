@@ -12,12 +12,18 @@ import platform.UIKit.UIViewController
 
 /** Native Bonjour probe. This entry intentionally does not expose unimplemented messaging. */
 class IosProbeState {
+    var identityId by mutableStateOf("")
+        private set
+    var identityError by mutableStateOf("")
+        private set
     var status by mutableStateOf("Scoperta Bonjour arrestata")
         private set
     var devices by mutableStateOf(listOf<String>())
         private set
     fun updateStatus(value: String) { status = value }
     fun updateDevices(values: List<String>) { devices = values }
+    fun updateIdentity(value: String) { identityId = value; identityError = "" }
+    fun updateIdentityError(value: String) { identityError = value; identityId = "" }
 }
 fun ProbeViewController(state: IosProbeState, start: () -> Unit, stop: () -> Unit): UIViewController = ComposeUIViewController {
     MaterialTheme {
@@ -25,8 +31,10 @@ fun ProbeViewController(state: IosProbeState, start: () -> Unit, stop: () -> Uni
             Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("Lantern · iPhone", style = MaterialTheme.typography.headlineMedium)
                 Text("Verifica preliminare Bonjour")
+                if (state.identityId.isNotEmpty()) Text("Identità persistente: ${state.identityId}")
+                else Text(state.identityError.ifEmpty { "Apertura identità nel Keychain…" })
                 Text("Il trasporto TLS e l'associazione iOS non sono ancora implementati. Questa schermata verifica soltanto la scoperta reale dei servizi LAN.")
-                Row { Button(onClick = start) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
+                Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)
                 state.devices.forEach { Text(it) }
             }

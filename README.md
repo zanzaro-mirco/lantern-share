@@ -2,7 +2,7 @@
 
 **Primo incremento sperimentale; fase 0 non completata.** Nome tecnico provvisorio, senza decisioni di branding. La specifica resta [PIANO_SVILUPPO.md](PIANO_SVILUPPO.md). Risultati verificati e lacune sono in [STATO_SVILUPPO.md](STATO_SVILUPPO.md).
 
-Il desktop contiene un percorso reale: identità persistente, mDNS, associazione esplicita su entrambi gli schermi, TLS 1.3 reciproco, testo firmato, SQLite e ricevute dopo salvataggio. Android riusa protocollo e motore TLS con NSD e Keystore nativi. **iOS contiene per ora solo l'ingresso Compose e una sonda Bonjour: non può ancora associarsi o scambiare messaggi.** Non è una implementazione completa della fase 0.
+Il desktop contiene un percorso reale: identità persistente, mDNS, associazione esplicita su entrambi gli schermi, TLS 1.3 reciproco, testo firmato, SQLite e ricevute dopo salvataggio. Android riusa protocollo e motore TLS con NSD e Keystore nativi. **iOS contiene identità Keychain, ingresso Compose e sonda Bonjour: non può ancora associarsi o scambiare messaggi.** Non è una implementazione completa della fase 0. Gli esiti delle build e dei test effettivi sono in STATO_SVILUPPO.md.
 
 ## Struttura
 
@@ -92,7 +92,9 @@ xcodebuild -project Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -conf
 
 Su Mac Intel usare `iosX64` per il simulatore. Aprire il progetto generato in Xcode per il dispositivo reale; **la firma per iPhone va configurata dall'utente**, non da questi script. Deployment target iOS 16. `Info.plist` contiene descrizione rete locale e `_lantern._tcp`. Nessun entitlement di background promette ricezione continua.
 
-La sonda elenca servizi desktop/Android tramite `NWBrowser`. Il successivo incremento deve implementare identità Keychain, NWListener/NWConnection TLS con verifica pin, associazione e driver SQLDelight iOS. Solo dopo tali implementazioni sarà possibile eseguire il collaudo crittografico iPhone.
+L'app apre l'identità nel Keychain e ne mostra l'ID persistente; poi la sonda elenca servizi desktop/Android tramite `NWBrowser`. Il package Swift locale e le versioni bloccate sono descritti nell'[ADR iOS](docs/ADR-002-IDENTITA-IOS.md). Il successivo incremento deve implementare NWListener/NWConnection TLS con verifica pin, associazione e driver SQLDelight iOS. Solo dopo tali implementazioni sarà possibile eseguire il collaudo completo iPhone.
+
+Per i test dell'identità su un simulatore iOS 18.4 con Xcode 16.3: `xcodebuild -downloadPlatform iOS -buildVersion 18.4`, generare il progetto, poi `xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' CODE_SIGNING_ALLOWED=NO test`. Nessuna credenziale di firma reale è richiesta per il simulatore. La CI crea un simulatore dedicato e conserva il risultato XCTest.
 
 ## Verifiche e sicurezza
 

@@ -18,3 +18,5 @@ iosApp/Lantern.xcodeproj/
 *.mobileprovision
 **/xcuserdata/
 mac-identity.ref
+**/.build/
+**/.swiftpm/

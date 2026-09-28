@@ -1,4 +1,14 @@
-# Stato sviluppo — 27 settembre 2026
+# Stato sviluppo — 28 settembre 2026
+
+## CI remota e identità iOS — incremento in verifica
+
+Prima CI reale, commit `e348fca`: **desktop Windows, Linux, Mac ARM64 e Mac Intel riusciti**, incluse build con runtime e test nativi Portachiavi Mac. Il framework Kotlin iOS e i test di protocollo sono arrivati a completamento; l'app Swift si è fermata per runtime iOS 18.4 assente. Android si è fermato nel setup dell'SDK per il pacchetto legacy `tools`. Questi risultati aggiornano i precedenti resoconti che dichiaravano la CI non ancora eseguita. Non sono prove su dispositivi fisici.
+
+Correzione `af69849`: installazione esplicita di `platform-tools` per Android e runtime iOS 18.4 per Xcode 16.3. Versioni Kotlin/Gradle/Compose invariate.
+
+Implementato l'adattatore Swift `LanternIdentity`: chiave P-256, certificato autofirmato tramite Swift Certificates Apple, pin persistente e SecIdentity nel Keychain, firma SHA-256/ECDSA; apertura fuori dal thread UI e ID mostrato nella schermata Compose. Dati parziali o incoerenti bloccano l'avvio senza rigenerazione automatica. Aggiunti cinque XCTest con Keychain reale del simulatore, dipendenze Swift esatte e integrazione XcodeGen/CI. Decisioni in `docs/ADR-002-IDENTITA-IOS.md`.
+
+**In verifica al momento di questo aggiornamento:** build Swift e test del nuovo adattatore. iOS non ha ancora listener/connessione TLS, associazione, messaggistica o repository SQLite. Il prossimo incremento è collegare Network.framework al protocollo condiviso e introdurre la persistenza iOS, mantenendo esplicito lo stato non autorizzato prima della doppia conferma. Fase 0 aperta.
 
 ## Incremento Portachiavi macOS — aggiornamento più recente
 

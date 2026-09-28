@@ -1,4 +1,7 @@
 name: Lantern
+packages:
+  LanternIdentity:
+    path: AppleIdentity
 options:
   deploymentTarget:
     iOS: '16.0'
@@ -14,6 +17,8 @@ targets:
     type: application
     platform: iOS
     sources: [LanternApp.swift]
+    dependencies:
+      - package: LanternIdentity
     settings:
       base:
         INFOPLIST_FILE: Info.plist
@@ -23,8 +28,21 @@ targets:
         script: |
           cd "$SRCROOT/.."
           bash ./gradlew :ui:embedAndSignAppleFrameworkForXcode
+  LanternIdentityTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: Lantern
+      - package: LanternIdentity
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lantern.poc.identity-tests
 schemes:
   Lantern:
     build:
       targets:
         Lantern: all
+    test:
+      targets: [LanternIdentityTests]
