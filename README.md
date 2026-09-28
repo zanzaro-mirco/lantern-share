@@ -15,7 +15,7 @@ Il desktop contiene un percorso reale: identità persistente, mDNS, associazione
 | `ui` | Compose condiviso, ingresso iOS |
 | `desktopApp` | Ingresso JVM Windows, Linux e Mac Intel/Apple Silicon |
 | `androidApp` | Activity, NSD, Android Keystore, driver SQLite Android |
-| `iosApp` | Progetto Xcode generabile e sonda Network.framework |
+| `iosApp` | Progetto Xcode generabile, identità Keychain, sonda Bonjour e trasporto TLS Network.framework |
 
 `connectivity` è un modulo KMP con varianti JVM e Android e un source set `jvmAndAndroidMain` per il motore TLS. JmDNS e la creazione dei certificati desktop stanno in `jvmMain`; Android dipende dal modulo, senza importarne i sorgenti. `persistence` contiene `SqliteDeviceRepository` e l'apertura JDBC desktop, mentre il motore dipende dai contratti di dominio.
 
@@ -96,7 +96,7 @@ xcodebuild -project Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -conf
 
 Su Mac Intel usare `iosX64` per il simulatore. Aprire il progetto generato in Xcode per il dispositivo reale; **la firma per iPhone va configurata dall'utente**, non da questi script. Deployment target iOS 16. `Info.plist` contiene descrizione rete locale e `_lantern._tcp`. Nessun entitlement di background promette ricezione continua.
 
-L'app apre l'identità nel Keychain, apre `lantern.db` nella propria Application Support e mostra ID e nome dispositivo persistenti; la sonda elenca servizi desktop/Android tramite `NWBrowser`. Il package Swift locale e le versioni bloccate sono descritti nell'[ADR iOS](docs/ADR-002-IDENTITA-IOS.md). Il successivo incremento deve implementare NWListener/NWConnection TLS con verifica pin; l'associazione rimane un incremento separato. Solo dopo tali implementazioni sarà possibile eseguire il collaudo completo iPhone.
+L'app apre l'identità nel Keychain, apre `lantern.db` nella propria Application Support e mostra ID e nome dispositivo persistenti; la sonda elenca servizi desktop/Android tramite `NWBrowser`. Il package Swift locale contiene anche l'adattatore `NWListener`/`NWConnection`: TLS 1.3 reciproco, identità Keychain e verifica esatta dei pin forniti dal chiamante. Il framing incrementale e la validazione wire restano nel codice Kotlin. Decisioni in [ADR identità iOS](docs/ADR-002-IDENTITA-IOS.md) e [ADR trasporto TLS iOS](docs/ADR-003-TRASPORTO-TLS-IOS.md). Associazione e messaggistica iOS non sono ancora integrate nella UI.
 
 Per i test dell'identità su un simulatore iOS 18.4 con Xcode 16.3: `xcodebuild -downloadPlatform iOS -buildVersion 18.4`, generare il progetto, poi dalla cartella principale `xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test`. La firma locale ad hoc include gli entitlement del simulatore necessari al Keychain; non usa certificati o credenziali Apple Developer. `Simulator.entitlements` è selezionato soltanto per SDK `iphonesimulator`, mai per dispositivo reale. La CI crea un simulatore dedicato e conserva il risultato XCTest.
 

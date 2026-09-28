@@ -15,7 +15,10 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
         }
-        iosMain.dependencies { implementation(project(":persistence")) }
+        iosMain.dependencies {
+            implementation(project(":persistence"))
+            implementation(project(":protocol"))
+        }
     }
 }
 if (withAndroid) extensions.configure<com.android.build.gradle.LibraryExtension> { namespace = "lantern.ui"; compileSdk = 35; defaultConfig { minSdk = 29 }; compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 } }

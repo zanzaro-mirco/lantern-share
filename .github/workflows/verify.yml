@@ -88,7 +88,7 @@ jobs:
           cp iosApp/Package.resolved iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Compile unsigned simulator app
         run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=NO build
-      - name: Test real iOS Keychain on simulator
+      - name: Test iOS Keychain and TLS on simulator
         run: |
           device_id=$(xcrun simctl create LanternIdentityTests com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
           xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test

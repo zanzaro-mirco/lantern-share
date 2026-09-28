@@ -11,6 +11,8 @@ import androidx.compose.ui.window.ComposeUIViewController
 import lantern.domain.ContentLimits
 import lantern.persistence.IosDeviceRepository
 import lantern.persistence.openIosRepository
+import lantern.protocol.Wire
+import lantern.protocol.WireFrameDecoder
 import platform.UIKit.UIViewController
 
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
@@ -31,6 +33,19 @@ class IosPersistence private constructor(private val repository: IosDeviceReposi
 
 @Throws(Exception::class)
 fun openIosPersistence(databaseDirectory: String): IosPersistence = IosPersistence.open(databaseDirectory)
+
+/** Swift-facing boundary: Network.framework moves bytes; Kotlin owns framing and wire validation. */
+class IosWireFraming {
+    private val decoder = WireFrameDecoder()
+
+    @Throws(Exception::class)
+    fun frame(json: String): ByteArray = WireFrameDecoder.encode(Wire.decode(json.encodeToByteArray()))
+
+    @Throws(Exception::class)
+    fun accept(chunk: ByteArray): List<String> = decoder.accept(chunk).map { Wire.encode(it).decodeToString() }
+
+    fun reset() = decoder.reset()
+}
 
 /** Native Bonjour probe. This entry intentionally does not expose unimplemented messaging. */
 class IosProbeState {

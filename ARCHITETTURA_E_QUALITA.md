@@ -100,6 +100,8 @@ Incremento successivo: [ADR 001 — identità Mac](docs/ADR-001-IDENTITA-MAC.md)
 
 Incremento iOS: [ADR 002](docs/ADR-002-IDENTITA-IOS.md). Certificati affidati alla libreria Apple, accesso Keychain isolato, errore esplicito su persistenza incoerente, inizializzazione fuori dal thread UI e test nativi separati dai test Kotlin. Il modulo non replica il protocollo di rete.
 
+Trasporto iOS: [ADR 003](docs/ADR-003-TRASPORTO-TLS-IOS.md). Network.framework gestisce TLS 1.3 e identità reciproca con pin espliciti; framing, limiti e validazione wire restano nel protocollo Kotlin. L'adattatore non autorizza peer e non implementa l'associazione.
+
 | Problema riscontrato | Intervento eseguito | Evidenza |
 |---|---|---|
 | Android compilava sorgenti privati di connectivity | Varianti KMP JVM/Android e dipendenza Gradle ordinaria | Build APK riuscita; nessun `srcDir` verso un altro modulo |

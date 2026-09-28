@@ -1,6 +1,16 @@
 # Stato sviluppo — 28 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Identità e persistenza iOS sono implementate e verificate in CI su simulatore. La correzione della firma TLS Android è stata riprovata su hardware: Android e Windows si scoprono, completano il collegamento e comunicano. Su decisione dell'utente, la fase 0 è chiusa; la prova Android ↔ Windows con WAN disattivata, bidirezionalità e riavvio, oltre ai collaudi fisici iPhone e Mac Intel/Apple Silicon, passano alla fase 1. Il prossimo incremento software è il trasporto TLS iOS con pinning. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Il trasporto TLS iOS con pinning è implementato e i test Kotlin locali passano; compilazione e XCTest Network.framework attendono la CI su macOS. Associazione e messaggistica iOS non sono state implementate. Le sezioni storiche non descrivono lo stato corrente.
+
+## Trasporto TLS iOS con pinning — implementato, verifica nativa pendente
+
+Il package Swift contiene ora `AppleTLSTransport`, che crea listener e connessioni Network.framework esclusivamente TLS 1.3. Usa la `SecIdentity` persistente, richiede l'identità del peer e accetta soltanto certificati con pin esplicitamente fornito dal chiamante, chiave EC P-256, firma ECDSA/SHA-256, validità temporale e autofirma verificata. Un insieme vuoto, un pin malformato o diverso rifiuta l'handshake; Bonjour non conferisce trust.
+
+Il nuovo `WireFrameDecoder` comune gestisce il prefisso uint32 big endian, frammentazione, frame consecutivi e limite di 65.536 byte, delegando ogni payload a `Wire`. `IosWireFraming` lo espone a Swift, quindi Network.framework non duplica JSON o regole Kotlin. L'associazione, la persistenza del trust, HELLO/APPROVE e il testo restano deliberatamente fuori dall'incremento.
+
+Verifica locale Windows riuscita: `:protocol:jvmTest` e `:ui:compileCommonMainKotlinMetadata` in 8 secondi; anche `:ui:compileIosMainKotlinMetadata` termina senza errori ma il task iOS è saltato sull'host non Apple, quindi non costituisce compilazione nativa. Aggiunti XCTest con listener/connessione loopback reali per handshake reciproco, trasferimento di byte e rifiuto del pin errato. La compilazione Swift e l'esecuzione sul simulatore sono pendenti fino alla CI. Decisione in `docs/ADR-003-TRASPORTO-TLS-IOS.md`.
+
+Prossimo passo: verificare una volta il job iOS del commit; se riesce, il prossimo incremento separato sarà l'associazione iOS sopra il trasporto autenticato.
 
 ## Correzione firma TLS Android — implementata e verificata su hardware
 

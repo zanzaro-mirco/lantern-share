@@ -4,13 +4,13 @@
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository privato: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. La CI 36474723744 del commit `1efb3da` è interamente riuscita, inclusi salvataggio/riapertura SQLite, link app e cinque XCTest Keychain. Il collaudo fisico Android ↔ Windows ha inizialmente rilevato `KeyStoreException: Incompatible digest`; dopo la correzione l'utente ha confermato che collegamento e comunicazione funzionano. Confermare con `git status` e log prima di lavorare.
+L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Il trasporto TLS iOS con pinning è implementato ma la compilazione Swift e i nuovi XCTest Network.framework attendono la CI. Il collaudo fisico Android ↔ Windows ha inizialmente rilevato `KeyStoreException: Incompatible digest`; dopo la correzione l'utente ha confermato che collegamento e comunicazione funzionano. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
 - Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. Il collaudo fisico Android ↔ Windows ha scoperto che Conscrypt richiede `DIGEST_NONE` per la firma TLS; la correzione è implementata, compilata e riprovata con comunicazione riuscita su hardware.
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
-- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; ID mostrato in Compose; sonda Bonjour reale. Repository SQLDelight nativo, nome persistente, link app e test di riapertura sono verificati in CI. **Mancano trasporto TLS, associazione e messaggistica.**
+- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; repository SQLDelight nativo, nome persistente e sonda Bonjour. `AppleTLSTransport` configura TLS 1.3 reciproco e pin esatti; il framing resta in Kotlin. **Compilazione/test nativi del trasporto pendenti; associazione e messaggistica non implementate.**
 - CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
 - Fase 0 chiusa sulla prova fisica Android ↔ Windows riuscita. La fase 1 comprende il completamento Apple, i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon e le verifiche residue Android ↔ Windows con WAN disattivata, testo bidirezionale e riavvio. Nessuna release pubblicata.
 
@@ -18,7 +18,7 @@ L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulato
 
 La chiave Android nuova autorizza `SHA-256` e `NONE`, richiesti rispettivamente dalle firme applicative e da Conscrypt TLS 1.3. Una vecchia chiave incompatibile viene rifiutata con istruzione esplicita, senza rigenerazione silenziosa. Build APK, lint e test JVM sono riusciti; dopo cancellazione dati, anche il collegamento e la comunicazione Android ↔ Windows sono riusciti su hardware. Testo in entrambe le direzioni e riavvio non sono stati documentati separatamente.
 
-Il prossimo incremento software della fase 1 è **NWListener/NWConnection TLS con pinning**, limitato al trasporto e all'integrazione del protocollo Kotlin; l'associazione iOS resta separata. Le verifiche residue Android ↔ Windows e i collaudi fisici iPhone e Mac saranno eseguiti nella fase 1 quando i rispettivi percorsi di prova saranno disponibili.
+Il prossimo passo è controllare una volta il job iOS relativo al commit del trasporto. Se compila e gli XCTest passano, il prossimo incremento software della fase 1 sarà l'associazione iOS sopra questo canale; non anticipare la messaggistica. Le verifiche residue Android ↔ Windows e i collaudi fisici iPhone e Mac restano nella fase 1.
 
 ## Mappa minima dei sorgenti
 
