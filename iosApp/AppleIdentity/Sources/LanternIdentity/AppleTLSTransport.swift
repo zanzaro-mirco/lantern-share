@@ -22,6 +22,8 @@ public final class AppleTLSTransport {
 
     private let identity: AppleIdentity
     private let verificationQueue: DispatchQueue
+    private let certificateLock = NSLock()
+    private var peerCertificates: [String: SecCertificate] = [:]
 
     public init(identity: AppleIdentity, verificationQueue: DispatchQueue? = nil) {
         self.identity = identity
@@ -48,6 +50,17 @@ public final class AppleTLSTransport {
         )
     }
 
+    public func connect(endpoint: NWEndpoint, expectedPeerID: String) throws -> NWConnection {
+        guard Self.isPin(expectedPeerID) else { throw TransportError.invalidPin }
+        return NWConnection(to: endpoint, using: try parameters(allowedPeerIDs: { [expectedPeerID] }))
+    }
+
+    public func certificate(forPeerID peerID: String) -> SecCertificate? {
+        certificateLock.lock()
+        defer { certificateLock.unlock() }
+        return peerCertificates[peerID]
+    }
+
     private func parameters(allowedPeerIDs: @escaping AllowedPeerIDs) throws -> NWParameters {
         let tls = NWProtocolTLS.Options()
         guard let localIdentity = sec_identity_create(identity.tlsIdentity) else {
@@ -69,7 +82,14 @@ public final class AppleTLSTransport {
                 complete(false)
                 return
             }
-            complete(Self.accepts(certificate: certificate, allowedPeerIDs: pins))
+            let accepted = Self.accepts(certificate: certificate, allowedPeerIDs: pins)
+            if accepted {
+                let pin = AppleIdentity.fingerprint(certificate)
+                self.certificateLock.lock()
+                self.peerCertificates[pin] = certificate
+                self.certificateLock.unlock()
+            }
+            complete(accepted)
         }, verificationQueue)
 
         let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())

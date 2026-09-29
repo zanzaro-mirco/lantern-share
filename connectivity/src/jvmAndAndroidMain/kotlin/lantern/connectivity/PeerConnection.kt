@@ -5,6 +5,7 @@ import lantern.domain.MessageRepository
 import lantern.domain.PeerTransport
 import lantern.protocol.Frame
 import lantern.protocol.FrameType
+import lantern.protocol.PairingWire
 import lantern.protocol.Wire
 import java.io.Closeable
 import java.security.cert.X509Certificate
@@ -53,26 +54,26 @@ internal class PeerConnection(
 
     private fun exchangeHello() {
         val nonce = randomNonce()
-        stream.write(Frame(type = FrameType.HELLO, sender = identity.id, nonce = nonce))
+        stream.write(PairingWire.hello(identity.id, nonce))
         val hello = stream.read()
         require(hello.type == FrameType.HELLO && hello.sender == remoteId)
-        session = digest(Wire.transcript(identity.id, nonce, remoteId, hello.nonce).encodeToByteArray())
+        session = digest(PairingWire.transcript(identity.id, nonce, remoteId, hello.nonce).encodeToByteArray())
         authorized = authorization.isTrusted(remoteId)
         if (authorized) {
             socket.soTimeout = 0
             onEvent(ConnectionEvent.Connected)
         } else {
             socket.soTimeout = PAIRING_READ_TIMEOUT_MILLIS
-            onEvent(ConnectionEvent.AwaitingComparison(session.chunked(4).joinToString(" ")))
+            onEvent(ConnectionEvent.AwaitingComparison(PairingWire.displayCode(session)))
         }
     }
 
     @Synchronized
     fun approve(displayedCode: String) {
         check(isActive() && pairingAttempt != null && authorization.attemptFor(remoteId) == pairingAttempt)
-        check(session.isNotEmpty() && displayedCode == session.chunked(4).joinToString(" "))
+        check(session.isNotEmpty() && displayedCode == PairingWire.displayCode(session))
         if (localApproval) return
-        val approval = sign(Frame(type = FrameType.APPROVE, sender = identity.id, session = session, body = remoteId))
+        val approval = sign(PairingWire.approval(identity.id, remoteId, session))
         stream.write(approval)
         localApproval = true
         finishPairing()

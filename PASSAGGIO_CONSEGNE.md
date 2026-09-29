@@ -1,24 +1,24 @@
-# Passaggio di consegne — 28 settembre 2026
+# Passaggio di consegne — 29 settembre 2026
 
 ## Ripartenza rapida
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Il trasporto TLS iOS con pinning è implementato ma la compilazione Swift e i nuovi XCTest Network.framework attendono la CI. Il collegamento Android ↔ Windows funziona; il successivo crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
+L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Trasporto TLS e associazione iOS sono implementati; compilazione Swift e XCTest Network.framework restano non verificati perché le ultime Actions si sono fermate nel download del runtime, prima della build. L'utente ha scelto di rinviare il problema CI, che potrebbe dipendere dal runner GitHub. Il collegamento Android ↔ Windows funziona; il successivo crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
 - Desktop e Android: identità persistente, scoperta LAN, associazione reciproca, TLS 1.3 autenticato, testo firmato/cifrato nel trasporto, SQLite e riconnessione. `DIGEST_NONE` è verificato su hardware. Le chiusure TLS di blocco/rifiuto/arresto sono ora confinate a I/O; test/build/lint passano, riprova fisica del crash pendente.
 - Mac: Portachiavi tramite provider Apple del JDK, migrazione del PKCS#12 senza cambiare ID; test nativi CI riusciti su Intel e ARM64. Nessun collaudo su Mac fisici dell'utente.
-- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; repository SQLDelight nativo, nome persistente e sonda Bonjour. `AppleTLSTransport` configura TLS 1.3 reciproco e pin esatti; il framing resta in Kotlin. **Compilazione/test nativi del trasporto pendenti; associazione e messaggistica non implementate.**
-- CI verde su Android, Windows, Linux, Mac Intel/ARM64 e iOS. Cinque XCTest passati sul Keychain reale del simulatore iPhone 16/iOS 18.4. Ultima suite locale Windows: 26 test passati con multicast, build desktop e Android; lint 0 errori/18 warning.
+- iOS: identità P-256, certificato X.509, pin e SecIdentity nel Keychain; repository SQLDelight nativo e nome persistente. `AppleTLSTransport` configura TLS 1.3 reciproco e pin esatti. Pubblicazione/scoperta Bonjour, selezione a 120 secondi, `HELLO/APPROVE`, confronto completo, doppia conferma, verifica firma e trust persistente sono implementati riusando wire e contratti Kotlin. **Compilazione/test nativi di trasporto e associazione pendenti; messaggistica non implementata.**
+- L'ultima CI completamente verde resta quella precedente all'aggiunta del trasporto iOS. Le esecuzioni recenti compilano gli altri job ma il job iOS si ferma in `xcodebuild -downloadPlatform iOS -buildVersion 18.4` con `Unable to connect to simulator`, prima del codice. Cinque XCTest Keychain erano già passati sul simulatore iPhone 16/iOS 18.4. Ultima verifica locale pertinente: protocollo e connettività JVM riusciti, incluse le invarianti negative dei frame di pairing; la build nativa Apple non è disponibile su Windows.
 - Fase 0 chiusa sulla prova fisica Android ↔ Windows riuscita. La fase 1 comprende il completamento Apple, i collaudi fisici obbligatori su iPhone, Mac Intel e Mac Apple Silicon e le verifiche residue Android ↔ Windows con WAN disattivata, testo bidirezionale e riavvio. Nessuna release pubblicata.
 
 ## Incremento corrente e prossimo passo
 
 La chiave Android nuova autorizza `SHA-256` e `NONE`, richiesti rispettivamente dalle firme applicative e da Conscrypt TLS 1.3. Una vecchia chiave incompatibile viene rifiutata con istruzione esplicita, senza rigenerazione silenziosa. Build APK, lint e test JVM sono riusciti; dopo cancellazione dati, anche il collegamento e la comunicazione Android ↔ Windows sono riusciti su hardware. Testo in entrambe le direzioni e riavvio non sono stati documentati separatamente.
 
-Il prossimo passo è controllare una volta la CI del push che contiene trasporto iOS e correzione Android. Poi installare il nuovo APK e riprovare blocco/rifiuto/arresto su Android ↔ Windows. Se il job iOS compila e gli XCTest passano, il prossimo incremento software della fase 1 sarà l'associazione iOS sopra questo canale; non anticipare la messaggistica.
+Il prossimo passo è compilare trasporto e associazione iOS su un ambiente Apple, quindi provare la doppia conferma contro Android o desktop e verificare chiusura/riapertura del trust. Il problema del download runtime in Actions è rinviato per scelta dell'utente: non consumare altri push o polling per tentare la stessa CI invariata. Non anticipare `TEXT/ACK` finché il nuovo confine Swift/Kotlin non compila. In parallelo resta possibile installare il nuovo APK e riprovare blocco/rifiuto/arresto su Android ↔ Windows.
 
 ## Mappa minima dei sorgenti
 

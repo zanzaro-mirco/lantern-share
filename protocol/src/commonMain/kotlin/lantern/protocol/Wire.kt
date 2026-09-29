@@ -62,3 +62,30 @@ object Wire {
         return if (idA < idB) "lantern-pair-0|$idA|$nonceA|$idB|$nonceB" else "lantern-pair-0|$idB|$nonceB|$idA|$nonceA"
     }
 }
+
+/** Wire-v0 pairing frames and canonical transcript shared by every platform adapter. */
+object PairingWire {
+    fun hello(sender: String, nonce: String): Frame {
+        require(Wire.isFingerprint(sender) && Wire.isFingerprint(nonce))
+        return Frame(type = FrameType.HELLO, sender = sender, nonce = nonce)
+    }
+
+    fun approval(sender: String, peerId: String, session: String, signature: String = ""): Frame {
+        require(Wire.isFingerprint(sender) && Wire.isFingerprint(peerId) && Wire.isFingerprint(session))
+        require(signature.length <= 256)
+        return Frame(type = FrameType.APPROVE, sender = sender, session = session, body = peerId, signature = signature)
+    }
+
+    fun transcript(localId: String, localNonce: String, remoteId: String, remoteNonce: String): String {
+        require(
+            Wire.isFingerprint(localId) && Wire.isFingerprint(localNonce) &&
+                Wire.isFingerprint(remoteId) && Wire.isFingerprint(remoteNonce)
+        )
+        return Wire.transcript(localId, localNonce, remoteId, remoteNonce)
+    }
+
+    fun displayCode(session: String): String {
+        require(Wire.isFingerprint(session))
+        return session.chunked(4).joinToString(" ")
+    }
+}

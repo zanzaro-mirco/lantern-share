@@ -26,7 +26,9 @@ final class AppleTLSTransportTests: XCTestCase {
         let serverReady = expectation(description: "server TLS ready")
         let clientReady = expectation(description: "client TLS ready")
 
-        let listener = try AppleTLSTransport(identity: serverIdentity).listen {
+        let serverTransport = AppleTLSTransport(identity: serverIdentity)
+        let clientTransport = AppleTLSTransport(identity: clientIdentity)
+        let listener = try serverTransport.listen {
             [clientIdentity.id]
         }
         self.listener = listener
@@ -44,8 +46,9 @@ final class AppleTLSTransportTests: XCTestCase {
         wait(for: [listenerReady], timeout: 10)
 
         let port = try XCTUnwrap(listener.port)
-        let client = try AppleTLSTransport(identity: clientIdentity).connect(
-            host: "127.0.0.1", port: port, expectedPeerID: serverIdentity.id
+        let client = try clientTransport.connect(
+            endpoint: .hostPort(host: "127.0.0.1", port: port),
+            expectedPeerID: serverIdentity.id
         )
         self.client = client
         client.stateUpdateHandler = { state in
@@ -53,6 +56,8 @@ final class AppleTLSTransportTests: XCTestCase {
         }
         client.start(queue: queue)
         wait(for: [serverReady, clientReady], timeout: 10)
+        XCTAssertNotNil(serverTransport.certificate(forPeerID: clientIdentity.id))
+        XCTAssertNotNil(clientTransport.certificate(forPeerID: serverIdentity.id))
 
         let received = expectation(description: "encrypted payload received")
         server?.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, error in

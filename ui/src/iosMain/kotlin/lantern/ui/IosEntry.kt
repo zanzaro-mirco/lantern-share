@@ -13,6 +13,7 @@ import lantern.persistence.IosDeviceRepository
 import lantern.persistence.openIosRepository
 import lantern.protocol.Wire
 import lantern.protocol.WireFrameDecoder
+import lantern.protocol.PairingWire
 import platform.UIKit.UIViewController
 
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
@@ -24,6 +25,12 @@ class IosPersistence private constructor(private val repository: IosDeviceReposi
         require(ContentLimits.isValidName(value)) { "Nome dispositivo non valido" }
         repository.rename(value)
     }
+    @Throws(Exception::class)
+    fun trusted(): List<String> = repository.trusted().sorted()
+    @Throws(Exception::class)
+    fun trust(id: String, admission: String) = repository.trust(id, admission)
+    @Throws(Exception::class)
+    fun block(id: String) = repository.block(id)
     fun close() = repository.close()
 
     companion object {
@@ -47,7 +54,58 @@ class IosWireFraming {
     fun reset() = decoder.reset()
 }
 
-/** Native Bonjour probe. This entry intentionally does not expose unimplemented messaging. */
+data class IosPairingFrame(
+    val type: String,
+    val sender: String,
+    val nonce: String,
+    val session: String,
+    val body: String,
+    val signature: String,
+    val json: String,
+)
+
+/** Swift-facing pairing boundary. Kotlin remains the owner of wire-v0 validation and canonical bytes. */
+class IosPairingProtocol {
+    private val decoder = WireFrameDecoder()
+
+    @Throws(Exception::class)
+    fun hello(sender: String, nonce: String): ByteArray =
+        WireFrameDecoder.encode(PairingWire.hello(sender, nonce))
+
+    @Throws(Exception::class)
+    fun transcript(localId: String, localNonce: String, remoteId: String, remoteNonce: String): String =
+        PairingWire.transcript(localId, localNonce, remoteId, remoteNonce)
+
+    @Throws(Exception::class)
+    fun displayCode(session: String): String = PairingWire.displayCode(session)
+
+    @Throws(Exception::class)
+    fun approvalSigningBytes(sender: String, peerId: String, session: String): ByteArray =
+        Wire.signedBytes(PairingWire.approval(sender, peerId, session))
+
+    @Throws(Exception::class)
+    fun approval(sender: String, peerId: String, session: String, signature: String): ByteArray =
+        WireFrameDecoder.encode(PairingWire.approval(sender, peerId, session, signature))
+
+    @Throws(Exception::class)
+    fun accept(chunk: ByteArray): List<IosPairingFrame> = decoder.accept(chunk).map { frame ->
+        IosPairingFrame(
+            type = frame.type.name,
+            sender = frame.sender,
+            nonce = frame.nonce,
+            session = frame.session,
+            body = frame.body,
+            signature = frame.signature,
+            json = Wire.encode(frame).decodeToString(),
+        )
+    }
+
+    fun reset() = decoder.reset()
+}
+
+data class IosPeer(val id: String, val name: String)
+
+/** Observable iOS state for identity, persistence, discovery and pairing; messaging remains unavailable. */
 class IosProbeState {
     var identityId by mutableStateOf("")
         private set
@@ -59,10 +117,18 @@ class IosProbeState {
         private set
     var persistenceError by mutableStateOf("")
         private set
-    var devices by mutableStateOf(listOf<String>())
+    var devices by mutableStateOf(listOf<IosPeer>())
+        private set
+    var trusted by mutableStateOf(listOf<String>())
+        private set
+    var pairingPeer by mutableStateOf("")
+        private set
+    var comparisonCode by mutableStateOf("")
         private set
     fun updateStatus(value: String) { status = value }
-    fun updateDevices(values: List<String>) { devices = values }
+    fun updateDevices(values: List<IosPeer>) { devices = values }
+    fun updateTrusted(values: List<String>) { trusted = values }
+    fun updatePairing(peerId: String, code: String) { pairingPeer = peerId; comparisonCode = code }
     fun updateIdentity(value: String) { identityId = value; identityError = "" }
     fun updateIdentityError(value: String) { identityError = value; identityId = "" }
     fun updateDeviceName(value: String) { deviceName = value; persistenceError = "" }
@@ -73,12 +139,15 @@ fun ProbeViewController(
     start: () -> Unit,
     stop: () -> Unit,
     rename: (String) -> Unit,
+    pair: (String) -> Unit,
+    confirm: () -> Unit,
+    reject: () -> Unit,
 ): UIViewController = ComposeUIViewController {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("Lantern · iPhone", style = MaterialTheme.typography.headlineMedium)
-                Text("Persistenza locale e verifica preliminare Bonjour")
+                Text("Identità, persistenza e associazione LAN")
                 if (state.identityId.isNotEmpty()) Text("Identità persistente: ${state.identityId}")
                 else Text(state.identityError.ifEmpty { "Apertura identità nel Keychain…" })
                 var editedName by remember(state.deviceName) { mutableStateOf(state.deviceName) }
@@ -95,10 +164,28 @@ fun ProbeViewController(
                         editedName != state.deviceName && ContentLimits.isValidName(editedName),
                 ) { Text("Salva nome") }
                 if (state.persistenceError.isNotEmpty()) Text(state.persistenceError, color = MaterialTheme.colorScheme.error)
-                Text("Il trasporto TLS e l'associazione iOS non sono ancora implementati. La ricerca verifica soltanto la scoperta reale dei servizi LAN.")
+                Text("Associazione sperimentale TLS 1.3 con confronto completo del codice. La messaggistica iOS non è ancora disponibile.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)
-                state.devices.forEach { Text(it) }
+                if (state.pairingPeer.isNotEmpty()) {
+                    Text("Dispositivo selezionato: ${state.pairingPeer}")
+                    if (state.comparisonCode.isEmpty()) Text("Seleziona lo stesso dispositivo anche sull'altro schermo.")
+                    else {
+                        Text("Confronta TUTTO il codice:")
+                        Text(state.comparisonCode)
+                        Row {
+                            Button(onClick = confirm) { Text("Conferma") }
+                            TextButton(onClick = reject) { Text("Rifiuta") }
+                        }
+                    }
+                }
+                state.devices.forEach { peer ->
+                    Column {
+                        Text("${peer.name} · ${peer.id.take(12)}")
+                        if (peer.id in state.trusted) Text("Autorizzato")
+                        else Button(onClick = { pair(peer.id) }) { Text("Associa") }
+                    }
+                }
             }
         }
     }

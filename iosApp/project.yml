@@ -13,7 +13,7 @@ targets:
   Lantern:
     type: application
     platform: iOS
-    sources: [LanternApp.swift]
+    sources: [LanternApp.swift, IosPairingService.swift]
     dependencies:
       - package: LanternIdentity
     settings:

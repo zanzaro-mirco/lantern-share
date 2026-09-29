@@ -1,6 +1,16 @@
-# Stato sviluppo — 28 settembre 2026
+# Stato sviluppo — 29 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Il trasporto TLS iOS con pinning è implementato e i test Kotlin locali passano; compilazione e XCTest Network.framework attendono la CI su macOS. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Trasporto TLS e associazione iOS sono implementati; i test Kotlin locali passano, mentre compilazione Swift e XCTest Network.framework non sono ancora verificati. Le ultime esecuzioni GitHub si sono fermate durante il download del runtime iOS con un errore CoreSimulator precedente alla compilazione; su indicazione dell'utente la correzione del workflow è rinviata. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+
+## Associazione iOS sopra TLS — implementata, verifica nativa pendente
+
+L'app iOS pubblica ora un listener TLS 1.3 tramite Bonjour con gli stessi metadati `id`, `name` e `v=0` usati da Android e desktop, risolve i peer scoperti e applica l'iniziatore deterministico già definito dal dominio. La selezione locale apre una finestra di 120 secondi e consente al TLS soltanto pin già autorizzati o il singolo candidato selezionato.
+
+Il flusso scambia `HELLO`, calcola il transcript canonico in Kotlin, mostra per intero il digest SHA-256, firma `APPROVE` con la chiave Keychain e verifica la conferma remota contro il certificato effettivamente accettato dal TLS. Il trust viene scritto nel repository SQLDelight soltanto dopo entrambe le conferme e dopo che Network.framework ha elaborato l'invio locale. Rifiuto, scadenza, arresto, frame imprevisti e identità TLS/HELLO discordanti chiudono il canale senza persistere il candidato. Alla riapertura vengono caricati i pin autorizzati e sono ammessi i reconnect TLS; testo e ricevute restano fuori da questo incremento.
+
+Il formato wire v0 non cambia. I costruttori `HELLO/APPROVE`, transcript, codice visualizzato, framing, validazione JSON e byte canonici da firmare restano Kotlin; Swift gestisce Network.framework, CryptoKit, Security e ciclo di vita iOS. `PairingWire` rifiuta ora identità, nonce, sessioni e firme malformati prima che raggiungano il trasporto; i relativi casi negativi sono coperti nei test comuni. Aggiunto un controllo XCTest del certificato remoto associato al pin dopo l'handshake.
+
+Verifica locale Windows riuscita: `:protocol:jvmTest`, `:connectivity:jvmTest`, `:ui:compileCommonMainKotlinMetadata`, `:ui:compileKotlinJvm` e `:androidApp:assembleDebug`. Non sono compilazioni native iOS. La compilazione Swift, gli XCTest aggiornati, il simulatore e l'hardware iPhone restano **non verificati**. Prossimo passo concreto: compilare questo incremento su un ambiente Apple e correggere eventuali errori di interoperabilità; soltanto dopo estendere il canale iOS a `TEXT/ACK`.
 
 ## Chiusura TLS Android fuori dal thread UI — implementata, collaudo fisico pendente
 

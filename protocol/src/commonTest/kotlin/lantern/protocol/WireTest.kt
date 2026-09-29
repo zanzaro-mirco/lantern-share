@@ -49,4 +49,26 @@ class WireTest {
         assertEquals(30000, Reconnection.delayMillis(100, 1.0))
         assertTrue(Reconnection.initiates("a", "b")); assertFalse(Reconnection.initiates("b", "a"))
     }
+    @Test fun pairingHelpersPreserveCanonicalWireContract() {
+        val peer = "b".repeat(64)
+        val nonce = "c".repeat(64)
+        assertEquals(Frame(type = FrameType.HELLO, sender = id, nonce = nonce), PairingWire.hello(id, nonce))
+        val approval = PairingWire.approval(id, peer, nonce, "signature")
+        assertEquals(approval, Wire.decode(Wire.encode(approval)))
+        assertEquals(Wire.transcript(id, nonce, peer, id), PairingWire.transcript(id, nonce, peer, id))
+        assertEquals(nonce.chunked(4).joinToString(" "), PairingWire.displayCode(nonce))
+        assertFails { PairingWire.displayCode("invalid") }
+    }
+
+    @Test fun pairingHelpersRejectMalformedInputsBeforeTransport() {
+        val peer = "b".repeat(64)
+        val nonce = "c".repeat(64)
+        assertFails { PairingWire.hello("invalid", nonce) }
+        assertFails { PairingWire.hello(id, "invalid") }
+        assertFails { PairingWire.approval(id, "invalid", nonce) }
+        assertFails { PairingWire.approval(id, peer, "invalid") }
+        assertFails { PairingWire.approval(id, peer, nonce, "x".repeat(257)) }
+        assertFails { PairingWire.transcript(id, nonce, peer, "invalid") }
+        assertFails { PairingWire.transcript(id, nonce, id, nonce) }
+    }
 }
