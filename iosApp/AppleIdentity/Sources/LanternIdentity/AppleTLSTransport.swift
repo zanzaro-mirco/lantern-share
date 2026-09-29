@@ -78,7 +78,8 @@ public final class AppleTLSTransport {
                 return
             }
             let nativeTrust = sec_trust_copy_ref(trust).takeRetainedValue()
-            guard let certificate = SecTrustGetCertificateAtIndex(nativeTrust, 0) else {
+            guard let chain = SecTrustCopyCertificateChain(nativeTrust) as? [SecCertificate],
+                  let certificate = chain.first else {
                 complete(false)
                 return
             }
@@ -100,7 +101,8 @@ public final class AppleTLSTransport {
     static func accepts(certificate: SecCertificate, allowedPeerIDs: Set<String>, now: Date = Date()) -> Bool {
         let pin = AppleIdentity.fingerprint(certificate)
         guard let key = SecCertificateCopyKey(certificate) else { return false }
-        let attributes = SecKeyCopyAttributes(key) as NSDictionary
+        guard let rawAttributes = SecKeyCopyAttributes(key) else { return false }
+        let attributes = rawAttributes as NSDictionary
         guard (attributes[kSecAttrKeyType] as? String) == (kSecAttrKeyTypeECSECPrimeRandom as String),
               (attributes[kSecAttrKeySizeInBits] as? NSNumber)?.intValue == 256 else { return false }
         guard allowedPeerIDs.contains(pin),
