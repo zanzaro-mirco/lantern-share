@@ -56,7 +56,9 @@ final class AppleTLSTransportTests: XCTestCase {
         let ready = expectation(description: "pairing listener ready")
         let comparisons = expectation(description: "both comparison codes available")
         comparisons.expectedFulfillmentCount = 2
-        let serverConnected = expectation(description: "server admitted")
+        // Delivery to the server may race with client cancellation; its admission
+        // is required only in the successful pairing scenario.
+        let serverConnected = cancelDuringApproval ? nil : expectation(description: "server admitted")
         let clientConnected = expectation(description: "client admitted")
         clientConnected.isInverted = cancelDuringApproval
         var codes: [String] = []
@@ -79,7 +81,7 @@ final class AppleTLSTransportTests: XCTestCase {
                         serverAdmissions += 1
                     },
                     onComparison: { _, code in codes.append(code); comparisons.fulfill() },
-                    onConnected: { _ in serverConnected.fulfill() },
+                    onConnected: { _ in serverConnected?.fulfill() },
                     onFailure: { message, _ in
                         if !cancelDuringApproval { XCTFail(message) }
                     }
@@ -121,7 +123,7 @@ final class AppleTLSTransportTests: XCTestCase {
         if cancelDuringApproval {
             wait(for: [clientConnected], timeout: 1)
         } else {
-            wait(for: [serverConnected, clientConnected], timeout: 10)
+            wait(for: [try XCTUnwrap(serverConnected), clientConnected], timeout: 10)
         }
         queue.sync {
             XCTAssertEqual(clientAdmissions, cancelDuringApproval ? 0 : 1)
@@ -215,8 +217,26 @@ final class AppleTLSTransportTests: XCTestCase {
             expectedPeerID: String(repeating: "0", count: 64)
         )
         self.client = client
+        var completed = false // Confined to the connection's serial callback queue.
         client.stateUpdateHandler = { state in
-            if case .failed = state { rejected.fulfill() }
+            guard !completed else { return }
+            switch state {
+            case .waiting(let error), .failed(let error):
+                // Network.framework may keep a rejected handshake in .waiting.
+                // A DNS/POSIX failure must not count as proof of pin rejection.
+                if case .tls(let status) = error {
+                    XCTAssertNotEqual(status, errSecSuccess)
+                } else {
+                    XCTFail("Expected TLS rejection, received \(error)")
+                }
+            case .ready:
+                XCTFail("Handshake accepted an incorrect pin")
+            default:
+                return
+            }
+            completed = true
+            client.cancel()
+            rejected.fulfill()
         }
         client.start(queue: queue)
         wait(for: [rejected], timeout: 10)

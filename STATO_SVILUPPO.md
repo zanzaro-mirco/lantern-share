@@ -1,6 +1,16 @@
 # Stato sviluppo — 30 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Trasporto TLS e associazione iOS sono implementati; framework Kotlin, test condivisi e lock iOS sono verificati nella CI `4714abf`. La revisione del 30 settembre corregge sicurezza, scoperta e ciclo di vita del pairing; le correzioni Swift e i nuovi XCTest attendono verifica nativa. La CI `67efea1` è fallita prima della compilazione per il setup CoreSimulator; preparazione del runtime ora corretta, verifica macOS pendente. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. La CI `c8027b2` ha superato setup CoreSimulator, framework/test Kotlin iOS, compilazione app e XCTest; l'esecuzione XCTest termina con 8/10 casi riusciti, quindi la suite non è verde. Le due aspettative errate sono ora corrette, esecuzione Apple pendente. Trasferimento TLS e doppia conferma sono verificati in loopback simulatore, non su hardware Apple. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+
+## Correzione aspettative XCTest — implementata, esecuzione Apple pendente
+
+La [CI 36766891297](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36766891297), commit `c8027b2`, conferma il setup runtime e la compilazione Swift/Kotlin. Android e tutti i job desktop passano. In simulatore passano i cinque test Keychain, TLS con pin esatti e trasferimento byte, doppia conferma con una scrittura trust per peer, scadenza monotona. Falliscono cancellazione (`unwaited expectation 'server admitted'`) e pin errato (timeout aspettando `.failed`, mentre il log mostra rifiuto TLS e stato `.waiting`).
+
+Il test cancellazione crea l'aspettativa server solo nel ramo che ne richiede l'ammissione; conserva l'aspettativa client invertita e il controllo zero scritture client. Il test negativo TLS accetta come segnale di rifiuto `.waiting` o `.failed` **solo con errore TLS non riuscito**; errori DNS/POSIX e `.ready` fanno fallire il test. La connessione viene cancellata al primo esito. Nessun test rimosso, timeout aumentato o codice produttivo modificato.
+
+Controllo locale: revisione mirata e `git diff --check`; nessuna build Gradle pertinente a una modifica solo XCTest, nessun Xcode su Windows. I due test corretti non sono ancora compilati/eseguiti. Prossimo passo: verificarli nella nuova CI prima della messaggistica iOS. Fase 1 e collaudi fisici Apple restano aperti.
+
+Le sezioni seguenti conservano le evidenze precedenti; i limiti di compilazione/setup indicati sotto sono superati dalla CI `c8027b2`.
 
 ## Setup CoreSimulator CI — implementato, verifica macOS pendente
 
