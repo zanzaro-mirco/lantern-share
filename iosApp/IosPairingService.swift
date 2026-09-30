@@ -1,3 +1,4 @@
+import Combine
 import CryptoKit
 import Foundation
 import Network
@@ -11,33 +12,48 @@ private struct DiscoveredPeer {
     let endpoint: NWEndpoint
 }
 
-private final class AllowedPeerStore {
+final class AllowedPeerStore {
     private let lock = NSLock()
     private var trusted = Set<String>()
     private var candidate: String?
+    private var deadline: UInt64 = 0
+    private let now: () -> UInt64
+
+    init(now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
+        self.now = now
+    }
 
     func replaceTrusted(_ values: [String]) {
         lock.lock(); trusted = Set(values); lock.unlock()
     }
 
     func select(_ value: String?) {
-        lock.lock(); candidate = value; lock.unlock()
+        lock.lock()
+        candidate = value
+        deadline = now() + 120_000_000_000
+        lock.unlock()
     }
 
     func contains(_ value: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return trusted.contains(value) || candidate == value
+        return trusted.contains(value) || (candidate == value && now() < deadline)
     }
 
     func values() -> Set<String> {
         lock.lock(); defer { lock.unlock() }
         var result = trusted
-        if let candidate { result.insert(candidate) }
+        if let candidate, now() < deadline { result.insert(candidate) }
         return result
+    }
+
+    func selected() -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return now() < deadline ? candidate : nil
     }
 }
 
-private final class PairingChannel {
+/// All operations and Network.framework callbacks run on the owning service queue.
+final class PairingChannel {
     private let connection: NWConnection
     private let identity: AppleIdentity
     private let transport: AppleTLSTransport
@@ -49,10 +65,13 @@ private final class PairingChannel {
     private let persistTrust: (String, String) throws -> Void
     private let onComparison: (String, String) -> Void
     private let onConnected: (String) -> Void
-    private let onFailure: (String) -> Void
+    private let onFailure: (String, Bool) -> Void
     private var remoteID: String?
     private var session = ""
     private var localApproved = false
+    private var approvalInFlight = false
+    private var cancelled = false
+    private var authorized = false
     private var remoteApproval: IosPairingFrame?
 
     init(
@@ -65,7 +84,7 @@ private final class PairingChannel {
         persistTrust: @escaping (String, String) throws -> Void,
         onComparison: @escaping (String, String) -> Void,
         onConnected: @escaping (String) -> Void,
-        onFailure: @escaping (String) -> Void
+        onFailure: @escaping (String, Bool) -> Void
     ) throws {
         self.connection = connection
         self.identity = identity
@@ -82,14 +101,14 @@ private final class PairingChannel {
 
     func start(queue: DispatchQueue) {
         connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
+            guard let self, !self.cancelled else { return }
             switch state {
             case .ready:
                 do {
                     self.send(try self.wire.hello(sender: self.identity.id, nonce: self.localNonce))
                     self.receiveNext()
                 } catch { self.fail(error) }
-            case .failed(let error): self.fail(error)
+            case .failed(let error): self.fail(error, retry: self.remoteID == nil)
             default: break
             }
         }
@@ -98,13 +117,15 @@ private final class PairingChannel {
 
     func confirm() {
         do {
-            guard let remoteID, !session.isEmpty else { return }
-            if localApproved { return }
+            guard !cancelled, !authorized, let remoteID, !session.isEmpty,
+                  isAllowed(remoteID), !localApproved, !approvalInFlight else { return }
             let bytes = try wire.approvalSigningBytes(sender: identity.id, peerId: remoteID, session: session)
             let signature = try identity.sign(Self.data(bytes))
             let approval = try wire.approval(sender: identity.id, peerId: remoteID, session: session, signature: signature)
+            approvalInFlight = true
             connection.send(content: Self.data(approval), completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
+                guard let self, !self.cancelled else { return }
+                self.approvalInFlight = false
                 if let error {
                     self.fail(error)
                     return
@@ -118,13 +139,14 @@ private final class PairingChannel {
     }
 
     func cancel() {
+        cancelled = true
         connection.stateUpdateHandler = nil
         connection.cancel()
     }
 
     private func receiveNext() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_540) { [weak self] data, _, complete, error in
-            guard let self else { return }
+            guard let self, !self.cancelled else { return }
             do {
                 if let error { throw error }
                 if let data, !data.isEmpty {
@@ -139,11 +161,13 @@ private final class PairingChannel {
     }
 
     private func receive(_ frame: IosPairingFrame) throws {
+        guard !cancelled, isAllowed(frame.sender) else { throw PairingError.unexpectedPeer }
         if remoteID == nil {
             guard frame.type == "HELLO", frame.sender != identity.id,
                   expectedPeerID == nil || expectedPeerID == frame.sender,
                   isAllowed(frame.sender),
-                  transport.certificate(forPeerID: frame.sender) != nil else {
+                  let certificate = transport.certificate(for: connection),
+                  AppleIdentity.fingerprint(certificate) == frame.sender else {
                 throw PairingError.unexpectedPeer
             }
             remoteID = frame.sender
@@ -155,6 +179,7 @@ private final class PairingChannel {
             )
             session = SHA256.hash(data: Data(transcript.utf8)).map { String(format: "%02x", $0) }.joined()
             if isTrusted(frame.sender) {
+                authorized = true
                 onConnected(frame.sender)
             } else {
                 onComparison(frame.sender, try wire.displayCode(session: session))
@@ -166,7 +191,8 @@ private final class PairingChannel {
         switch frame.type {
         case "APPROVE":
             guard !isTrusted(frame.sender), frame.session == session, frame.body == identity.id,
-                  let certificate = transport.certificate(forPeerID: frame.sender),
+                  let certificate = transport.certificate(for: connection),
+                  AppleIdentity.fingerprint(certificate) == frame.sender,
                   AppleIdentity.verify(
                     certificate: certificate,
                     message: Self.data(try wire.approvalSigningBytes(sender: frame.sender, peerId: identity.id, session: session)),
@@ -180,20 +206,23 @@ private final class PairingChannel {
     }
 
     private func finishPairing() throws {
-        guard localApproved, let approval = remoteApproval, let remoteID else { return }
+        guard !cancelled, !authorized, localApproved, let approval = remoteApproval, let remoteID else { return }
+        guard isAllowed(remoteID) else { throw PairingError.unexpectedPeer }
         try persistTrust(remoteID, approval.json)
+        authorized = true
         onConnected(remoteID)
     }
 
     private func send(_ bytes: KotlinByteArray) {
         connection.send(content: Self.data(bytes), completion: .contentProcessed { [weak self] error in
-            if let error { self?.fail(error) }
+            if let error, let self { self.fail(error, retry: self.remoteID == nil) }
         })
     }
 
-    private func fail(_ error: Error) {
+    private func fail(_ error: Error, retry: Bool = false) {
+        guard !cancelled else { return }
         cancel()
-        onFailure(error.localizedDescription)
+        onFailure(error.localizedDescription, retry)
     }
 
     private static func randomNonce() throws -> String {
@@ -249,6 +278,9 @@ final class BonjourProbe: ObservableObject {
     private var peers: [String: DiscoveredPeer] = [:]
     private var trusted = Set<String>()
     private var pairingGeneration = 0
+    private var retryGeneration = 0
+    private var retryAttempt: Int32 = 0
+    private let wire = IosPairingProtocol()
     private var deviceName = ""
 
     init() {
@@ -295,6 +327,8 @@ final class BonjourProbe: ObservableObject {
                   let transport = self.transport, !self.trusted.contains(peerID) else { return }
             self.channel?.cancel()
             self.channel = nil
+            self.retryGeneration += 1
+            self.retryAttempt = 0
             self.allowedPeers.select(peerID)
             self.pairingGeneration += 1
             let generation = self.pairingGeneration
@@ -310,7 +344,7 @@ final class BonjourProbe: ObservableObject {
             }
             self.queue.asyncAfter(deadline: .now() + 120) { [weak self] in
                 guard let self, self.pairingGeneration == generation, !self.trusted.contains(peerID) else { return }
-                self.failChannel("Associazione scaduta")
+                self.failChannel("Associazione scaduta", retry: false)
             }
         }
     }
@@ -325,6 +359,7 @@ final class BonjourProbe: ObservableObject {
             self?.channel = nil
             self?.allowedPeers.select(nil)
             self?.pairingGeneration += 1
+            self?.retryGeneration += 1
             self?.onMain { self?.state.updatePairing(peerId: "", code: "") }
         }
     }
@@ -337,7 +372,7 @@ final class BonjourProbe: ObservableObject {
             ).appendingPathComponent("Lantern", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let persistence = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
-            do { return (persistence, try persistence.name(), persistence.trusted()) }
+            do { return (persistence, try persistence.name(), try persistence.trusted()) }
             catch { persistence.close(); throw error }
         }
         queue.async { [weak self] in
@@ -373,20 +408,29 @@ final class BonjourProbe: ObservableObject {
         do {
             let listener = try transport.listen { [allowedPeers] in allowedPeers.values() }
             listener.service = service(for: identity)
-            listener.newConnectionHandler = { [weak self] connection in
-                guard let self else { connection.cancel(); return }
+            listener.newConnectionHandler = { [weak self, weak listener] connection in
+                guard let self, let listener, self.listener === listener else { connection.cancel(); return }
                 do { try self.openChannel(connection, expectedPeerID: nil) }
                 catch { connection.cancel(); self.failChannel(error.localizedDescription) }
             }
-            listener.stateUpdateHandler = { [weak self] value in self?.reportNetwork("Listener", value) }
+            listener.stateUpdateHandler = { [weak self, weak listener] value in
+                guard let self, let listener, self.listener === listener else { return }
+                self.reportNetwork("Listener", value)
+            }
             self.listener = listener
             listener.start(queue: queue)
 
             let parameters = NWParameters.tcp
             parameters.includePeerToPeer = false
-            let browser = NWBrowser(for: .bonjour(type: "_lantern._tcp", domain: "local."), using: parameters)
-            browser.stateUpdateHandler = { [weak self] value in self?.reportNetwork("Bonjour", value) }
-            browser.browseResultsChangedHandler = { [weak self] results, _ in self?.updatePeers(results) }
+            let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_lantern._tcp", domain: "local."), using: parameters)
+            browser.stateUpdateHandler = { [weak self, weak browser] value in
+                guard let self, let browser, self.browser === browser else { return }
+                self.reportNetwork("Bonjour", value)
+            }
+            browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
+                guard let self, let browser, self.browser === browser else { return }
+                self.updatePeers(results)
+            }
             self.browser = browser
             browser.start(queue: queue)
         } catch { failChannel(error.localizedDescription) }
@@ -394,11 +438,16 @@ final class BonjourProbe: ObservableObject {
 
     private func stopResources() {
         channel?.cancel(); channel = nil
+        browser?.stateUpdateHandler = nil
+        browser?.browseResultsChangedHandler = nil
         browser?.cancel(); browser = nil
+        listener?.stateUpdateHandler = nil
+        listener?.newConnectionHandler = nil
         listener?.cancel(); listener = nil
         peers.removeAll()
         allowedPeers.select(nil)
         pairingGeneration += 1
+        retryGeneration += 1
     }
 
     private func service(for identity: AppleIdentity) -> NWListener.Service {
@@ -425,7 +474,7 @@ final class BonjourProbe: ObservableObject {
     }
 
     private func reconnectTrustedPeers() {
-        guard channel == nil, let identity, let transport else { return }
+        guard channel == nil, allowedPeers.selected() == nil, let identity, let transport else { return }
         guard let peer = peers.values.first(where: { trusted.contains($0.id) && identity.id < $0.id }) else { return }
         do {
             let connection = try transport.connect(endpoint: peer.endpoint, expectedPeerID: peer.id)
@@ -457,7 +506,7 @@ final class BonjourProbe: ObservableObject {
                 }
             },
             onConnected: { [weak self] peerID in self?.paired(peerID) },
-            onFailure: { [weak self] message in self?.failChannel(message) }
+            onFailure: { [weak self] message, retry in self?.failChannel(message, retry: retry) }
         )
         self.channel = channel
         channel.start(queue: queue)
@@ -466,6 +515,8 @@ final class BonjourProbe: ObservableObject {
     private func paired(_ peerID: String) {
         allowedPeers.select(nil)
         pairingGeneration += 1
+        retryGeneration += 1
+        retryAttempt = 0
         let values = trusted.sorted()
         onMain {
             self.state.updateTrusted(values: values)
@@ -474,13 +525,34 @@ final class BonjourProbe: ObservableObject {
         }
     }
 
-    private func failChannel(_ message: String) {
+    private func failChannel(_ message: String, retry: Bool = true) {
         channel?.cancel(); channel = nil
-        allowedPeers.select(nil)
-        pairingGeneration += 1
+        if !retry {
+            allowedPeers.select(nil)
+            pairingGeneration += 1
+        }
+        let selected = allowedPeers.selected()
+        retryGeneration += 1
+        let generation = retryGeneration
         onMain {
-            self.state.updatePairing(peerId: "", code: "")
+            self.state.updatePairing(peerId: selected ?? "", code: "")
             self.state.updateStatus(value: "Canale chiuso: \(message)")
+        }
+        guard retry, listener != nil, selected != nil || !trusted.isEmpty else { return }
+        let delay = wire.reconnectDelayMillis(attempt: retryAttempt, jitter: Double.random(in: 0...1))
+        retryAttempt = min(retryAttempt + 1, 30)
+        queue.asyncAfter(deadline: .now() + Double(delay) / 1_000) { [weak self] in
+            guard let self, self.retryGeneration == generation, self.listener != nil, self.channel == nil else { return }
+            if let candidate = self.allowedPeers.selected() {
+                guard let peer = self.peers[candidate], let identity = self.identity,
+                      let transport = self.transport, identity.id < candidate else { return }
+                do {
+                    let connection = try transport.connect(endpoint: peer.endpoint, expectedPeerID: candidate)
+                    try self.openChannel(connection, expectedPeerID: candidate)
+                } catch { self.failChannel(error.localizedDescription) }
+            } else {
+                self.reconnectTrustedPeers()
+            }
         }
     }
 

@@ -22,8 +22,6 @@ public final class AppleTLSTransport {
 
     private let identity: AppleIdentity
     private let verificationQueue: DispatchQueue
-    private let certificateLock = NSLock()
-    private var peerCertificates: [String: SecCertificate] = [:]
 
     public init(identity: AppleIdentity, verificationQueue: DispatchQueue? = nil) {
         self.identity = identity
@@ -55,10 +53,16 @@ public final class AppleTLSTransport {
         return NWConnection(to: endpoint, using: try parameters(allowedPeerIDs: { [expectedPeerID] }))
     }
 
-    public func certificate(forPeerID peerID: String) -> SecCertificate? {
-        certificateLock.lock()
-        defer { certificateLock.unlock() }
-        return peerCertificates[peerID]
+    /// Read only after TLS is ready. A certificate from another connection cannot identify this peer.
+    public func certificate(for connection: NWConnection) -> SecCertificate? {
+        guard let metadata = connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata else {
+            return nil
+        }
+        var leaf: SecCertificate?
+        let accessible = sec_protocol_metadata_access_peer_certificate_chain(metadata.securityProtocolMetadata) { certificate in
+            if leaf == nil { leaf = sec_certificate_copy_ref(certificate).takeRetainedValue() }
+        }
+        return accessible ? leaf : nil
     }
 
     private func parameters(allowedPeerIDs: @escaping AllowedPeerIDs) throws -> NWParameters {
@@ -83,14 +87,7 @@ public final class AppleTLSTransport {
                 complete(false)
                 return
             }
-            let accepted = Self.accepts(certificate: certificate, allowedPeerIDs: pins)
-            if accepted {
-                let pin = AppleIdentity.fingerprint(certificate)
-                self.certificateLock.lock()
-                self.peerCertificates[pin] = certificate
-                self.certificateLock.unlock()
-            }
-            complete(accepted)
+            complete(Self.accepts(certificate: certificate, allowedPeerIDs: pins))
         }, verificationQueue)
 
         let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())

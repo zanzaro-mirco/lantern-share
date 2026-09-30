@@ -1,10 +1,10 @@
-# Passaggio di consegne — 29 settembre 2026
+# Passaggio di consegne — 30 settembre 2026
 
 ## Ripartenza rapida
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Trasporto TLS e associazione iOS sono implementati; compilazione Swift e XCTest Network.framework restano non verificati perché le ultime Actions si sono fermate nel download del runtime, prima della build. L'utente ha scelto di rinviare il problema CI, che potrebbe dipendere dal runner GitHub. Il collegamento Android ↔ Windows funziona; il successivo crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
+L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulatore: **non ricominciare il debug già risolto**. Trasporto TLS e associazione iOS sono implementati e sono stati rivisti il 30 settembre: certificato vincolato alla connessione corrente, cancellazione terminale, selezione con scadenza monotona, riprove con backoff Kotlin, isolamento dei callback e richiesta dei TXT Bonjour. Compilazione Swift e nuovi XCTest restano da verificare. Il collegamento Android ↔ Windows funziona; il successivo crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
 
 ## Stato reale
 
@@ -16,9 +16,11 @@ L'identità e la persistenza SQLDelight iOS sono chiuse e verificate in simulato
 
 ## Incremento corrente e prossimo passo
 
+Revisione del 30 settembre: eliminata la cache globale dei certificati, che non legava HELLO alla socket corrente. `PairingChannel` ignora callback dopo cancellazione, impedisce doppio invio APPROVE e ricontrolla il candidato prima della persistenza. Il browser usa `bonjourWithTXTRecord`; i callback di listener/browser precedenti sono ignorati. Il tentativo sopravvive a errori di collegamento fino ai 120 secondi, con backoff condiviso. Aggiunti XCTest per doppia conferma, cancellazione durante invio, scadenza prima del timer e certificato per connessione. Sono test scritti, non ancora eseguiti su Apple. La CI `36635631396` del commit `773282d` è fallita nel download runtime con `Unable to connect to simulator`, prima di compilare la correzione Swift.
+
 La chiave Android nuova autorizza `SHA-256` e `NONE`, richiesti rispettivamente dalle firme applicative e da Conscrypt TLS 1.3. Una vecchia chiave incompatibile viene rifiutata con istruzione esplicita, senza rigenerazione silenziosa. Build APK, lint e test JVM sono riusciti; dopo cancellazione dati, anche il collegamento e la comunicazione Android ↔ Windows sono riusciti su hardware. Testo in entrambe le direzioni e riavvio non sono stati documentati separatamente.
 
-Il prossimo passo è compilare trasporto e associazione iOS su un ambiente Apple, quindi provare la doppia conferma contro Android o desktop e verificare chiusura/riapertura del trust. Il problema del download runtime in Actions è rinviato per scelta dell'utente: non consumare altri push o polling per tentare la stessa CI invariata. Non anticipare `TEXT/ACK` finché il nuovo confine Swift/Kotlin non compila. In parallelo resta possibile installare il nuovo APK e riprovare blocco/rifiuto/arresto su Android ↔ Windows.
+Il prossimo passo è compilare la revisione iOS ed eseguire gli XCTest su Apple, quindi provare l'associazione contro Android o desktop e chiusura/riapertura del trust. L'utente ha nuovamente autorizzato push e verifica Actions: raggruppare le correzioni e controllare una sola volta la run; nessun polling ripetuto. Non anticipare `TEXT/ACK` finché il confine Swift/Kotlin non compila. In parallelo resta possibile installare il nuovo APK e riprovare blocco/rifiuto/arresto su Android ↔ Windows.
 
 ## Mappa minima dei sorgenti
 

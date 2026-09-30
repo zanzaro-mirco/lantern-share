@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ComposeUIViewController
 import lantern.domain.ContentLimits
+import lantern.domain.Reconnection
 import lantern.persistence.IosDeviceRepository
 import lantern.persistence.openIosRepository
 import lantern.protocol.Wire
@@ -67,6 +68,8 @@ data class IosPairingFrame(
 /** Swift-facing pairing boundary. Kotlin remains the owner of wire-v0 validation and canonical bytes. */
 class IosPairingProtocol {
     private val decoder = WireFrameDecoder()
+
+    fun reconnectDelayMillis(attempt: Int, jitter: Double): Long = Reconnection.delayMillis(attempt, jitter)
 
     @Throws(Exception::class)
     fun hello(sender: String, nonce: String): ByteArray =
