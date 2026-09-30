@@ -108,6 +108,10 @@ Il [contratto PoC](docs/PROTOCOLLO_POC.md) precede e descrive l'implementazione 
 
 I test integrativi usano chiavi nuove, filesystem/SQLite reali, TLS reale e solo discovery simulata. Non equivalgono a prove multicast, hardware mobile o installazione Mac. Rapporti HTML: `protocol/build/reports/tests/jvmTest/` e `connectivity/build/reports/tests/jvmTest/`.
 
-La CI è eseguita nel repository privato [lantern-share](https://github.com/zanzaro-mirco/lantern-share/actions). Il commit `6aa051f` ha superato tutti i job: Android, desktop Windows/Linux/Mac Intel/ARM64, build iOS e cinque XCTest dell'identità sul Keychain reale del simulatore. Dettagli e limiti sono in STATO_SVILUPPO.md. Sono conservati rapporti di test; nessuna release è pubblicata.
+La CI è eseguita nel repository pubblico [lantern-share](https://github.com/zanzaro-mirco/lantern-share/actions). `Verify Lantern PoC` verifica Android e desktop a ogni push/PR. `Verify Lantern iOS` è separato: parte solo per modifiche a `iosApp`, sorgenti di dominio/protocollo/persistenza/UI (esclusi i source set Android/JVM), script Gradle, wrapper/catalogo, lock usati da iOS o al suo workflow/script di supporto. Modifiche solo Markdown o ai sorgenti esclusivamente Android/desktop non avviano iOS. I filtri push e PR sono mantenuti identici in `.github/workflows/ios.yml`.
+
+Per forzare soltanto iOS: **Actions → Verify Lantern iOS → Run workflow → scegliere il branch → Run workflow**. Oppure `gh workflow run ios.yml --ref main`. Il comando manuale non avvia la matrice Android/desktop. In caso di nuovi moduli condivisi aggiornare i filtri; per cambiamenti molto ampi eseguire anche la verifica manuale, perché i filtri GitHub valutano al massimo 300 file. Non rendere obbligatorio un workflow filtrato senza una strategia per i check saltati: GitHub può lasciarli pendenti nelle PR. [Documentazione dei filtri GitHub](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+
+Il commit `6aa051f` ha superato la precedente matrice completa, inclusi build iOS e cinque XCTest dell'identità. Evidenze correnti e limiti sono in STATO_SVILUPPO.md. Sono conservati rapporti di test; nessuna release è pubblicata.
 
 Procedura e scheda risultati: [docs/COLLAUDO.md](docs/COLLAUDO.md).
