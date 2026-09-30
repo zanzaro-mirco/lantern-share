@@ -15,6 +15,8 @@ import lantern.persistence.openIosRepository
 import lantern.protocol.Wire
 import lantern.protocol.WireFrameDecoder
 import lantern.protocol.PairingWire
+import lantern.protocol.TextWire
+import lantern.protocol.Frame
 import platform.UIKit.UIViewController
 
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
@@ -32,6 +34,15 @@ class IosPersistence private constructor(private val repository: IosDeviceReposi
     fun trust(id: String, admission: String) = repository.trust(id, admission)
     @Throws(Exception::class)
     fun block(id: String) = repository.block(id)
+    @Throws(Exception::class)
+    fun saveMessage(frame: IosPairingFrame): Boolean =
+        repository.save(frame.id, frame.sender, frame.session, frame.body, frame.signature)
+    @Throws(Exception::class)
+    fun history(): List<IosChatLine> = repository.history().map {
+        IosChatLine(id = it.id, sender = it.sender, text = it.text, received = it.received)
+    }
+    @Throws(Exception::class)
+    fun acknowledge(id: String) = repository.acknowledge(id)
     fun close() = repository.close()
 
     companion object {
@@ -63,9 +74,10 @@ data class IosPairingFrame(
     val body: String,
     val signature: String,
     val json: String,
+    val id: String,
 )
 
-/** Swift-facing pairing boundary. Kotlin remains the owner of wire-v0 validation and canonical bytes. */
+/** Swift-facing channel boundary. Kotlin owns wire-v0 validation and canonical bytes. */
 class IosPairingProtocol {
     private val decoder = WireFrameDecoder()
 
@@ -91,7 +103,27 @@ class IosPairingProtocol {
         WireFrameDecoder.encode(PairingWire.approval(sender, peerId, session, signature))
 
     @Throws(Exception::class)
-    fun accept(chunk: ByteArray): List<IosPairingFrame> = decoder.accept(chunk).map { frame ->
+    fun textSigningBytes(sender: String, id: String, session: String, body: String): ByteArray =
+        Wire.signedBytes(TextWire.text(sender, id, session, body))
+
+    @Throws(Exception::class)
+    fun text(sender: String, id: String, session: String, body: String, signature: String): IosPairingFrame =
+        view(TextWire.text(sender, id, session, body, signature))
+
+    @Throws(Exception::class)
+    fun frame(json: String): ByteArray = WireFrameDecoder.encode(Wire.decode(json.encodeToByteArray()))
+
+    @Throws(Exception::class)
+    fun acknowledgement(sender: String, id: String): ByteArray =
+        WireFrameDecoder.encode(TextWire.acknowledgement(sender, id))
+
+    @Throws(Exception::class)
+    fun signingBytes(json: String): ByteArray = Wire.signedBytes(Wire.decode(json.encodeToByteArray()))
+
+    @Throws(Exception::class)
+    fun accept(chunk: ByteArray): List<IosPairingFrame> = decoder.accept(chunk).map(::view)
+
+    private fun view(frame: Frame): IosPairingFrame =
         IosPairingFrame(
             type = frame.type.name,
             sender = frame.sender,
@@ -100,15 +132,16 @@ class IosPairingProtocol {
             body = frame.body,
             signature = frame.signature,
             json = Wire.encode(frame).decodeToString(),
+            id = frame.id,
         )
-    }
 
     fun reset() = decoder.reset()
 }
 
 data class IosPeer(val id: String, val name: String)
+data class IosChatLine(val id: String, val sender: String, val text: String, val received: Boolean)
 
-/** Observable iOS state for identity, persistence, discovery and pairing; messaging remains unavailable. */
+/** UI state is updated on the main thread; native I/O stays on the service queue. */
 class IosProbeState {
     var identityId by mutableStateOf("")
         private set
@@ -128,6 +161,12 @@ class IosProbeState {
         private set
     var comparisonCode by mutableStateOf("")
         private set
+    var connectedPeer by mutableStateOf("")
+        private set
+    var messages by mutableStateOf(listOf<IosChatLine>())
+        private set
+    fun updateConnected(peerId: String) { connectedPeer = peerId }
+    fun updateMessages(values: List<IosChatLine>) { messages = values }
     fun updateStatus(value: String) { status = value }
     fun updateDevices(values: List<IosPeer>) { devices = values }
     fun updateTrusted(values: List<String>) { trusted = values }
@@ -145,12 +184,13 @@ fun ProbeViewController(
     pair: (String) -> Unit,
     confirm: () -> Unit,
     reject: () -> Unit,
+    send: (String, String) -> Unit,
 ): UIViewController = ComposeUIViewController {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("Lantern · iPhone", style = MaterialTheme.typography.headlineMedium)
-                Text("Identità, persistenza e associazione LAN")
+                Text("Associazione LAN e testo cifrato · protocollo sperimentale")
                 if (state.identityId.isNotEmpty()) Text("Identità persistente: ${state.identityId}")
                 else Text(state.identityError.ifEmpty { "Apertura identità nel Keychain…" })
                 var editedName by remember(state.deviceName) { mutableStateOf(state.deviceName) }
@@ -167,7 +207,7 @@ fun ProbeViewController(
                         editedName != state.deviceName && ContentLimits.isValidName(editedName),
                 ) { Text("Salva nome") }
                 if (state.persistenceError.isNotEmpty()) Text(state.persistenceError, color = MaterialTheme.colorScheme.error)
-                Text("Associazione sperimentale TLS 1.3 con confronto completo del codice. La messaggistica iOS non è ancora disponibile.")
+                Text("TLS 1.3 con confronto completo del codice. Ricevuta dopo il salvataggio sul destinatario.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)
                 if (state.pairingPeer.isNotEmpty()) {
@@ -188,6 +228,24 @@ fun ProbeViewController(
                         if (peer.id in state.trusted) Text("Autorizzato")
                         else Button(onClick = { pair(peer.id) }) { Text("Associa") }
                     }
+                }
+                Text("Testo cifrato", style = MaterialTheme.typography.titleLarge)
+                if (state.connectedPeer.isNotEmpty()) Text("Collegato: ${state.connectedPeer.take(12)}")
+                else Text("Associa e collega un dispositivo per inviare.")
+                var text by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Messaggio (massimo ${ContentLimits.TEXT_BYTES} byte)") },
+                )
+                Button(
+                    onClick = { send(state.connectedPeer, text); text = "" },
+                    enabled = state.connectedPeer.isNotEmpty() && ContentLimits.isValidText(text),
+                ) { Text("Invia") }
+                state.messages.forEach { line ->
+                    val own = line.sender == state.identityId
+                    Text("${if (own) "Tu" else line.sender.take(12)}: ${line.text}")
+                    if (own) Text(if (line.received) "Salvato sul destinatario ✓" else "Salvato localmente · ricevuta non disponibile")
                 }
             }
         }

@@ -63,6 +63,9 @@ final class PairingChannel {
     private let isAllowed: (String) -> Bool
     private let isTrusted: (String) -> Bool
     private let persistTrust: (String, String) throws -> Void
+    private let persistMessage: (IosPairingFrame) throws -> Void
+    private let acknowledge: (String) throws -> Void
+    private let onMessagesChanged: () -> Void
     private let onComparison: (String, String) -> Void
     private let onConnected: (String) -> Void
     private let onFailure: (String, Bool) -> Void
@@ -73,6 +76,9 @@ final class PairingChannel {
     private var cancelled = false
     private var authorized = false
     private var remoteApproval: IosPairingFrame?
+    private var pendingAcks = Set<String>()
+
+    var connectedPeerID: String? { !cancelled && authorized ? remoteID : nil }
 
     init(
         connection: NWConnection,
@@ -82,6 +88,9 @@ final class PairingChannel {
         isAllowed: @escaping (String) -> Bool,
         isTrusted: @escaping (String) -> Bool,
         persistTrust: @escaping (String, String) throws -> Void,
+        persistMessage: @escaping (IosPairingFrame) throws -> Void,
+        acknowledge: @escaping (String) throws -> Void,
+        onMessagesChanged: @escaping () -> Void,
         onComparison: @escaping (String, String) -> Void,
         onConnected: @escaping (String) -> Void,
         onFailure: @escaping (String, Bool) -> Void
@@ -93,6 +102,9 @@ final class PairingChannel {
         self.isAllowed = isAllowed
         self.isTrusted = isTrusted
         self.persistTrust = persistTrust
+        self.persistMessage = persistMessage
+        self.acknowledge = acknowledge
+        self.onMessagesChanged = onMessagesChanged
         self.onComparison = onComparison
         self.onConnected = onConnected
         self.onFailure = onFailure
@@ -140,8 +152,23 @@ final class PairingChannel {
 
     func cancel() {
         cancelled = true
+        pendingAcks.removeAll()
         connection.stateUpdateHandler = nil
         connection.cancel()
+    }
+
+    func sendText(_ text: String) throws {
+        try requireAuthorized()
+        let id = UUID().uuidString.lowercased()
+        let signature = try identity.sign(Self.data(try wire.textSigningBytes(
+            sender: identity.id, id: id, session: session, body: text
+        )))
+        let frame = try wire.text(sender: identity.id, id: id, session: session, body: text, signature: signature)
+        let bytes = try wire.frame(json: frame.json)
+        try persistMessage(frame)
+        onMessagesChanged()
+        pendingAcks.insert(id)
+        send(bytes)
     }
 
     private func receiveNext() {
@@ -201,6 +228,26 @@ final class PairingChannel {
             remoteApproval = frame
             try finishPairing()
         case "HELLO": throw PairingError.duplicateHello
+        case "TEXT":
+            try requireAuthorized()
+            guard frame.session == session,
+                  let certificate = transport.certificate(for: connection),
+                  AppleIdentity.fingerprint(certificate) == frame.sender,
+                  AppleIdentity.verify(
+                    certificate: certificate,
+                    message: Self.data(try wire.signingBytes(json: frame.json)),
+                    signature: frame.signature
+                  ) else { throw PairingError.invalidMessage }
+            // The repository commits or rejects conflicts before any receipt is sent.
+            try persistMessage(frame)
+            onMessagesChanged()
+            send(try wire.acknowledgement(sender: identity.id, id: frame.id))
+        case "ACK":
+            try requireAuthorized()
+            guard pendingAcks.contains(frame.id) else { throw PairingError.unexpectedReceipt }
+            try acknowledge(frame.id)
+            pendingAcks.remove(frame.id)
+            onMessagesChanged()
         default: throw PairingError.unsupportedFrame
         }
     }
@@ -211,6 +258,12 @@ final class PairingChannel {
         try persistTrust(remoteID, approval.json)
         authorized = true
         onConnected(remoteID)
+    }
+
+    private func requireAuthorized() throws {
+        guard !cancelled, authorized, let remoteID, isAllowed(remoteID), isTrusted(remoteID) else {
+            throw PairingError.notAuthorized
+        }
     }
 
     private func send(_ bytes: KotlinByteArray) {
@@ -252,6 +305,9 @@ private enum PairingError: Error, LocalizedError {
     case invalidApproval
     case duplicateHello
     case unsupportedFrame
+    case notAuthorized
+    case invalidMessage
+    case unexpectedReceipt
 
     var errorDescription: String? {
         switch self {
@@ -261,6 +317,9 @@ private enum PairingError: Error, LocalizedError {
         case .invalidApproval: return "Conferma remota non valida."
         case .duplicateHello: return "HELLO duplicato."
         case .unsupportedFrame: return "Frame non consentito prima dell'associazione."
+        case .notAuthorized: return "Peer non autorizzato a scambiare messaggi."
+        case .invalidMessage: return "Firma o sessione del messaggio non valida."
+        case .unexpectedReceipt: return "Ricevuta inattesa."
         }
     }
 }
@@ -316,6 +375,7 @@ final class BonjourProbe: ObservableObject {
             self?.onMain {
                 self?.state.updateDevices(values: [])
                 self?.state.updatePairing(peerId: "", code: "")
+                self?.state.updateConnected(peerId: "")
                 self?.state.updateStatus(value: "Servizio LAN arrestato")
             }
         }
@@ -333,6 +393,7 @@ final class BonjourProbe: ObservableObject {
             self.pairingGeneration += 1
             let generation = self.pairingGeneration
             self.onMain {
+                self.state.updateConnected(peerId: "")
                 self.state.updatePairing(peerId: peerID, code: "")
                 self.state.updateStatus(value: "Seleziona questo dispositivo anche sull'altro schermo (120 s)")
             }
@@ -353,6 +414,20 @@ final class BonjourProbe: ObservableObject {
         queue.async { [weak self] in self?.channel?.confirm() }
     }
 
+    func send(peerID: String, text: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            do {
+                guard let channel = self.channel, channel.connectedPeerID == peerID else {
+                    throw PairingError.notAuthorized
+                }
+                try channel.sendText(text)
+            } catch {
+                self.onMain { self.state.updateStatus(value: "Invio non riuscito: \(error.localizedDescription)") }
+            }
+        }
+    }
+
     func reject() {
         queue.async { [weak self] in
             self?.channel?.cancel()
@@ -360,7 +435,10 @@ final class BonjourProbe: ObservableObject {
             self?.allowedPeers.select(nil)
             self?.pairingGeneration += 1
             self?.retryGeneration += 1
-            self?.onMain { self?.state.updatePairing(peerId: "", code: "") }
+            self?.onMain {
+                self?.state.updatePairing(peerId: "", code: "")
+                self?.state.updateConnected(peerId: "")
+            }
         }
     }
 
@@ -398,6 +476,7 @@ final class BonjourProbe: ObservableObject {
                     self.state.updateDeviceName(value: name)
                     self.state.updateTrusted(values: trusted)
                 }
+                self.refreshMessages()
             case .failure(let error): self.reportPersistence(error)
             }
         }
@@ -499,6 +578,9 @@ final class BonjourProbe: ObservableObject {
                 self?.trusted.insert(peerID)
                 self?.allowedPeers.replaceTrusted(Array(self?.trusted ?? Set<String>()))
             },
+            persistMessage: { frame in _ = try persistence.saveMessage(frame: frame) },
+            acknowledge: { id in try persistence.acknowledge(id: id) },
+            onMessagesChanged: { [weak self] in self?.refreshMessages() },
             onComparison: { [weak self] peerID, code in
                 self?.onMain {
                     self?.state.updatePairing(peerId: peerID, code: code)
@@ -521,6 +603,7 @@ final class BonjourProbe: ObservableObject {
         onMain {
             self.state.updateTrusted(values: values)
             self.state.updatePairing(peerId: "", code: "")
+            self.state.updateConnected(peerId: peerID)
             self.state.updateStatus(value: "TLS 1.3 autenticato · associazione persistita")
         }
     }
@@ -535,6 +618,7 @@ final class BonjourProbe: ObservableObject {
         retryGeneration += 1
         let generation = retryGeneration
         onMain {
+            self.state.updateConnected(peerId: "")
             self.state.updatePairing(peerId: selected ?? "", code: "")
             self.state.updateStatus(value: "Canale chiuso: \(message)")
         }
@@ -562,6 +646,14 @@ final class BonjourProbe: ObservableObject {
 
     private func reportPersistence(_ error: Error) {
         onMain { self.state.updatePersistenceError(value: error.localizedDescription) }
+    }
+
+    private func refreshMessages() {
+        do {
+            guard let persistence else { return }
+            let messages = try persistence.history()
+            onMain { self.state.updateMessages(values: messages) }
+        } catch { reportPersistence(error) }
     }
 
     private func onMain(_ operation: @escaping () -> Void) {

@@ -10,7 +10,8 @@ struct ComposeScreen: UIViewControllerRepresentable {
             rename: { probe.rename($0) },
             pair: { probe.pair($0) },
             confirm: { probe.confirm() },
-            reject: { probe.reject() }
+            reject: { probe.reject() },
+            send: { probe.send(peerID: $0, text: $1) }
         )
     }
     func updateUIViewController(_ controller: UIViewController, context: Context) {}

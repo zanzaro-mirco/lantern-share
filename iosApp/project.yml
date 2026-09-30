@@ -39,6 +39,8 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: dev.lantern.poc.identity-tests
+        # Tests import the bridge API; the static framework remains linked only by the host app.
+        FRAMEWORK_SEARCH_PATHS: '$(inherited) $(SRCROOT)/../ui/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)'
 schemes:
   Lantern:
     build:

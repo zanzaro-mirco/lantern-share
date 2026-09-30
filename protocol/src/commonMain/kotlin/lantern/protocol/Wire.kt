@@ -42,17 +42,18 @@ object Wire {
         when (f.type) {
             FrameType.HELLO -> require(isFingerprint(f.nonce))
             FrameType.TEXT -> require(
-                f.id.matches(messageIdPattern) && ContentLimits.isValidText(f.body) &&
+                isMessageId(f.id) && ContentLimits.isValidText(f.body) &&
                     f.signature.length in 1..256 && isFingerprint(f.session)
             )
             FrameType.APPROVE -> require(
                 isFingerprint(f.session) && isFingerprint(f.body) && f.signature.length in 1..256
             )
-            FrameType.ACK -> require(f.id.matches(messageIdPattern))
+            FrameType.ACK -> require(isMessageId(f.id))
         }
         return f
     }
     fun isFingerprint(value: String): Boolean = value.matches(fingerprintPattern)
+    fun isMessageId(value: String): Boolean = value.matches(messageIdPattern)
 
     fun signedBytes(f: Frame): ByteArray = listOf("lantern-0", f.type.name, f.sender, f.id, f.session, f.body)
         .joinToString("") { "${it.encodeToByteArray().size}:$it" }.encodeToByteArray()
@@ -60,6 +61,20 @@ object Wire {
     fun transcript(idA: String, nonceA: String, idB: String, nonceB: String): String {
         require(idA != idB)
         return if (idA < idB) "lantern-pair-0|$idA|$nonceA|$idB|$nonceB" else "lantern-pair-0|$idB|$nonceB|$idA|$nonceA"
+    }
+}
+
+/** TEXT/ACK constructors shared with native adapters; unsigned TEXT is used only for signing. */
+object TextWire {
+    fun text(sender: String, id: String, session: String, body: String, signature: String = ""): Frame {
+        require(Wire.isFingerprint(sender) && Wire.isMessageId(id) && Wire.isFingerprint(session))
+        require(ContentLimits.isValidText(body) && signature.length <= 256)
+        return Frame(type = FrameType.TEXT, sender = sender, id = id, session = session, body = body, signature = signature)
+    }
+
+    fun acknowledgement(sender: String, id: String): Frame {
+        require(Wire.isFingerprint(sender) && Wire.isMessageId(id))
+        return Frame(type = FrameType.ACK, sender = sender, id = id)
     }
 }
 

@@ -80,6 +80,9 @@ final class AppleTLSTransportTests: XCTestCase {
                         XCTAssertEqual(peerID, clientIdentity.id)
                         serverAdmissions += 1
                     },
+                    persistMessage: { _ in XCTFail("Unexpected text during pairing test") },
+                    acknowledge: { _ in XCTFail("Unexpected ACK during pairing test") },
+                    onMessagesChanged: {},
                     onComparison: { _, code in codes.append(code); comparisons.fulfill() },
                     onConnected: { _ in serverConnected?.fulfill() },
                     onFailure: { message, _ in
@@ -104,6 +107,9 @@ final class AppleTLSTransportTests: XCTestCase {
                 XCTAssertEqual(peerID, serverIdentity.id)
                 clientAdmissions += 1
             },
+            persistMessage: { _ in XCTFail("Unexpected text during pairing test") },
+            acknowledge: { _ in XCTFail("Unexpected ACK during pairing test") },
+            onMessagesChanged: {},
             onComparison: { _, code in codes.append(code); comparisons.fulfill() },
             onConnected: { _ in clientConnected.fulfill() },
             onFailure: { message, _ in XCTFail(message) }
