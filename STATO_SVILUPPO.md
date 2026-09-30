@@ -1,6 +1,14 @@
 # Stato sviluppo — 30 settembre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Trasporto TLS e associazione iOS sono implementati; framework Kotlin, test condivisi e lock iOS sono verificati nella CI `4714abf`. La revisione del 30 settembre corregge sicurezza, scoperta e ciclo di vita del pairing; le correzioni Swift e i nuovi XCTest attendono verifica nativa. L'ultima CI `773282d` è fallita prima della compilazione per il setup CoreSimulator. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Identità e persistenza iOS sono verificate in CI su simulatore. Trasporto TLS e associazione iOS sono implementati; framework Kotlin, test condivisi e lock iOS sono verificati nella CI `4714abf`. La revisione del 30 settembre corregge sicurezza, scoperta e ciclo di vita del pairing; le correzioni Swift e i nuovi XCTest attendono verifica nativa. La CI `67efea1` è fallita prima della compilazione per il setup CoreSimulator; preparazione del runtime ora corretta, verifica macOS pendente. Corretto anche il crash Android durante blocco/rifiuto/arresto del canale; build e test locali riusciti, riprova sul telefono pendente. Le sezioni storiche non descrivono lo stato corrente.
+
+## Setup CoreSimulator CI — implementato, verifica macOS pendente
+
+La [CI 36765117114](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36765117114), commit `67efea1`, ha superato Android e tutti i job desktop, ma si è fermata su `xcodebuild -downloadPlatform iOS -buildVersion 18.4`: `Unable to connect to simulator`, exit 70. Non ha compilato né testato la revisione Swift.
+
+Il setup ora inizializza i componenti Xcode, interroga CoreSimulator prima del download (workaround dei manutentori di [runner-images #12862](https://github.com/actions/runner-images/issues/12862)), scarica soltanto se il runtime esatto non è disponibile e ne verifica la disponibilità prima dei task Kotlin/XCTest. Errori del servizio, JSON non valido e download fallito restano bloccanti. Log in `build/ios-simulator-setup.log`, conservato nell'artefatto CI anche in caso di fallimento. Nessun aggiornamento di versioni, nessun test nativo rimosso.
+
+Controlli locali Windows con Git Bash: `bash -n .github/scripts/prepare-ios-simulator.sh`, `bash -n .github/scripts/test-prepare-ios-simulator.sh` e `bash .github/scripts/test-prepare-ios-simulator.sh` riusciti; sette scenari verificati con sostituti dei comandi Apple confinati ai test. Non equivalgono alla verifica reale del runtime su macOS. Nessuna build Gradle rilanciata per questa modifica di infrastruttura. Prossimo passo: verificare una volta la nuova CI, poi compilazione Swift e XCTest se il setup passa. Collaudi fisici Apple ancora pendenti in fase 1.
 
 ## Associazione iOS sopra TLS — implementata, verifica nativa pendente
 

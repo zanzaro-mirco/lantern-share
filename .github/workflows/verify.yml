@@ -75,8 +75,14 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.3'
+      - name: Verify simulator setup orchestration
+        run: bash .github/scripts/test-prepare-ios-simulator.sh
       - name: Install matching simulator runtime
-        run: xcodebuild -downloadPlatform iOS -buildVersion 18.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          bash .github/scripts/prepare-ios-simulator.sh 2>&1 | tee build/ios-simulator-setup.log
       - uses: gradle/actions/setup-gradle@v4
       - name: Shared iOS framework and protocol tests
         run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
@@ -97,6 +103,7 @@ jobs:
         with:
           name: ios-verification
           path: |
+            build/ios-simulator-setup.log
             build/ios-identity-tests.xcresult
             iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
             persistence/build/reports/tests/
