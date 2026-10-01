@@ -1,6 +1,16 @@
-# Stato sviluppo — 30 settembre 2026
+# Stato sviluppo — 1 ottobre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. La CI `dba224a` è tutta verde, inclusi dieci XCTest di identità/TLS/associazione. Implementato il nuovo incremento `TEXT/ACK` iOS con UI e repository SQLite esistenti: verifica nativa pendente. Testo/ricevute non ancora provati su Apple. iOS ha workflow selettivo e dispatch manuale; quello `eca97ea` era ancora in corso all'unico controllo di questo incremento. Crash Android corretto e verificato localmente, riprova fisica pendente. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Commit `08dfb86`: CI iOS e Android/desktop tutte riuscite. Compilati Swift/iosMain ed eseguiti 19 XCTest, inclusi nove di messaggistica con salvataggio/riapertura e casi negativi, più test Kotlin/Native protocollo/SQLite. Nessun collaudo fisico Apple. Crash Android corretto e verificato localmente, riprova fisica pendente. Prossimo passo: collaudo residuo Android ↔ Windows senza WAN, testi/ricevute bidirezionali, riavvio e blocco. Le sezioni storiche non descrivono lo stato corrente.
+
+## Preparazione collaudo — artefatti di test
+
+Esiti verificati con `gh run view`: [iOS 36775866536](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866536) e [Android/desktop 36775866597](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866597), entrambe `success` sullo stesso SHA `08dfb8667b30d330534895bc2221ccd3f87be392`. Riepilogo log XCTest: 19 test, zero fallimenti. Salvataggio prima della ricevuta e riapertura verificati in loopback simulatore, non su LAN fisica.
+
+Il workflow Android/desktop ora carica APK debug e cartella Windows completa di runtime solo dopo build riuscita, con SHA nel nome, errore se manca l'output e conservazione 14 giorni. Non sono release né installer; nessuna credenziale reale aggiunta. La firma debug Android dei runner può variare: aggiornamento preservando i dati solo con firma compatibile; la guida non prescrive cancellazioni automatiche. README e `docs/COLLAUDO.md` aggiornati eliminando i vecchi limiti iOS ormai superati.
+
+Verifica della nuova configurazione: revisione mirata dei percorsi rispetto agli output Gradle e controlli locali di presenza dei pacchetti e `git diff --check`; upload/download Actions ancora da verificare nella nuova run. Nessuna build dell'app ripetuta per questa modifica di soli workflow/documentazione. Prossimo incremento concreto: eseguire e registrare la prima prova Android ↔ Windows descritta in `docs/COLLAUDO.md`; i collaudi iPhone e Mac restano obbligatori in fase 1.
+
+Le sezioni seguenti sono storiche: la verifica Apple pendente di `TEXT/ACK` è ora superata dalla CI `08dfb86`.
 
 ## Testo e ricevute iOS — implementati, verifica Apple pendente
 

@@ -1,8 +1,8 @@
 # Lantern — condivisione locale KMP
 
-**Primo incremento sperimentale; fase 0 non completata.** Nome tecnico provvisorio, senza decisioni di branding. La specifica resta [PIANO_SVILUPPO.md](PIANO_SVILUPPO.md). Risultati verificati e lacune sono in [STATO_SVILUPPO.md](STATO_SVILUPPO.md).
+**Prototipo sperimentale; fase 0 chiusa, fase 1 in corso.** Nome tecnico provvisorio, senza decisioni di branding. La specifica resta [PIANO_SVILUPPO.md](PIANO_SVILUPPO.md). Risultati verificati e lacune sono in [STATO_SVILUPPO.md](STATO_SVILUPPO.md).
 
-Il desktop contiene un percorso reale: identità persistente, mDNS, associazione esplicita su entrambi gli schermi, TLS 1.3 reciproco, testo firmato, SQLite e ricevute dopo salvataggio. Android riusa protocollo e motore TLS con NSD e Keystore nativi. **iOS contiene identità Keychain, persistenza SQLDelight con nome dispositivo nella UI e sonda Bonjour; non può ancora associarsi o scambiare messaggi.** Non è una implementazione completa della fase 0. Gli esiti delle build e dei test effettivi sono in STATO_SVILUPPO.md.
+Il desktop contiene un percorso reale: identità persistente, mDNS, associazione esplicita su entrambi gli schermi, TLS 1.3 reciproco, testo firmato, SQLite e ricevute dopo salvataggio. Android riusa protocollo e motore TLS con NSD e Keystore nativi. iOS implementa identità Keychain, SQLite, Bonjour, TLS, associazione e testo/ricevute, verificati in simulatore sul commit `08dfb86`; collaudi fisici Apple pendenti. Non è l'app completa prevista dal piano. Gli esiti delle build e dei test effettivi sono in STATO_SVILUPPO.md.
 
 ## Struttura
 
@@ -81,7 +81,7 @@ Ripetere **nativamente su entrambe le architetture**, senza scambiare i runtime.
 
 Mac richiede ancora: collaudo del Portachiavi implementato, permessi rete locale del bundle verificati, barra menu, sopravvivenza alla chiusura della finestra, avvio login, prove di sospensione. Attualmente chiudere la finestra arresta l'app. Non dichiarare Mac pronto alla distribuzione.
 
-Windows/Linux usano rispettivamente `createDistributable`, `packageMsi` / `packageDeb` sul relativo host con i tool di packaging richiesti da Compose. La CI costruisce distributable locali senza pubblicarli.
+Windows/Linux usano rispettivamente `createDistributable`, `packageMsi` / `packageDeb` sul relativo host con i tool di packaging richiesti da Compose. La CI conserva per 14 giorni il distributable Windows con runtime e l'APK debug Android negli artefatti della run `Verify Lantern PoC`, con SHA nel nome; non pubblica release. Download, installazione e cautela sulla firma debug Android: [procedura di collaudo](docs/COLLAUDO.md#build-di-test-e-prima-prova-android--windows).
 
 ## iPhone / Xcode
 
@@ -100,7 +100,7 @@ Su Mac Intel usare `iosX64` per il simulatore. Aprire il progetto generato in Xc
 
 L'app apre l'identità nel Keychain, apre `lantern.db` nella propria Application Support e mostra ID e nome dispositivo persistenti; elenca servizi desktop/Android tramite `NWBrowser`. Il package Swift locale contiene l'adattatore `NWListener`/`NWConnection`: TLS 1.3 reciproco, identità Keychain e verifica esatta dei pin forniti dal chiamante. Associazione con doppia conferma integrata nella UI e verificata in loopback simulatore nella CI `dba224a`. Il framing, le validazioni wire e i byte canonici firmati restano Kotlin. Decisioni in [ADR identità iOS](docs/ADR-002-IDENTITA-IOS.md) e [ADR trasporto TLS iOS](docs/ADR-003-TRASPORTO-TLS-IOS.md).
 
-Implementato anche `TEXT/ACK` iOS, **verifica nativa del nuovo incremento pendente**: dopo l'associazione il peer collegato appare sopra il campo messaggio (massimo 8192 byte UTF-8). L'invio salva il testo localmente; “Salvato sul destinatario” compare solo dopo la ricevuta. Il destinatario verifica mittente, sessione e firma e invia ACK soltanto dopo il commit SQLite idempotente. Cronologia locale e ricevute vengono caricate anche alla riapertura; un messaggio privo di ricevuta non viene ritrasmesso automaticamente. Solo testo tra due peer, senza inoltro o recupero. Collaudi Apple fisici ancora necessari.
+Implementato anche `TEXT/ACK` iOS, **verificato in CI simulatore sul commit `08dfb86`**: dopo l'associazione il peer collegato appare sopra il campo messaggio (massimo 8192 byte UTF-8). L'invio salva il testo localmente; “Salvato sul destinatario” compare solo dopo la ricevuta. Il destinatario verifica mittente, sessione e firma e invia ACK soltanto dopo il commit SQLite idempotente. Cronologia locale e ricevute vengono caricate anche alla riapertura; un messaggio privo di ricevuta non viene ritrasmesso automaticamente. Solo testo tra due peer, senza inoltro o recupero. Collaudi Apple fisici ancora necessari.
 
 Per i test dell'identità su un simulatore iOS 18.4 con Xcode 16.3: `xcodebuild -downloadPlatform iOS -buildVersion 18.4`, generare il progetto, poi dalla cartella principale `xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.4' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test`. La firma locale ad hoc include gli entitlement del simulatore necessari al Keychain; non usa certificati o credenziali Apple Developer. `Simulator.entitlements` è selezionato soltanto per SDK `iphonesimulator`, mai per dispositivo reale. La CI crea un simulatore dedicato e conserva il risultato XCTest.
 

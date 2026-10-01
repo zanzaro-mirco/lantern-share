@@ -6,14 +6,31 @@ La fase 0 è stata completata con Android 10+ e Windows 11 reali. La fase 1 comp
 
 Router/AP con rete LAN isolata da Internet, client isolation disabilitato. Testare Wi-Fi/Wi-Fi e Wi-Fi/Ethernet. Disattivare la WAN dopo installazione e prima delle prove. Consentire rete locale all'app, non disabilitare globalmente il firewall.
 
-**Blocco della fase 1:** iOS implementa identità Keychain e sonda Bonjour, ma non trasporto e associazione. Le prove 3–10 relative a iPhone non sono ancora eseguibili; richiedono il collegamento autenticato completo. Non compilare “superato” per tali celle.
+**Stato della fase 1:** iOS implementa identità, SQLite, Bonjour, TLS, associazione e testo/ricevute; compilazione e test loopback simulatore riusciti sul commit `08dfb86` (19 XCTest). Questi risultati non verificano LAN, permessi o ciclo di vita su iPhone fisico. I collaudi Apple restano non provati, non più bloccati dall'assenza di messaggistica.
+
+## Build di test e prima prova Android ↔ Windows
+
+In GitHub aprire **Actions → Verify Lantern PoC → run riuscita del commit da provare → Artifacts**. Dalla modifica che introduce gli artefatti, scaricare `lantern-android-debug-test-<SHA>` e `lantern-windows-x64-test-<SHA>` della **stessa run**. Conservati per 14 giorni; non sono release o installer. Le run precedenti non contengono questi pacchetti.
+
+- Android: estrarre lo ZIP e installare `androidApp-debug.apk` sul telefono di prova, oppure `adb install -r androidApp-debug.apk`. La chiave debug dei runner temporanei può differire da quella locale o da run precedenti: se Android rifiuta l'aggiornamento per firma diversa, fermarsi. Non disinstallare/cancellare dati automaticamente: si perdono cronologia e identità e occorre una nuova associazione. Per preservarle usare la build locale firmata dalla stessa chiave di quella già installata.
+- Windows: estrarre **tutto** lo ZIP in una cartella distinta e avviare `Lantern.exe`, mantenendo insieme `app/` e `runtime/`. Java è incluso. Chiudere l'istanza precedente; non eliminare `%USERPROFILE%\.lantern`, che conserva identità e cronologia. Usare la passphrase esistente. Consentire la sola rete privata nel firewall, senza disabilitarlo.
+- iPhone: l'artefatto `ios-verification` contiene risultati di test, **non un'app installabile**. Serve un Mac con Xcode, framework `iosArm64` e firma dispositivo configurata dal titolare; vedere README. Non trasferire al telefono una build del simulatore.
+
+Prima prova circoscritta con Android e Windows disponibili:
+
+1. Annotare SHA, versioni OS e ID completi dei due dispositivi. Installare prima di scollegare la WAN; lasciare attiva la LAN.
+2. Attivare entrambi i servizi; se già associati, verificare il collegamento senza nuova conferma. Altrimenti associare e confrontare il codice intero su entrambi.
+3. Inviare `Android → Windows: prova àè 漢字` e `Windows → Android: prova 🙂`. Verificare un solo inserimento per testo e ricevuta sul mittente, non soltanto comparsa sul destinatario.
+4. Chiudere completamente entrambe le app, riaprirle e verificare ID, nomi, testi e ricevute invariati. Riattivare il servizio, controllare riconnessione senza nuova associazione e inviare un nuovo testo per direzione. I vecchi testi non devono duplicarsi.
+5. Riprovare su Android “Arresta”, rifiuto di una nuova associazione e “Blocca localmente” senza crash. Il blocco deve impedire nuove ricezioni; per ripetere l'associazione occorre selezione e conferma reciproca, mai trust automatico.
+6. Compilare una riga di evidenza con SHA, data, WAN disattivata sì/no, esito di ogni passo e log del solo errore eventuale. Non allegare database, passphrase, chiavi o testi personali. Un singolo giro non certifica i percentili richiesti dal prodotto.
 
 Prova parziale iPhone già predisposta: annotare l'ID mostrato, terminare completamente il processo e riaprire; l'ID deve restare uguale. Verificare che un errore Keychain blocchi la scoperta e non sia sostituito da una nuova identità. Il blocco/sblocco del dispositivo e la conservazione dei dati dopo aggiornamento richiedono dispositivo fisico; i test del simulatore non li certificano.
 
 ## Sequenza per ciascuna coppia
 
 1. Installare build locali autorizzate. Su Mac usare `.app` con runtime incluso, anche su host senza Java. Verificare separatamente Intel e Apple Silicon.
-2. Avviare e assegnare nomi diversi. Attivare il servizio; misurare la scoperta con cronometro. Per iPhone usare per ora “Cerca nella LAN”. Annotare eventuale prompt rete locale negato/concesso.
+2. Avviare e assegnare nomi diversi. Attivare il servizio; misurare la scoperta con cronometro. Annotare eventuale prompt rete locale negato/concesso.
 3. Tentare connessione senza selezione reciproca: nessun testo deve passare. Nomi uguali non devono conferire trust.
 4. Selezionare i candidati su entrambi; confrontare tutto il codice. Rifiutare una volta: niente persistenza dell'autorizzazione. Riprovare e confermare su entrambi.
 5. Inviare testo ASCII e Unicode in entrambe le direzioni; attendere ricevuta. Riavviare processo e verificare identità invariata, cronologia presente, riconnessione automatica e assenza di duplicati.
@@ -43,9 +60,9 @@ La prova automatica nativa richiede un account/Portachiavi usa e getta, `LANTERN
 |---|---|---|---|---|---|
 | Mac ARM ↔ Android | non provato | non provato | non provato | non provato | |
 | Mac Intel ↔ Android | non provato | non provato | non provato | non provato | |
-| Mac ARM ↔ iPhone | non provato | non implementato iOS | non implementato iOS | non provato | |
-| Mac Intel ↔ iPhone | non provato | non implementato iOS | non implementato iOS | non provato | |
-| Android ↔ iPhone | non provato | non implementato iOS | non implementato iOS | non provato | |
+| Mac ARM ↔ iPhone | non provato | non provato | non provato | non provato | |
+| Mac Intel ↔ iPhone | non provato | non provato | non provato | non provato | |
+| Android ↔ iPhone | non provato | non provato | non provato | non provato | |
 | Mac ARM ↔ Mac Intel | non provato | non provato | non provato | non provato | |
 | Mac ↔ Windows | non provato | non provato | non provato | non provato | |
 | Mac ↔ Linux | non provato | non provato | non provato | non provato | |

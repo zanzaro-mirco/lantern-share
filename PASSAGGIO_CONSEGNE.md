@@ -1,10 +1,18 @@
-# Passaggio di consegne — 30 settembre 2026
+# Passaggio di consegne — 1 ottobre 2026
 
 ## Ripartenza rapida
 
 Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: https://github.com/zanzaro-mirco/lantern-share, branch `main`. Nome tecnico dell'app: Lantern. La vecchia cartella `app_condivisione_kmp` non esiste più.
 
-L'identità, la persistenza SQLDelight, TLS e associazione iOS sono verificati in simulatore dalla CI `dba224a`: **non ricominciare il debug già risolto**. Il nuovo incremento integra testo e ricevute iOS con SQLite e UI; compilazione Swift/iosMain e nuovi test nativi ancora pendenti. Il collegamento Android ↔ Windows funziona; il successivo crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono. Confermare con `git status` e log prima di lavorare.
+Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
+
+## Prossimo passo attuale
+
+Eseguire e registrare il collaudo residuo Android ↔ Windows: WAN disattivata, Unicode bidirezionale con ricevute, chiusura/riapertura preservando ID e cronologia, riconnessione e blocco/rifiuto/arresto senza crash. Procedura in `docs/COLLAUDO.md`. Il workflow `verify.yml` ora prepara artefatti APK debug e Windows completo di runtime, SHA nel nome e durata 14 giorni; upload/download ancora da verificare nella nuova run. Non sono release. Firma debug CI potenzialmente diversa: non disinstallare o cancellare dati senza decisione esplicita; build locale con stessa firma per preservare identità Android.
+
+Evidenze: [CI iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866536), [CI Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866597), entrambe `success` su `08dfb86`. Nessun hardware Apple disponibile su Windows; iPhone richiede Mac/Xcode e firma dispositivo configurata dall'utente, non l'artefatto dei risultati simulatore. Fase 0 chiusa, fase 1 aperta; non avviare v1/allegati in questo incremento di preparazione al collaudo.
+
+Le sezioni seguenti conservano il passaggio precedente: i riferimenti a verifica nativa pendente sono superati dagli esiti sopra.
 
 ## Stato reale
 
