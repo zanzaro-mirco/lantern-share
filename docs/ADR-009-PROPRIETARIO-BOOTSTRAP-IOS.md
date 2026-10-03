@@ -1,0 +1,23 @@
+# ADR 009 — proprietario bootstrap v1 Network.framework isolato
+
+## Ambito e precondizioni
+
+3 ottobre 2026. `HandshakeV1Channel` compone il bridge Kotlin di ADR 008 con API Network/Security/CryptoKit Apple. Nessun chiamante in PairingChannel/servizio, nessuna attivazione v1, gruppo, trust o chat. Swift muove byte e usa crypto OS; codec, transcript, negoziazione, ticket e decisioni del bootstrap restano Kotlin. Sorgente incluso esplicitamente nel progetto Xcode, nessuna nuova libreria/versione/lock.
+
+Il chiamante seleziona il pin prima di TLS, crea connessione/listener con `AppleTLSTransport` fornito e pin esatto, attende TLS reciproco 1.3 `.ready` e trasferisce la connessione al proprietario sulla stessa queue seriale. Non si adotta una connessione generica o creata da altri parametri TLS. Ricontrolli `.ready`, ID pubblico del trasporto contro il signer locale e pin del certificato peer ottenuto da quella connessione. Network metadata non viene usato come prova del certificato TLS locale: la provenienza dal trasporto fornito rimane una precondizione esplicita. Errore di inizializzazione cancella la connessione; listener e TLS precedente all'adozione restano del chiamante. Nessun trust-all, TOFU, fallback o pin proveniente automaticamente da discovery.
+
+## Stato, queue e risorse
+
+Nonce fresco OS tramite SecRandomCopyBytes. Verificatore legato al certificato remoto reale; firma tramite l'identità Apple che configurò TLS. HELLO unico, ricezione soltanto dopo completion positiva, conferma del ticket UI dopo confronto SHA-256 completo; APPROVE avanza solo nel callback di invio riuscito. Byte/framing/limite chunk riusati dal bridge, non parser Swift duplicati. `Ready` è revocabile/bootstrap locale, mai autorizzazione applicativa o persistenza del trust.
+
+Ingressi, Network callbacks e timer sulla queue seriale del chiamante, con precondizione di queue. Callback pubblici non devono bloccarla. La firma OS viene eseguita su queue condivisa separata (default globale); il completamento torna sulla queue proprietaria con ticket originale. Ciò lascia timer e cancellazione operativi durante una firma lenta. Risultati dopo chiusura ignorati, nessun riuso/reset del canale. Il chiamante mantiene vivo il proprietario; callback UI devono evitare cicli di ownership.
+
+Timer DispatchSource dalla selezione monotona, avviato anche prima di start e senza reader. Ad ogni risveglio ricontrolla il budget Kotlin, riprogrammando soltanto se anticipato. Non prolunga il termine dopo TLS/HELLO. Timeout, input invalido, EOF, errore OS, rifiuto/cancellazione chiudono una sola volta bridge, timer, handler e connessione; errori tipizzati e nessun contenuto remoto nella diagnostica. `deinit` cancella risorse OS senza callback UI su thread arbitrari. Cancellazione Network è asincrona: i test osservano anche EOF lato remoto, non assumono che `connection.state` cambi sincronicamente.
+
+API ufficiali consultate: [timer DispatchSource](https://developer.apple.com/documentation/dispatch/dispatchsource/maketimersource(flags:queue:)) e [ricezione Network.framework](https://developer.apple.com/documentation/network/nwconnection/receive(minimumincompletelength:maximumlength:completion:)). Dichiarazioni lette nelle risorse JSON ufficiali Apple; primitive di firma/TLS/nonce già adottate nel progetto, nessun aggiornamento di compatibilità.
+
+## Evidenze e prossimo incremento
+
+Sei XCTest scritti: TLS 1.3 reciproco/pin e firme Apple reali, confronto/doppia conferma, start duplicato, deadline idle con EOF remoto, selezione pin errata, signer locale diverso dal trasporto, peer disconnesso, firma effettiva completata dopo cancellazione. Confronto UI e gate di scheduling del signer simulati solo nelle fixture. Namespace Keychain casuali e risorse di test pulite senza toccare identità dell'app. Questi nuovi test e il nuovo adattatore sono **scritti ma non compilati/eseguiti da Windows**: verifica demandata alla nuova CI Xcode/simulatore. Kotlin invariato controllato localmente con task già up-to-date, non una prova Apple. CI precedente `dbb3c20` riuscita inclusi i tre XCTest del bridge. Nessun hardware o interoperabilità Apple/JVM v1 dichiarati.
+
+Prossimo incremento: verificare la CI, poi test avversari del proprietario su TLS reale per firme errate/replay e scadenza durante firma. Nessun instradamento nel servizio o trust persistito prima delle verifiche native e di una decisione esplicita sulla compatibilità.

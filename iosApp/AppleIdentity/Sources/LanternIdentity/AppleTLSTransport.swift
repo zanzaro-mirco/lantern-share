@@ -23,6 +23,9 @@ public final class AppleTLSTransport {
     private let identity: AppleIdentity
     private let verificationQueue: DispatchQueue
 
+    /// The adopter must use the same identity that configured this transport's TLS credentials.
+    public var localIdentityID: String { identity.id }
+
     public init(identity: AppleIdentity, verificationQueue: DispatchQueue? = nil) {
         self.identity = identity
         self.verificationQueue = verificationQueue ?? DispatchQueue(label: "dev.lantern.poc.tls-verification")
