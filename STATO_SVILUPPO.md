@@ -1,6 +1,14 @@
-# Stato sviluppo — 1 ottobre 2026
+# Stato sviluppo — 3 ottobre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. Commit `08dfb86`: CI iOS e Android/desktop tutte riuscite. Compilati Swift/iosMain ed eseguiti 19 XCTest, inclusi nove di messaggistica con salvataggio/riapertura e casi negativi, più test Kotlin/Native protocollo/SQLite. Nessun collaudo fisico Apple. Crash Android corretto e verificato localmente, riprova fisica pendente. Prossimo passo: collaudo residuo Android ↔ Windows senza WAN, testi/ricevute bidirezionali, riavvio e blocco. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. L'utente ha rinviato i collaudi fisici il 3 ottobre: registrati, non superati. Commit `08dfb86`: CI iOS e Android/desktop tutte riuscite, inclusi 19 XCTest; nessun collaudo fisico Apple. Crash Android corretto, riprova fisica pendente. `56f0de3`: CI artefatti riuscita, presenza APK e Windows verificata via API. Avviate regole pure di negoziazione v1; il servizio rimane v0. Prossimo passo: codec delle offerte v1 isolato dal trasporto. Le sezioni storiche non descrivono lo stato corrente.
+
+## Fondamenta v1 — contratto di negoziazione isolato
+
+Implementati in Kotlin comune `ProtocolCapabilities`, risultato esplicito compatibile/incompatibile e `ProtocolNegotiation`. Solo versione 1 implementata; intersezione delle capacità, requisiti obbligatori verificati in entrambe le direzioni, nessun fallback v0. Offerte limitate e copia delle collezioni in ingresso; nessuna autorizzazione implicita. Non esistono ancora codec v1, handshake autenticato o chiamanti di produzione. Nessun cambiamento a formato wire v0, schema, identità o lock. Decisione e limiti: `docs/ADR-004-NEGOZIAZIONE-V1.md`.
+
+Verifica effettiva: `.\gradlew.bat :protocol:jvmTest --console=plain`, `BUILD SUCCESSFUL` in 21 s; 20 test, zero fallimenti o saltati, inclusi sei nuovi (intersezione/ordine/simmetria, requisiti dei due peer, opzioni future, versioni non implementate, input/limiti, snapshot). La suite precedente v0 passa invariata. `git diff --check` riuscito. Kotlin/Native e CI del nuovo codice ancora pendenti; nessun hardware provato in questo incremento.
+
+Collaudi rinviati, elencati in `docs/COLLAUDO.md`: residui Android ↔ Windows senza Internet e regressione del crash, iPhone, Mac Intel/ARM64. Non chiudere la fase 1 in loro assenza. Prossimo incremento concreto: codec rigoroso delle offerte v1 con vettori JSON e dimensioni limitate; mantenere il trasporto v0 e non attivare negoziazione non autenticata.
 
 ## Preparazione collaudo — artefatti di test
 

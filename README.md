@@ -117,3 +117,5 @@ Per forzare soltanto iOS: **Actions → Verify Lantern iOS → Run workflow → 
 Il commit `6aa051f` ha superato la precedente matrice completa, inclusi build iOS e cinque XCTest dell'identità. Evidenze correnti e limiti sono in STATO_SVILUPPO.md. Sono conservati rapporti di test; nessuna release è pubblicata.
 
 Procedura e scheda risultati: [docs/COLLAUDO.md](docs/COLLAUDO.md).
+
+Il 3 ottobre l'utente ha rinviato i collaudi fisici: restano obbligatori e non superati in fase 1. Nel frattempo sono introdotte le regole Kotlin di negoziazione v1 (versione, capacità comuni, requisiti obbligatori), **non attivate nel servizio**. Nessuna modifica al wire v0 o al database. Ambito, limiti e prossimo codec separato: [ADR 004](docs/ADR-004-NEGOZIAZIONE-V1.md).

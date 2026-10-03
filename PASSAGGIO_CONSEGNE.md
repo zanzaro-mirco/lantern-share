@@ -1,4 +1,4 @@
-# Passaggio di consegne — 1 ottobre 2026
+# Passaggio di consegne — 3 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -8,9 +8,13 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
-Eseguire e registrare il collaudo residuo Android ↔ Windows: WAN disattivata, Unicode bidirezionale con ricevute, chiusura/riapertura preservando ID e cronologia, riconnessione e blocco/rifiuto/arresto senza crash. Procedura in `docs/COLLAUDO.md`. Il workflow `verify.yml` ora prepara artefatti APK debug e Windows completo di runtime, SHA nel nome e durata 14 giorni; upload/download ancora da verificare nella nuova run. Non sono release. Firma debug CI potenzialmente diversa: non disinstallare o cancellare dati senza decisione esplicita; build locale con stessa firma per preservare identità Android.
+L'utente ha rinviato al 3 ottobre i collaudi fisici a un momento successivo: registrati in `docs/COLLAUDO.md`, non superati. Restano obbligatori in fase 1. Proseguire con le fondamenta v1, senza rifare iOS e senza attivare modifiche incompatibili sul canale v0. Implementati `ProtocolCapabilities` e `ProtocolNegotiation` in Kotlin comune: intersezione simmetrica, requisiti obbligatori su entrambi i lati, rifiuto versioni non implementate e limiti delle offerte. Non sono ancora frame di rete né autorizzazioni. ADR in `docs/ADR-004-NEGOZIAZIONE-V1.md`.
 
-Evidenze: [CI iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866536), [CI Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866597), entrambe `success` su `08dfb86`. Nessun hardware Apple disponibile su Windows; iPhone richiede Mac/Xcode e firma dispositivo configurata dall'utente, non l'artefatto dei risultati simulatore. Fase 0 chiusa, fase 1 aperta; non avviare v1/allegati in questo incremento di preparazione al collaudo.
+Verifica locale: `.\gradlew.bat :protocol:jvmTest --console=plain`, riuscita in 21 s; 20 test, inclusi sei nuovi di negoziazione, zero fallimenti. Nessuna compilazione nativa Apple locale. Prossimo incremento: codec Kotlin rigoroso delle offerte v1 con vettori JSON e limiti, sempre separato dal trasporto attivo. Schema SQLite, identità, wire v0, versioni e lock invariati.
+
+La [CI `56f0de3`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36873108492) è riuscita: verificata presenza via API degli artefatti APK e Windows con runtime, non download/installazione. Durata 14 giorni: per collaudi successivi potrebbe servire una nuova build. Non sono release. Firma debug CI potenzialmente diversa: non disinstallare o cancellare dati senza decisione esplicita; build locale con stessa firma per preservare identità Android.
+
+Evidenze: [CI iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866536), [CI Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/36775866597), entrambe `success` su `08dfb86`. Nessun hardware Apple disponibile su Windows; iPhone richiede Mac/Xcode e firma dispositivo configurata dall'utente, non l'artefatto dei risultati simulatore. Fase 0 chiusa, fase 1 aperta. Nessun allegato, gruppo o recupero implementato da questo incremento.
 
 Le sezioni seguenti conservano il passaggio precedente: i riferimenti a verifica nativa pendente sono superati dagli esiti sopra.
 

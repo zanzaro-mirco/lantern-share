@@ -2,6 +2,8 @@
 
 ## Preparazione
 
+**Rinvio richiesto dall'utente il 3 ottobre 2026:** eseguire più avanti i collaudi fisici residui, senza considerarli superati. Restano da riprendere: Android ↔ Windows senza WAN, testi/ricevute bidirezionali e riavvio; regressione Android su blocco/rifiuto/arresto; iPhone ↔ Android/desktop; Mac Intel e Apple Silicon, inclusi Portachiavi, installazione e LAN senza Internet. Nessuna scadenza o automazione di monitoraggio impostata. Fase 1 aperta; si procede intanto con incrementi isolati del protocollo v1.
+
 La fase 0 è stata completata con Android 10+ e Windows 11 reali. La fase 1 completa su questa coppia le prove con WAN disattivata, bidirezionalità e riavvio, e aggiunge iPhone iOS 16+ e Mac macOS 13+ sia Apple Silicon sia Intel; Ubuntu 24.04 e le altre coppie seguono la matrice di prodotto. Annotare OS, architettura, commit/hash delle sorgenti, JDK, build, IP e interfaccia selezionata. Non riutilizzare identità copiate tra dispositivi.
 
 Router/AP con rete LAN isolata da Internet, client isolation disabilitato. Testare Wi-Fi/Wi-Fi e Wi-Fi/Ethernet. Disattivare la WAN dopo installazione e prima delle prove. Consentire rete locale all'app, non disabilitare globalmente il firewall.
