@@ -74,6 +74,41 @@ class HandshakeV1ConnectionTest {
     }
 
     @Test
+    fun adoptionPreparesAbortPolicyBeforeEitherPeerShutsDown() = withPeers { client, server ->
+        withSockets(client, server) { sockets ->
+            sockets.clientOwner().use { left ->
+                sockets.serverOwner().use { right ->
+                    // Assert policy before HELLO/reader/close can configure it too late.
+                    assertEquals(0, sockets.client.soLinger)
+                    assertEquals(0, sockets.server.soLinger)
+                    exchangeHellos(left, right)
+                    sockets.client.shutdownOutput()
+                    left.close()
+                    right.close()
+                    assertTrue(sockets.client.isClosed)
+                    assertTrue(sockets.server.isClosed)
+                    assertHandshakeClosed(left, ProtocolHandshakeFailure.Cancelled)
+                    assertHandshakeClosed(right, ProtocolHandshakeFailure.Cancelled)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun unavailableAbortPolicyFailsAdoptionAndClosesTransferredSocket() = withPeers { client, server ->
+        withSockets(client, server) { sockets ->
+            val failure = java.net.SocketException("test-only unavailable abort policy")
+            val transport = LingerFailureSocket(sockets.client, failure)
+            assertSame(failure, assertFailsWith<java.net.SocketException> {
+                HandshakeV1Connection.adopt(transport, client, capabilities, server.id, sockets.selectedAt, sockets.scheduler)
+            })
+            assertEquals(1, transport.lingerAttempts)
+            assertTrue(sockets.client.isClosed)
+            assertFalse(sockets.scheduler.isShutdown)
+        }
+    }
+
+    @Test
     fun initialHelloIsWrittenOnlyOnceAndNotOnReadBeforeStart() = withPeers { client, server ->
         withSockets(client, server) { sockets ->
             sockets.clientOwner().use { owner ->
@@ -343,6 +378,38 @@ class HandshakeV1ConnectionTest {
 
     private fun header(length: Int) = java.io.ByteArrayOutputStream().also { DataOutputStream(it).writeInt(length) }.toByteArray()
     private fun framed(payload: ByteArray) = header(payload.size) + payload
+
+    /** Test-only option failure; the session and terminal I/O still use the real pinned TLS socket. */
+    private class LingerFailureSocket(private val delegate: SSLSocket, private val failure: IOException) : SSLSocket() {
+        var lingerAttempts = 0
+            private set
+
+        override fun setSoLinger(on: Boolean, linger: Int) {
+            lingerAttempts++
+            throw failure
+        }
+        override fun getSession() = delegate.session
+        override fun isClosed() = delegate.isClosed
+        override fun shutdownInput() = delegate.shutdownInput()
+        override fun close() = delegate.close()
+        override fun getSupportedCipherSuites() = delegate.supportedCipherSuites
+        override fun getEnabledCipherSuites() = delegate.enabledCipherSuites
+        override fun setEnabledCipherSuites(suites: Array<out String>) { delegate.enabledCipherSuites = suites }
+        override fun getSupportedProtocols() = delegate.supportedProtocols
+        override fun getEnabledProtocols() = delegate.enabledProtocols
+        override fun setEnabledProtocols(protocols: Array<out String>) { delegate.enabledProtocols = protocols }
+        override fun addHandshakeCompletedListener(listener: javax.net.ssl.HandshakeCompletedListener) = delegate.addHandshakeCompletedListener(listener)
+        override fun removeHandshakeCompletedListener(listener: javax.net.ssl.HandshakeCompletedListener) = delegate.removeHandshakeCompletedListener(listener)
+        override fun startHandshake() = delegate.startHandshake()
+        override fun setUseClientMode(mode: Boolean) { delegate.useClientMode = mode }
+        override fun getUseClientMode() = delegate.useClientMode
+        override fun setNeedClientAuth(need: Boolean) { delegate.needClientAuth = need }
+        override fun getNeedClientAuth() = delegate.needClientAuth
+        override fun setWantClientAuth(want: Boolean) { delegate.wantClientAuth = want }
+        override fun getWantClientAuth() = delegate.wantClientAuth
+        override fun setEnableSessionCreation(flag: Boolean) { delegate.enableSessionCreation = flag }
+        override fun getEnableSessionCreation() = delegate.enableSessionCreation
+    }
 
     private inner class Sockets(val client: SSLSocket, val server: SSLSocket, val clientIdentity: Identity, val serverIdentity: Identity, val selectedAt: Long, val scheduler: ScheduledExecutorService) {
         fun clientOwner(selectedAt: Long = this.selectedAt, now: () -> Long = ::monotonicMillis) = HandshakeV1Connection.adopt(

@@ -218,6 +218,10 @@ internal class HandshakeV1Connection private constructor(
                 require(session.protocol == "TLSv1.3") { "TLS 1.3 required" }
                 val certificate = session.peerCertificates.single() as X509Certificate
                 require(digest(session.localCertificates.single().encoded) == identity.id) { "Local TLS identity mismatch" }
+                // Prepare abort while the transport is live. macOS can reject SO_LINGER changes
+                // after a peer reset, even when SSLSocket.isClosed still reports false.
+                // This owner never hands the socket to application traffic or graceful reuse.
+                socket.setSoLinger(true, 0)
                 val attempt = ProtocolHandshakeAttempt(
                     ProtocolHandshakeParticipant(identity.id, randomNonce(), capabilities),
                     selectedPeerIdentity,
@@ -242,11 +246,6 @@ internal class HandshakeV1Connection private constructor(
             fun remember(error: Throwable) {
                 val previous = failure
                 if (previous == null) failure = error else if (previous !== error) previous.addSuppressed(error)
-            }
-            try {
-                socket.setSoLinger(true, 0)
-            } catch (error: Throwable) {
-                remember(error)
             }
             try {
                 // Terminal bootstrap abort: discard inbound data, never interpret truncation as success.
