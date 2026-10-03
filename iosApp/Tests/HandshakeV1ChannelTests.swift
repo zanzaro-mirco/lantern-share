@@ -99,7 +99,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
     func testSelectionMismatchRejectsAdoptionAndClosesTransferredConnection() throws {
         let pair = try readyPair()
         let eof = expectation(description: "rejected adoption closed transport")
-        queue.sync {
+        try queue.sync {
             pair.server.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, complete, error in
                 XCTAssertTrue(complete || error != nil)
                 eof.fulfill()
@@ -117,7 +117,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
     func testDifferentLocalSignerCannotAdoptTransportIdentity() throws {
         let pair = try readyPair()
         let eof = expectation(description: "local identity mismatch closes transport")
-        queue.sync {
+        try queue.sync {
             pair.server.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, complete, error in
                 XCTAssertTrue(complete || error != nil)
                 eof.fulfill()
