@@ -1,6 +1,14 @@
 # Stato sviluppo — 3 ottobre 2026
 
-**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. L'utente ha rinviato i collaudi fisici il 3 ottobre: registrati, non superati. Commit `08dfb86`: CI iOS e Android/desktop tutte riuscite, inclusi 19 XCTest; nessun collaudo fisico Apple. Crash Android corretto, riprova fisica pendente. `56f0de3`: CI artefatti riuscita, presenza APK e Windows verificata via API. Avviate regole pure di negoziazione v1; il servizio rimane v0. Prossimo passo: codec delle offerte v1 isolato dal trasporto. Le sezioni storiche non descrivono lo stato corrente.
+**Punto di ripartenza:** leggere `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`. Fase 0 chiusa; fase 1 in corso. L'utente ha rinviato i collaudi fisici il 3 ottobre: registrati, non superati. Commit `08dfb86`: CI iOS e Android/desktop tutte riuscite, inclusi 19 XCTest; nessun collaudo fisico Apple. Crash Android corretto, riprova fisica pendente. `56f0de3`: CI artefatti riuscita, presenza APK e Windows verificata via API. `77f554b`: CI iOS e Android/desktop riuscite per le regole pure v1. Implementato codec offerte v1 isolato, 25 test JVM riusciti; nuova CI pendente. Il servizio rimane v0. Prossimo passo: transcript canonico v1 delle offerte, senza attivazione nel trasporto. Le sezioni storiche non descrivono lo stato corrente.
+
+## Fondamenta v1 — codec offerte isolato
+
+`ProtocolCapabilitiesCodec` implementato in Kotlin comune con kotlinx.serialization esistente: campi obbligatori, tipi rigorosi, nessun campo sconosciuto o duplicato, insiemi senza duplicati, limiti del modello, UTF-8 rigoroso e limite 4096 byte prima del parsing. Codifica deterministica con funzionalità ordinate. Versioni future rappresentabili, non accettate dal negoziatore. Nessun chiamante di rete, migrazione o cambio al wire v0, DB, identità, versioni/lock. Contratto documentato in ADR 004.
+
+Verifica locale effettiva: `.\gradlew.bat :protocol:jvmTest --console=plain`, `BUILD SUCCESSFUL` in 4 s; 25 test, zero fallimenti/saltati, inclusi cinque nuovi del codec. Primo tentativo: un test negativo fallito per la coercizione numerica `1e0`; aggiunta validazione lessicale, suite ripetuta con successo. CI del nuovo codec e compilazione Kotlin/Native ancora da verificare; nessun hardware testato. CI precedente `77f554b`: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37123915990) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37123915955) entrambe `success`, controllate una volta il 3 ottobre.
+
+Prossimo incremento: transcript canonico v1 che vincoli offerte, identità e nonce, con vettori/test di alterazione; leggere `docs/PROTOCOLLO_POC.md` prima di estendere l'associazione. Nessuna attivazione nel trasporto, nessun fallback automatico v0. Collaudi fisici rinviati, fase 1 aperta. Le note sul codec ancora mancante nella sezione precedente conservata sotto sono storiche.
 
 ## Fondamenta v1 — contratto di negoziazione isolato
 
