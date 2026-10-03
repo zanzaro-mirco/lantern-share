@@ -8,14 +8,15 @@ import kotlin.test.assertFailsWith
 class ProtocolHandshakeVerificationTest {
     private val local = participant("a", "1", setOf("text", "receipts"), setOf("text"))
     private val remote = participant("b", "2", setOf("text", "receipts", "future"), setOf("receipts"))
+    private val proof = "cHJvb2Y=" // Encodes a test fixture, not a real ECDSA signature.
 
     @Test
     fun verifiedResultRequiresTlsIdentityCompatibilityAndDirectionalProof() {
         var calls = 0
-        val result = ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, "proof") { bytes, signature ->
+        val result = ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, proof) { bytes, signature ->
             calls++
             assertContentEquals(ProtocolHandshakeTranscript.approvalBytes(remote, local), bytes)
-            assertEquals("proof", signature)
+            assertEquals(proof, signature)
             true // Verifier simulation confined to this pure contract test.
         }
         assertEquals(1, calls)
@@ -57,7 +58,7 @@ class ProtocolHandshakeVerificationTest {
 
     @Test
     fun invalidSignatureCannotProduceVerifiedCapabilities() {
-        for (signature in listOf("", " ", "x".repeat(257))) {
+        for (signature in listOf("", " ", "x".repeat(257), "not-base64", "AB==", "AAB=")) {
             assertEquals(
                 ProtocolHandshakeVerificationResult.InvalidSignature,
                 ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, signature) { _, _ ->
@@ -68,7 +69,7 @@ class ProtocolHandshakeVerificationTest {
         var calls = 0
         assertEquals(
             ProtocolHandshakeVerificationResult.InvalidSignature,
-            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, "invalid") { _, _ ->
+            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, "aW52YWxpZA==") { _, _ ->
                 calls++
                 false
             },
@@ -80,24 +81,57 @@ class ProtocolHandshakeVerificationTest {
     fun verificationHasNoCachedSuccessAndPropagatesAdapterFailure() {
         assertEquals(
             ProtocolHandshakeVerificationResult.Verified(ProtocolNegotiationResult.Compatible(1, setOf("receipts", "text"))),
-            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, "proof") { _, _ -> true },
+            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, proof) { _, _ -> true },
         )
         assertEquals(
             ProtocolHandshakeVerificationResult.InvalidSignature,
-            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, "proof") { _, _ -> false },
+            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, proof) { _, _ -> false },
         )
         assertFailsWith<IllegalStateException> {
-            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, "proof") { _, _ ->
+            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, proof) { _, _ ->
                 error("Adapter failed")
             }
         }
+    }
+
+    @Test
+    fun decodedApprovalMustAddressThisConnectionBeforeSignatureVerification() {
+        val approval = ProtocolHandshakeApproval(remote.identity, local.identity, proof)
+        val decoded = ProtocolHandshakeApprovalCodec.decode(ProtocolHandshakeApprovalCodec.encode(approval))
+        assertEquals(
+            ProtocolHandshakeVerificationResult.Verified(ProtocolNegotiationResult.Compatible(1, setOf("receipts", "text"))),
+            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, decoded) { bytes, signature ->
+                assertContentEquals(ProtocolHandshakeTranscript.approvalBytes(remote, local), bytes)
+                assertEquals(proof, signature)
+                true
+            },
+        )
+        val changed = listOf(
+            approval.copy(sender = "c".repeat(64)),
+            approval.copy(recipient = "c".repeat(64)),
+            ProtocolHandshakeApproval(local.identity, remote.identity, proof),
+        )
+        for (wrongAddress in changed) {
+            assertEquals(
+                ProtocolHandshakeVerificationResult.AddressMismatch,
+                ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, remote.identity, wrongAddress) { _, _ ->
+                    error("Wrongly addressed approval reached verifier")
+                },
+            )
+        }
+        assertEquals(
+            ProtocolHandshakeVerificationResult.IdentityMismatch,
+            ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, "c".repeat(64), decoded) { _, _ ->
+                error("Unbound TLS identity reached verifier")
+            },
+        )
     }
 
     private fun verifyWithoutSignatureCheck(
         own: ProtocolHandshakeParticipant,
         peer: ProtocolHandshakeParticipant,
         authenticatedIdentity: String,
-    ) = ProtocolHandshakeVerification.verifyRemoteApproval(own, peer, authenticatedIdentity, "proof") { _, _ ->
+    ) = ProtocolHandshakeVerification.verifyRemoteApproval(own, peer, authenticatedIdentity, proof) { _, _ ->
         error("Rejected offer reached verifier")
     }
 

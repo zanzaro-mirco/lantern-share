@@ -5,12 +5,24 @@ sealed interface ProtocolHandshakeVerificationResult {
     data class Verified(val capabilities: ProtocolNegotiationResult.Compatible) : ProtocolHandshakeVerificationResult
     data class Incompatible(val reason: ProtocolIncompatibility) : ProtocolHandshakeVerificationResult
     data object IdentityMismatch : ProtocolHandshakeVerificationResult
+    data object AddressMismatch : ProtocolHandshakeVerificationResult
     data object InvalidSignature : ProtocolHandshakeVerificationResult
 }
 
 /** Stateless v1 verification, deliberately not wired into the v0 connection owner. */
 object ProtocolHandshakeVerification {
-    private const val MAX_SIGNATURE_LENGTH = 256
+    fun verifyRemoteApproval(
+        local: ProtocolHandshakeParticipant,
+        remote: ProtocolHandshakeParticipant,
+        authenticatedPeerIdentity: String,
+        approval: ProtocolHandshakeApproval,
+        verifySignature: (ByteArray, String) -> Boolean,
+    ): ProtocolHandshakeVerificationResult {
+        if (approval.sender != remote.identity || approval.recipient != local.identity) {
+            return ProtocolHandshakeVerificationResult.AddressMismatch
+        }
+        return verifyRemoteApproval(local, remote, authenticatedPeerIdentity, approval.signature, verifySignature)
+    }
 
     /**
      * [authenticatedPeerIdentity] must come from the certificate accepted on this TLS connection,
@@ -32,7 +44,7 @@ object ProtocolHandshakeVerification {
             is ProtocolNegotiationResult.Incompatible -> return ProtocolHandshakeVerificationResult.Incompatible(result.reason)
             is ProtocolNegotiationResult.Compatible -> result
         }
-        if (signature.isBlank() || signature.length > MAX_SIGNATURE_LENGTH) {
+        if (!ProtocolHandshakeApproval.isValidSignature(signature)) {
             return ProtocolHandshakeVerificationResult.InvalidSignature
         }
         // Do not swallow adapter exceptions: a failed verifier must never become a success.

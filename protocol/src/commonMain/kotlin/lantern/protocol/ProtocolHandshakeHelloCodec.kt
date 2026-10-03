@@ -29,7 +29,7 @@ object ProtocolHandshakeHelloCodec {
         return json.decodeFromString(HelloSerializer, decodeBoundedProtocolJson(bytes, MAX_BYTES, maxDepth = 3))
     }
 
-    private object HelloSerializer : KSerializer<ProtocolHandshakeParticipant> {
+    internal object HelloSerializer : KSerializer<ProtocolHandshakeParticipant> {
         override val descriptor = buildClassSerialDescriptor("lantern.protocol.HandshakeHello") {
             element<JsonPrimitive>("identity")
             element<JsonPrimitive>("nonce")

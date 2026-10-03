@@ -86,6 +86,26 @@ class ProtocolHandshakeSignatureTest {
         assertEquals(ProtocolHandshakeVerificationResult.InvalidSignature, verify(local, remote, "not-base64"))
     }
 
+    @Test
+    fun signatureSyntaxMatchesJdkCanonicalBase64ForAllAllowedByteSizes() {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        for (size in 1..192) {
+            val bytes = ByteArray(size) { ((it * 37 + size) and 255).toByte() }
+            val encoded = Base64.getEncoder().encodeToString(bytes)
+            assertTrue(ProtocolHandshakeApproval.isValidSignature(encoded), "Rejected canonical size $size")
+            val approval = ProtocolHandshakeApproval("a".repeat(64), "b".repeat(64), encoded)
+            assertEquals(approval, ProtocolHandshakeApprovalCodec.decode(ProtocolHandshakeApprovalCodec.encode(approval)))
+            if (size % 3 != 0) {
+                val index = encoded.length - if (size % 3 == 1) 3 else 2
+                val alias = encoded.substring(0, index) + alphabet[alphabet.indexOf(encoded[index]) + 1] + encoded.substring(index + 1)
+                // JDK decoding ignores unused pad bits; v1 rejects the alternate spelling.
+                assertEquals(encoded, Base64.getEncoder().encodeToString(Base64.getDecoder().decode(alias)))
+                assertFalse(ProtocolHandshakeApproval.isValidSignature(alias), "Accepted non-canonical size $size")
+            }
+        }
+        assertFalse(ProtocolHandshakeApproval.isValidSignature(Base64.getEncoder().encodeToString(ByteArray(193))))
+    }
+
     private fun participant(
         identity: String,
         nonce: String,
