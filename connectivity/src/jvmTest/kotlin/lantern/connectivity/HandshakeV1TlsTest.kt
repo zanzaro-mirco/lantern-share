@@ -12,14 +12,16 @@ import javax.net.ssl.SSLSocket
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeApproval
+import lantern.protocol.ProtocolHandshakeAttempt
+import lantern.protocol.ProtocolHandshakeFailure
 import lantern.protocol.ProtocolHandshakeFrame
 import lantern.protocol.ProtocolHandshakeFrameCodec
 import lantern.protocol.ProtocolHandshakeParticipant
-import lantern.protocol.ProtocolHandshakeTranscript
-import lantern.protocol.ProtocolHandshakeVerification
-import lantern.protocol.ProtocolHandshakeVerificationResult
+import lantern.protocol.ProtocolHandshakeState
 import lantern.protocol.ProtocolNegotiationResult
 
 /** Explicitly pinned test connections only; no v1 routing or trust changes in Node/PeerConnection. */
@@ -39,9 +41,9 @@ class HandshakeV1TlsTest {
     @Test
     fun genuinelyAuthenticatedPeerCannotAddressApprovalToAnotherDevice() = withIdentities { client, server ->
         val thirdId = listOf("c".repeat(64), "d".repeat(64), "e".repeat(64)).first { it != client.id && it != server.id }
-        val (clientExchange, serverExchange) = connect(client, server) { it.copy(recipient = thirdId) }
+        val (clientExchange, serverExchange) = connect(client, server, changeServerApproval = { it.copy(recipient = thirdId) })
         assertEquals(server.id, clientExchange.authenticatedPeer)
-        assertEquals(ProtocolHandshakeVerificationResult.AddressMismatch, clientExchange.verification)
+        assertEquals(ProtocolHandshakeState.Closed(ProtocolHandshakeFailure.AddressMismatch), clientExchange.state)
         assertVerified(serverExchange)
     }
 
@@ -51,13 +53,21 @@ class HandshakeV1TlsTest {
         assertVerified(first.first)
         assertVerified(first.second)
         val staleServerApproval = first.second.outgoingApproval
-        val second = connect(client, server) { staleServerApproval }
+        val second = connect(client, server, changeServerApproval = { staleServerApproval })
         assertEquals(server.id, second.first.authenticatedPeer)
         assertNotEquals(first.first.local.nonce, second.first.local.nonce)
         assertNotEquals(first.second.local.nonce, second.second.local.nonce)
         assertNotEquals(first.first.comparisonDigest, second.first.comparisonDigest)
-        assertEquals(ProtocolHandshakeVerificationResult.InvalidSignature, second.first.verification)
+        assertEquals(ProtocolHandshakeState.Closed(ProtocolHandshakeFailure.InvalidSignature), second.first.state)
         assertVerified(second.second)
+    }
+
+    @Test
+    fun cancelledAttemptCannotAdvanceOnDelayedSuccessfulWriteCallback() = withIdentities { client, server ->
+        val (clientExchange, serverExchange) = connect(client, server, afterServerWrite = { it.cancel() })
+        assertEquals(ProtocolHandshakeState.Closed(ProtocolHandshakeFailure.Cancelled), serverExchange.state)
+        // The peer got the bytes, but that cannot resurrect the locally cancelled candidate.
+        assertVerified(clientExchange)
     }
 
     private data class Exchange(
@@ -66,13 +76,14 @@ class HandshakeV1TlsTest {
         val authenticatedPeer: String,
         val tlsProtocol: String,
         val comparisonDigest: String,
-        val verification: ProtocolHandshakeVerificationResult,
+        val state: ProtocolHandshakeState,
     )
 
     private fun connect(
         client: Identity,
         server: Identity,
         changeServerApproval: (ProtocolHandshakeApproval) -> ProtocolHandshakeApproval = { it },
+        afterServerWrite: (ProtocolHandshakeAttempt) -> Unit = {},
     ): Pair<Exchange, Exchange> {
         val loopback = InetAddress.getLoopbackAddress()
         val executor = Executors.newSingleThreadExecutor { runnable ->
@@ -86,11 +97,11 @@ class HandshakeV1TlsTest {
             try {
                 val serverResult = executor.submit<Exchange> {
                     (listener.accept() as SSLSocket).use { socket ->
-                        exchange(socket, server, setOf("text", "receipts", "server-option"), setOf("receipts"), changeServerApproval)
+                        exchange(socket, server, client.id, setOf("text", "receipts", "server-option"), setOf("receipts"), changeServerApproval, afterServerWrite)
                     }
                 }
                 val clientResult = (client.context { pin -> pin == server.id }.socketFactory.createSocket(loopback, listener.localPort) as SSLSocket).use { socket ->
-                    exchange(socket, client, setOf("text", "receipts", "client-option"), setOf("text"))
+                    exchange(socket, client, server.id, setOf("text", "receipts", "client-option"), setOf("text"))
                 }
                 return clientResult to serverResult.get(10, TimeUnit.SECONDS)
             } finally {
@@ -104,34 +115,39 @@ class HandshakeV1TlsTest {
     private fun exchange(
         socket: SSLSocket,
         identity: Identity,
+        selectedPeer: String,
         supported: Set<String>,
         required: Set<String>,
         changeApproval: (ProtocolHandshakeApproval) -> ProtocolHandshakeApproval = { it },
+        afterWrite: (ProtocolHandshakeAttempt) -> Unit = {},
     ): Exchange {
+        val selectedAt = System.nanoTime() / 1_000_000
         socket.soTimeout = 5000
         socket.enabledProtocols = arrayOf("TLSv1.3")
         socket.startHandshake()
         val certificate = socket.session.peerCertificates.single() as X509Certificate
         val authenticatedPeer = digest(certificate.encoded)
         val local = ProtocolHandshakeParticipant(identity.id, randomNonce(), ProtocolCapabilities(1, supported, required))
-        val input = DataInputStream(socket.inputStream)
-        val output = DataOutputStream(socket.outputStream)
-        writePayload(output, ProtocolHandshakeFrameCodec.encode(ProtocolHandshakeFrame.Hello(local)))
-        val remoteHello = ProtocolHandshakeFrameCodec.decode(readPayload(input, ProtocolHandshakeFrameCodec.MAX_BYTES))
-        check(remoteHello is ProtocolHandshakeFrame.Hello) { "Expected HELLO before APPROVE" }
-        val remote = remoteHello.participant
-        check(remote.identity == authenticatedPeer) { "HELLO does not match the current TLS certificate" }
-        val transcript = ProtocolHandshakeTranscript.bytes(local, remote)
-        val outgoingApproval = changeApproval(
-            ProtocolHandshakeApproval(local.identity, remote.identity, identity.sign(ProtocolHandshakeTranscript.approvalBytes(local, remote))),
-        )
-        writePayload(output, ProtocolHandshakeFrameCodec.encode(ProtocolHandshakeFrame.Approve(outgoingApproval)))
-        val incomingApproval = ProtocolHandshakeFrameCodec.decode(readPayload(input, ProtocolHandshakeFrameCodec.MAX_BYTES))
-        check(incomingApproval is ProtocolHandshakeFrame.Approve) { "Expected APPROVE after HELLO" }
-        val verification = ProtocolHandshakeVerification.verifyRemoteApproval(local, remote, authenticatedPeer, incomingApproval.approval) { bytes, signature ->
+        val attempt = ProtocolHandshakeAttempt(local, selectedPeer, authenticatedPeer, selectedAt, { System.nanoTime() / 1_000_000 }) { bytes, signature ->
             Identity.verify(certificate, bytes, signature)
         }
-        return Exchange(local, outgoingApproval, authenticatedPeer, socket.session.protocol, digest(transcript), verification)
+        val input = DataInputStream(socket.inputStream)
+        val output = DataOutputStream(socket.outputStream)
+        writePayload(output, ProtocolHandshakeFrameCodec.encode(assertNotNull(attempt.localHello)))
+        val remoteHello = ProtocolHandshakeFrameCodec.decode(readPayload(input, ProtocolHandshakeFrameCodec.MAX_BYTES))
+        assertTrue(attempt.receive(remoteHello))
+        val comparison = assertNotNull(attempt.comparison())
+        val transcript = comparison.bytes
+        // Explicit confirmation is simulated only here; production still requires the physical UI.
+        val signing = assertNotNull(attempt.confirm(comparison))
+        val sending = assertNotNull(attempt.signed(signing, identity.sign(signing.bytes)))
+        val outgoingApproval = changeApproval(sending.approval)
+        writePayload(output, ProtocolHandshakeFrameCodec.encode(ProtocolHandshakeFrame.Approve(outgoingApproval)))
+        afterWrite(attempt)
+        attempt.sent(sending)
+        val incomingApproval = ProtocolHandshakeFrameCodec.decode(readPayload(input, ProtocolHandshakeFrameCodec.MAX_BYTES))
+        attempt.receive(incomingApproval)
+        return Exchange(local, outgoingApproval, authenticatedPeer, socket.session.protocol, digest(transcript), attempt.state)
     }
 
     // Test-only length framing of isolated bootstrap messages; Node still routes wire v0 only.
@@ -149,8 +165,8 @@ class HandshakeV1TlsTest {
 
     private fun assertVerified(exchange: Exchange) {
         assertEquals(
-            ProtocolHandshakeVerificationResult.Verified(ProtocolNegotiationResult.Compatible(1, setOf("receipts", "text"))),
-            exchange.verification,
+            ProtocolHandshakeState.Ready(ProtocolNegotiationResult.Compatible(1, setOf("receipts", "text"))),
+            exchange.state,
         )
     }
 
