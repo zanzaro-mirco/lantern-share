@@ -20,6 +20,20 @@ class ProtocolHandshakeAttemptTest {
     private class Clock(var now: Long = 1000)
 
     @Test
+    fun remainingReadBudgetUsesSelectionDeadlineAndInvalidatesOnExpiry() {
+        val clock = Clock()
+        val attempt = attempt(clock = clock)
+        assertEquals(120_000L, attempt.remainingMillis)
+        clock.now += 119_999
+        assertEquals(1L, attempt.remainingMillis)
+        clock.now++
+        assertNull(attempt.remainingMillis)
+        assertEquals(ProtocolHandshakeState.Closed(ProtocolHandshakeFailure.Expired), attempt.state)
+        clock.now = 1000
+        assertNull(attempt.remainingMillis)
+    }
+
+    @Test
     fun readinessRequiresExplicitConfirmationSignatureAndSuccessfulWriteInEitherOrder() {
         // Remote approval may arrive before confirmation, during signing, during writing or last.
         for (remoteStep in 0..3) {

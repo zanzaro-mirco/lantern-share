@@ -75,6 +75,10 @@ class ProtocolHandshakeAttempt(
     val localHello: ProtocolHandshakeFrame.Hello?
         get() = if (isActive()) ProtocolHandshakeFrame.Hello(snapshot(local)) else null
 
+    /** Remaining monotonic budget for an adapter's blocking read; null also invalidates the attempt. */
+    val remainingMillis: Long?
+        get() = if (isActive()) TIMEOUT_MILLIS - (lastObservedMillis - selectedAtMillis) else null
+
     /** Reading state also enforces expiration, so a delayed timer cannot leave a ready attempt live. */
     val state: ProtocolHandshakeState
         get() {

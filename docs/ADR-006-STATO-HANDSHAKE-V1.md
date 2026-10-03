@@ -30,7 +30,7 @@ Durata fissa 120 secondi dalla selezione, non dal completamento TLS o dalla rice
 
 La macchina non è thread-safe: tutte le chiamate, incluse letture, devono essere serializzate sulla coda del proprietario della connessione. Il verificatore è sincrono; errori ed eccezioni, inclusa cancellazione, chiudono il tentativo e sono rilanciati, mai convertiti in successo. Dopo il verificatore si ricontrolla lo stato e il tempo: un callback che annulla il canale o termina oltre scadenza non può ripristinare la prova. Ingresso di un altro frame durante la verifica fallisce chiuso.
 
-Il proprietario resta responsabile di inviare HELLO locale una sola volta prima di instradare frame alla macchina, di decodificare/frammare con i limiti esistenti e di chiudere le risorse dopo errore/cancellazione. La macchina non verifica ancora i callback di invio HELLO, non legge uno stream e non riceve eventi applicativi. Questo è il prossimo confine da implementare, non una promessa già soddisfatta.
+Il proprietario resta responsabile di inviare HELLO locale una sola volta prima di instradare frame alla macchina, di decodificare/frammare con i limiti esistenti e di chiudere le risorse dopo errore/cancellazione. La macchina non verifica i callback di invio HELLO, non legge uno stream e non riceve eventi applicativi. Questo confine è ora implementato nel proprietario JVM/Android isolato di [ADR 007](ADR-007-CONNESSIONE-BOOTSTRAP-V1.md), incluso scheduler di scadenza e cleanup; nessuna attivazione nel servizio e nessun proprietario Apple v1 ancora presente.
 
 `Ready` rimane revocabile e scade: è un esito locale del bootstrap, non completamento atomico distribuito, appartenenza al gruppo o autorizzazione alla chat. Un vecchio snapshot `Ready` non va usato per persistere trust dopo cancellazione/scadenza; il futuro proprietario dovrà ricontrollare il tentativo sul proprio contesto seriale. APPROVE non è una credenziale di gruppo e non deve essere persistito come tale.
 
@@ -42,4 +42,4 @@ Quattro `HandshakeV1TlsTest` JVM usano realmente TLS 1.3 reciproco, pin esatti, 
 
 Comandi e conteggi effettivi in `STATO_SVILUPPO.md`. CI precedente `4203f42` riuscita anche su iOS; nuova compilazione/test Apple demandati alla CI, non eseguibili da Windows. Hardware rinviato ma obbligatorio in fase 1.
 
-Prossimo incremento: proprietario isolato del bootstrap v1 che instradi codec/macchina e chiuda risorse su errori I/O o cancellazione, con test TLS reali. Ancora senza attivazione in `Node`/Swift, persistenza trust o modifica al canale v0.
+Proprietario JVM/Android implementato nell'incremento ADR 007. Prossimo incremento corrente in PASSAGGIO: bridge Kotlin/iOS isolato, ancora senza attivazione in `Node`/Swift, persistenza trust o modifica al canale v0.

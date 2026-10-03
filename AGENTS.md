@@ -11,6 +11,8 @@
 
 Lavora concretamente, con codice pulito e mantenibile. Riduci il consumo: letture mirate, niente subagenti, niente refactoring estranei, test pertinenti e modifiche raggruppate prima del push. Non attendere la CI con polling ripetuto: se rimane pendente, riporta link e commit e fermati.
 
+Aggiornamento autorizzato dall'utente il 3 ottobre: è consentito **polling CI leggero e distanziato**, con stati compatti, indicativamente non più di un controllo ogni cinque minuti mentre si svolge lavoro utile. Questa autorizzazione sostituisce il divieto assoluto di ripetere il controllo; non richiede attese prolungate o cicli serrati. Se rimane pendente alla chiusura dell'incremento, riportare link e commit e fermarsi.
+
 - Completa un incremento piccolo e concreto alla volta. Prima di modificare, identifica risultato atteso, file coinvolti e verifica minima. Non estendere autonomamente l'incremento a tutta la roadmap.
 - Usa ricerche mirate (`rg`), leggi soltanto i sorgenti pertinenti, raggruppa letture indipendenti. Non rileggere log completi o tutti i documenti a ogni passaggio.
 - Non usare subagenti salvo richiesta esplicita. Evita refactoring generali, nuove librerie o aggiornamenti di versione non necessari.
