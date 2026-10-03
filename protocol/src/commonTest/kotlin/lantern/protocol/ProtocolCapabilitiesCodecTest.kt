@@ -3,6 +3,7 @@ package lantern.protocol
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ProtocolCapabilitiesCodecTest {
@@ -72,6 +73,15 @@ class ProtocolCapabilitiesCodecTest {
         assertFails { decode("$exact ") }
         assertFails { ProtocolCapabilitiesCodec.decode(byteArrayOf()) }
         assertFails { ProtocolCapabilitiesCodec.decode(byteArrayOf(0xc3.toByte(), 0x28)) }
+    }
+
+    @Test
+    fun deeplyNestedWrongTypesFailAsInputErrorsRatherThanRuntimeErrors() {
+        for (depth in listOf(32, 128, 512, 1500)) {
+            val nested = "[".repeat(depth) + "0" + "]".repeat(depth)
+            assertFailsWith<IllegalArgumentException> { decode(vector.replace("[\"text\"]", nested)) }
+            assertFailsWith<IllegalArgumentException> { decode(vector.replace("\"version\":1", "\"version\":$nested")) }
+        }
     }
 
     private fun decode(value: String) = ProtocolCapabilitiesCodec.decode(value.encodeToByteArray())

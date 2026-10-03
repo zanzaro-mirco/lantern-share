@@ -27,12 +27,11 @@ object ProtocolCapabilitiesCodec {
         }
 
     fun decode(bytes: ByteArray): ProtocolCapabilities {
-        require(bytes.size in 1..MAX_BYTES) { "Invalid offer size" }
-        return json.decodeFromString(OfferSerializer, bytes.decodeToString(throwOnInvalidSequence = true))
+        return json.decodeFromString(OfferSerializer, decodeBoundedProtocolJson(bytes, MAX_BYTES, maxDepth = 2))
     }
 
     // Streaming structure decoding preserves duplicate keys, unlike parsing to a JsonObject.
-    private object OfferSerializer : KSerializer<ProtocolCapabilities> {
+    internal object OfferSerializer : KSerializer<ProtocolCapabilities> {
         override val descriptor = buildClassSerialDescriptor("lantern.protocol.CapabilitiesOffer") {
             element<JsonPrimitive>("version")
             element<JsonArray>("supportedFeatures")

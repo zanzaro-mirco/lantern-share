@@ -118,4 +118,4 @@ Il commit `6aa051f` ha superato la precedente matrice completa, inclusi build iO
 
 Procedura e scheda risultati: [docs/COLLAUDO.md](docs/COLLAUDO.md).
 
-Il 3 ottobre l'utente ha rinviato i collaudi fisici: restano obbligatori e non superati in fase 1. Nel frattempo sono introdotte le regole Kotlin di negoziazione v1 (versione, capacità comuni, requisiti obbligatori), **non attivate nel servizio**. Nessuna modifica al wire v0 o al database. Ambito, limiti e prossimo codec separato: [ADR 004](docs/ADR-004-NEGOZIAZIONE-V1.md).
+Il 3 ottobre l'utente ha rinviato i collaudi fisici: restano obbligatori e non superati in fase 1. Nel frattempo sono introdotte le regole Kotlin di negoziazione v1, codec capacità/HELLO rigorosi, transcript canonico e verifica della conferma remota, **non attivati nel servizio**. Nessuna modifica al wire v0 o al database. Ambito e limiti: [ADR 004](docs/ADR-004-NEGOZIAZIONE-V1.md) e [ADR 005](docs/ADR-005-TRANSCRIPT-HANDSHAKE-V1.md). La verifica remota non concede trust o autorizzazione ai messaggi.
