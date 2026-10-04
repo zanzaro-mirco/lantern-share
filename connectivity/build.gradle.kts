@@ -48,3 +48,15 @@ tasks.withType<Test>().configureEach {
         reports.html.outputLocation.set(layout.buildDirectory.dir("reports/tests/macKeychain"))
     }
 }
+
+// Fixture entry point stays in jvmTest: no internal bootstrap API exposed to the application.
+tasks.register<JavaExec>("runHandshakeV1InteropFixture") {
+    group = "verification"
+    description = "Run the disposable pinned-TLS bootstrap fixture (selected peer pin required)"
+    dependsOn("jvmTestClasses")
+    classpath = tasks.named<Test>("jvmTest").get().classpath
+    mainClass.set("lantern.connectivity.HandshakeV1InteropFixture")
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) })
+    standardInput = System.`in`
+    providers.gradleProperty("interopPeerPin").orNull?.let { args(it) }
+}
