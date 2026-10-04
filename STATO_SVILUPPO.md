@@ -1,6 +1,18 @@
 # Stato sviluppo — 4 ottobre 2026
 
-## Sintesi corrente — correzione fixture EOF e revoca iOS v1
+## Sintesi corrente — callback fixture e ticket iOS v1
+
+CI `458884e` verificata il 4 ottobre: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37224838698) `success`; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37224838641) fallita nella **compilazione dei test**, riga 717 della fixture `ScriptedPeer.send`: callback inferita `throws` non convertibile in `NWConnection.contentProcessed`, che richiede callback non fallibile. App simulatore compilata, XCTest di questa revisione **non eseguiti**; nessuna prova nuova su EOF/revoca. Ultima suite completamente riuscita resta `a01b625` (31 XCTest); `6451027` verificò altri 34 casi ma fallì il solo EOF.
+
+Correzione solo test: il risultato fallibile di `bridge.sent` viene assegnato a una variabile dentro `do/catch`, prima dell'asserzione XCTest. Errori Kotlin segnalati attraverso `fail` e chiusura del peer; completion successiva soltanto se il ticket è realmente accettato. Non si affida alla deduzione di `throws` nell'autoclosure dell'asserzione, non si sopprime l'errore e non si cambia produzione.
+
+Nuova regressione sullo stesso confine dei callback/ticket: conferma UI del tentativo cancellato passata al nuovo proprietario TLS con le stesse identità Keychain/pin, nonce OS freschi e prova remota già valida. Si richiedono stato in attesa della conferma corrente, nessun `READY` neppure dopo marker seriale che drena eventuale firma/completion, quindi successo di entrambi soltanto con il ticket corrente. Il primo trasporto chiuso è osservato anche dal peer. Test Swift/Kotlin Native separato con transcript **deliberatamente identici nella fixture**: ticket di confronto/firma/scrittura estranei, inclusi callback di errore, non sostituiscono le operazioni correnti; solo i ticket propri portano a `READY`. Non è riuso di nonce in produzione né autorizzazione chat/trust.
+
+**Verifiche effettive locali:** revisione mirata di ownership, queue seriale, callback non fallibili e identità referenziale nei contratti Kotlin esistenti; `git diff --check` riuscito. Nuovi XCTest e correzione **scritti/rivisti, non compilati o eseguiti su Windows**; nuova CI necessaria. Nessuna build Kotlin/APK ripetuta per produzione invariata. Wire v0, identità, SQLite, versioni/lock e servizio attivo invariati; v1 isolato. Fase 0 chiusa; fase 1 e collaudi fisici obbligatori aperti/rinviati.
+
+**Un solo prossimo incremento:** verificare compilazione e tutti i test di questa CI; dopo esito verde, fixture di interoperabilità bootstrap v1 JVM ↔ iOS su TLS reale, ancora isolata dal servizio v0. Nessuna attivazione incompatibile o persistenza trust implicita. Le sezioni seguenti sono storiche.
+
+## Storico — correzione fixture EOF e revoca iOS v1
 
 CI `6451027` verificata il 4 ottobre: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794508) `success`; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794640) fallita durante XCTest, **non compilazione o setup GitHub**. Eseguiti 35 test con quattro asserzioni fallite nello stesso test EOF: timeout per header/payload e successiva cancellazione del test classificata erroneamente come trasporto. Gli altri 34 casi riusciti, inclusi frame malformati e duplicati HELLO/APPROVE. Ultima suite interamente verde: `a01b625`, 31 XCTest.
 

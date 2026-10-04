@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+CI `458884e`: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37224838698) riuscita; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37224838641) fallita nella compilazione dei test: `ScriptedPeer.send` riga 717, conversione della callback `throws` a `contentProcessed` non fallibile. App simulatore compilata, **nessun XCTest di questa revisione eseguito**, inclusi EOF/revoca nuovi. Ultima suite interamente verde `a01b625` (31 XCTest), non dichiarare superata la correzione precedente.
+
+Ora gestione esplicita del risultato Kotlin prima dell'asserzione, dentro `do/catch`; errore segnalato/peer chiuso, callback successiva soltanto per ticket accettato. Nuovi test correlati: vecchio ticket UI su nuova TLS con le stesse identità e prova remota già accettata, nessun progresso dopo drain seriale del signer, poi doppio `READY` solo con conferma corrente; test Native con byte identici e ticket estranei di confronto/firma/scrittura (anche errori), senza alterare le operazioni correnti. Nonce/verifier simulati solo nel test di confine Native; TLS/Keychain/firme reali nel test del proprietario.
+
+**Verifica locale:** revisione mirata e `git diff --check`; correzione e nuovi XCTest **scritti/rivisti, non compilati/eseguiti su Windows**. Nessuna build Kotlin/APK superflua, produzione e servizio v0 invariati. CI dopo push raggruppato da verificare. Fase 1 e collaudi hardware obbligatori restano aperti/rinviati.
+
+**Prossimo incremento:** verificare compilazione e tutti i test della nuova CI; se verde, fixture di interoperabilità bootstrap v1 JVM ↔ iOS su TLS reale, isolata dal servizio v0. Nessuna attivazione v1 o trust senza decisione esplicita di compatibilità.
+
+## Storico — fixture EOF e revoca
+
 CI `6451027`: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794508) riuscita; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794640) compilata ma fallita nel solo test EOF (35 XCTest, quattro asserzioni nello stesso caso; altri 34 riusciti). Frame malformati e duplicati HELLO/APPROVE verificati in simulatore. Nessun problema di visibilità del repository o setup Actions riscontrato.
 
 Corretta la fixture: half-close `finalMessage` non produceva l'EOF atteso; ora invio del prefisso completato e cancellazione dell'intera TLS, con errore trasporto/chiusura unica e vecchie UI inefficaci. Non dichiarare che la completion garantisca il consumo remoto: troncamento header/payload e `finish()` verificati separatamente dal test Swift/Kotlin Native con byte HELLO Kotlin espliciti. Nessun timeout aumentato o test saltato; eliminata la `catch` irraggiungibile attorno all'asserzione XCTest che già segnala gli errori.

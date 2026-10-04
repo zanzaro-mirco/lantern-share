@@ -60,6 +60,52 @@ final class IosHandshakeV1BridgeTests: XCTestCase {
         XCTAssertFalse(try first.sent(ticket: pending))
     }
 
+    func testForeignTicketsCannotReplaceCurrentOperationsEvenWithIdenticalBytes() throws {
+        let previous = try bridge(left: true)
+        let previousPeer = try bridge(left: false)
+        try exchangeHello(previous, previousPeer)
+        let oldComparison = try XCTUnwrap(previous.comparison())
+        let oldSign = try XCTUnwrap(previous.confirm(ticket: oldComparison))
+        let oldWrite = try XCTUnwrap(previous.signed(ticket: oldSign, signature: proof))
+        previous.cancel()
+        previousPeer.cancel()
+
+        // Identical test nonces deliberately produce identical transcripts, not fresh OS attempts.
+        // Ticket ownership must still be referential, never inferred from bytes or identity IDs.
+        let current = try bridge(left: true)
+        let peer = try bridge(left: false)
+        try exchangeHello(current, peer)
+        let comparison = try XCTUnwrap(current.comparison())
+        XCTAssertEqual(data(comparison.bytes), data(oldComparison.bytes))
+        let peerSign = try XCTUnwrap(peer.confirm(ticket: XCTUnwrap(peer.comparison())))
+        let peerWrite = try XCTUnwrap(peer.signed(ticket: peerSign, signature: proof))
+        XCTAssertTrue(try peer.sent(ticket: peerWrite))
+        XCTAssertTrue(try current.accept(chunk: peerWrite.bytes))
+
+        XCTAssertNil(try current.confirm(ticket: oldComparison))
+        XCTAssertEqual(try current.snapshot().phase.name, "AWAITING_CONFIRMATION")
+        XCTAssertTrue(try current.snapshot().remoteApproved)
+        // comparison() wraps the same current Kotlin ticket again; a new Swift wrapper is valid.
+        let signing = try XCTUnwrap(current.confirm(ticket: XCTUnwrap(current.comparison())))
+        XCTAssertEqual(data(signing.bytes), data(oldSign.bytes))
+        XCTAssertNil(try current.signed(ticket: oldSign, signature: proof))
+        XCTAssertFalse(try current.signingFailed(ticket: oldSign))
+        XCTAssertEqual(try current.snapshot().phase.name, "SIGNING_APPROVAL")
+        XCTAssertTrue(try current.snapshot().remoteApproved)
+        let sending = try XCTUnwrap(current.signed(ticket: signing, signature: proof))
+        XCTAssertEqual(data(sending.bytes), data(oldWrite.bytes))
+        XCTAssertFalse(try current.sent(ticket: oldWrite))
+        XCTAssertFalse(try current.writeFailed(ticket: oldWrite))
+        XCTAssertEqual(try current.snapshot().phase.name, "SENDING_APPROVAL")
+        XCTAssertTrue(try current.snapshot().remoteApproved)
+        XCTAssertTrue(try current.sent(ticket: sending))
+        XCTAssertTrue(try peer.accept(chunk: sending.bytes))
+        XCTAssertEqual(try current.snapshot().phase.name, "READY")
+        XCTAssertEqual(try peer.snapshot().phase.name, "READY")
+        current.cancel()
+        peer.cancel()
+    }
+
     func testMalformedAndTruncatedInputBecomeSwiftErrorsAndTerminalStates() throws {
         let invalid = try bridge(left: true)
         XCTAssertTrue(try invalid.sent(ticket: XCTUnwrap(invalid.start())))
@@ -100,6 +146,15 @@ final class IosHandshakeV1BridgeTests: XCTestCase {
             nowMillis: { KotlinLong(longLong: now()) },
             verifyRemoteSignature: { _, signature in KotlinBoolean(bool: signature == "cHJvb2Y=") }
         )
+    }
+
+    private func exchangeHello(_ left: IosHandshakeV1, _ right: IosHandshakeV1) throws {
+        let leftHello = try XCTUnwrap(left.start())
+        let rightHello = try XCTUnwrap(right.start())
+        XCTAssertTrue(try left.sent(ticket: leftHello))
+        XCTAssertTrue(try right.sent(ticket: rightHello))
+        XCTAssertTrue(try left.accept(chunk: rightHello.bytes))
+        XCTAssertTrue(try right.accept(chunk: leftHello.bytes))
     }
 
     private func bytes(_ data: Data) -> KotlinByteArray {

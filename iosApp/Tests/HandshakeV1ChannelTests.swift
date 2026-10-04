@@ -277,6 +277,132 @@ final class HandshakeV1ChannelTests: XCTestCase {
         wait(for: [rejected, eof], timeout: 10)
     }
 
+    func testPreviousUITicketCannotConfirmReplacementTLSWithSameIdentities() throws {
+        let first = try readyPair()
+        let oldComparisonShown = expectation(description: "original UI comparison retained")
+        let oldProofAccepted = expectation(description: "original remote proof accepted")
+        let oldEOF = expectation(description: "cancelled original attempt closes TLS")
+        var originalOwner: HandshakeV1Channel?
+        var oldComparison: (IosHandshakeV1Comparison, String)?
+        var originalClosedCount = 0
+        try queue.sync {
+            var proofObserved = false
+            let remote = try scriptedPeer(first, onComparison: { peer, ticket in
+                peer.send(try peer.approval(ticket, signer: first.serverIdentity))
+            }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved)
+                oldEOF.fulfill()
+            })
+            originalOwner = try adopt(first, client: true, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                if snapshot.remoteApproved, !proofObserved {
+                    XCTAssertEqual(snapshot.phase.name, "AWAITING_CONFIRMATION")
+                    proofObserved = true
+                    oldProofAccepted.fulfill()
+                }
+            }, onComparison: { ticket, code in
+                XCTAssertNil(oldComparison)
+                oldComparison = (ticket, code)
+                oldComparisonShown.fulfill()
+            }, onClosed: { failure in
+                originalClosedCount += 1
+                XCTAssertEqual(originalClosedCount, 1)
+                if case .cancelled = failure {} else { XCTFail("Expected original UI cancellation") }
+            })
+            try remote.start()
+            originalOwner?.start()
+        }
+        wait(for: [oldComparisonShown, oldProofAccepted], timeout: 10)
+        let captured = try queue.sync { () throws -> (IosHandshakeV1Comparison, String) in
+            originalOwner?.cancel()
+            return try XCTUnwrap(oldComparison)
+        }
+        wait(for: [oldEOF], timeout: 5)
+
+        // Same Keychain identities and selected pins, fresh real TLS connection and OS nonces.
+        let replacement = try readyPair(clientIdentity: first.clientIdentity, serverIdentity: first.serverIdentity)
+        let remoteApproved = expectation(description: "replacement proof awaits current local UI confirmation")
+        let staleWorkDrained = expectation(description: "old UI action and any signing work drained")
+        let leftReady = expectation(description: "replacement client ready after current confirmation")
+        let rightReady = expectation(description: "replacement server ready after current confirmation")
+        let cryptoQueue = DispatchQueue(label: "dev.lantern.tests.replacement-ticket-signer")
+        weak var left: HandshakeV1Channel?
+        weak var right: HandshakeV1Channel?
+        var leftCode: (IosHandshakeV1Comparison, String)?
+        var rightCode: (IosHandshakeV1Comparison, String)?
+        var peerConfirmed = false
+        var currentConfirmed = false
+        var proofObserved = false
+        var leftPhase: String?
+        var leftRemoteApproved = false
+        var leftReadyCount = 0
+        var rightReadyCount = 0
+        try queue.sync {
+            func confirmPeerAfterComparison() {
+                guard !peerConfirmed, let leftCode, let rightCode else { return }
+                XCTAssertEqual(leftCode.1, rightCode.1)
+                XCTAssertEqual(leftCode.1.count, 64)
+                XCTAssertNotEqual(leftCode.1, captured.1)
+                peerConfirmed = true // Only the peer confirms; local UI is deliberately withheld.
+                right?.confirm(rightCode.0)
+            }
+            left = try adopt(replacement, client: true, signingQueue: cryptoQueue, onSnapshot: { snapshot in
+                leftPhase = snapshot.phase.name
+                leftRemoteApproved = snapshot.remoteApproved
+                if snapshot.phase.name == "READY" {
+                    XCTAssertTrue(currentConfirmed)
+                    leftReadyCount += 1
+                    XCTAssertEqual(leftReadyCount, 1)
+                    if leftReadyCount == 1 { leftReady.fulfill() }
+                } else if snapshot.remoteApproved, snapshot.phase.name == "AWAITING_CONFIRMATION", !proofObserved {
+                    proofObserved = true
+                    remoteApproved.fulfill()
+                }
+            }, onComparison: { ticket, code in
+                XCTAssertNil(leftCode)
+                leftCode = (ticket, code)
+                confirmPeerAfterComparison()
+            })
+            right = try adopt(replacement, client: false, onSnapshot: { snapshot in
+                if snapshot.phase.name == "READY" {
+                    XCTAssertTrue(currentConfirmed)
+                    rightReadyCount += 1
+                    XCTAssertEqual(rightReadyCount, 1)
+                    if rightReadyCount == 1 { rightReady.fulfill() }
+                }
+            }, onComparison: { ticket, code in
+                XCTAssertNil(rightCode)
+                rightCode = (ticket, code)
+                confirmPeerAfterComparison()
+            })
+            left?.start()
+            right?.start()
+        }
+        wait(for: [remoteApproved], timeout: 10)
+        queue.sync {
+            XCTAssertEqual(leftPhase, "AWAITING_CONFIRMATION")
+            XCTAssertTrue(leftRemoteApproved)
+            originalOwner?.start()
+            originalOwner?.confirm(captured.0)
+            XCTAssertEqual(originalClosedCount, 1)
+            left?.confirm(captured.0) // Old UI must not become a signature request for the replacement.
+            XCTAssertEqual(leftPhase, "AWAITING_CONFIRMATION")
+            XCTAssertTrue(leftRemoteApproved)
+            // A serial marker drains any erroneous signer job and its owner callback without sleeps.
+            cryptoQueue.async { self.queue.async { staleWorkDrained.fulfill() } }
+        }
+        wait(for: [staleWorkDrained], timeout: 5)
+        try queue.sync {
+            XCTAssertEqual(leftPhase, "AWAITING_CONFIRMATION")
+            XCTAssertTrue(leftRemoteApproved)
+            XCTAssertEqual(leftReadyCount, 0)
+            XCTAssertEqual(rightReadyCount, 0)
+            currentConfirmed = true // Explicit confirmation of the replacement's retained UI ticket.
+            left?.confirm(try XCTUnwrap(leftCode).0)
+        }
+        wait(for: [leftReady, rightReady], timeout: 10)
+    }
+
     func testDeadlineClosesTransportWhileRealSignerIsPendingAndIgnoresLateCompletion() throws {
         let pair = try readyPair()
         let expired = expectation(description: "deadline closes owner with signature still pending")
@@ -719,9 +845,13 @@ final class HandshakeV1ChannelTests: XCTestCase {
                 dispatchPrecondition(condition: .onQueue(self.queue))
                 XCTAssertNil(error)
                 guard error == nil else { self.stop(); return }
-                // XCTest's throwing autoclosure reports bridge failures directly.
-                XCTAssertTrue(try self.bridge.sent(ticket: ticket))
-                onSent()
+                do {
+                    // Keep Kotlin errors inside this non-throwing Network callback, not an XCTest autoclosure.
+                    let accepted = try self.bridge.sent(ticket: ticket)
+                    XCTAssertTrue(accepted)
+                    guard accepted else { self.stop(); return }
+                    onSent()
+                } catch { self.fail(error) }
             })
         }
 
