@@ -36,6 +36,14 @@ final class IosHandshakeV1BridgeTests: XCTestCase {
         left.cancel()
         XCTAssertEqual(try left.snapshot().failure.name, "CANCELLED")
         XCTAssertFalse(try left.sent(ticket: sending))
+        XCTAssertEqual(try right.snapshot().phase.name, "READY")
+        try right.finish()
+        XCTAssertEqual(try right.snapshot().phase.name, "CLOSED")
+        XCTAssertEqual(try right.snapshot().failure.name, "TRANSPORT")
+        XCTAssertFalse(try right.snapshot().remoteApproved)
+        XCTAssertTrue(try right.snapshot().negotiatedFeatures.isEmpty)
+        XCTAssertFalse(try right.sent(ticket: remoteSending))
+        XCTAssertNil(try right.confirm(ticket: rightCode))
     }
 
     func testForeignHelloCallbackAndExpiredCallbackCannotAdvance() throws {
@@ -58,11 +66,24 @@ final class IosHandshakeV1BridgeTests: XCTestCase {
         XCTAssertThrowsError(try invalid.accept(chunk: bytes(Data([0, 0, 0, 0]))))
         XCTAssertEqual(try invalid.snapshot().failure.name, "INVALID_FRAME")
         XCTAssertNil(try invalid.start())
-        let truncated = try bridge(left: true)
-        XCTAssertTrue(try truncated.sent(ticket: XCTUnwrap(truncated.start())))
-        XCTAssertTrue(try truncated.accept(chunk: bytes(Data([0, 0]))))
-        XCTAssertThrowsError(try truncated.finish())
-        XCTAssertEqual(try truncated.snapshot().failure.name, "TRANSPORT")
+        for headerOnly in [true, false] {
+            let truncated = try bridge(left: true)
+            let remote = try bridge(left: false)
+            let hello = data(try XCTUnwrap(remote.start()).bytes)
+            let prefix = Data(hello.prefix(headerOnly ? 3 : hello.count - 1))
+            XCTAssertTrue(try truncated.sent(ticket: XCTUnwrap(truncated.start())))
+            XCTAssertTrue(try truncated.accept(chunk: bytes(prefix)))
+            XCTAssertEqual(try truncated.snapshot().phase.name, "AWAITING_HELLO")
+            XCTAssertNil(try truncated.comparison())
+            XCTAssertThrowsError(try truncated.finish())
+            XCTAssertEqual(try truncated.snapshot().phase.name, "CLOSED")
+            XCTAssertEqual(try truncated.snapshot().failure.name, "TRANSPORT")
+            XCTAssertNil(try truncated.start())
+            XCTAssertFalse(try truncated.accept(chunk: bytes(hello)))
+            try truncated.finish() // Idempotent, without replacing the first failure.
+            truncated.cancel()
+            XCTAssertEqual(try truncated.snapshot().failure.name, "TRANSPORT")
+        }
     }
 
     private func bridge(left: Bool, now: @escaping () -> Int64 = { 0 }) throws -> IosHandshakeV1 {

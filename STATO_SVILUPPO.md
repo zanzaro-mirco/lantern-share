@@ -1,6 +1,18 @@
 # Stato sviluppo — 4 ottobre 2026
 
-## Sintesi corrente — framing e duplicati iOS v1
+## Sintesi corrente — correzione fixture EOF e revoca iOS v1
+
+CI `6451027` verificata il 4 ottobre: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794508) `success`; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794640) fallita durante XCTest, **non compilazione o setup GitHub**. Eseguiti 35 test con quattro asserzioni fallite nello stesso test EOF: timeout per header/payload e successiva cancellazione del test classificata erroneamente come trasporto. Gli altri 34 casi riusciti, inclusi frame malformati e duplicati HELLO/APPROVE. Ultima suite interamente verde: `a01b625`, 31 XCTest.
+
+Correzione solo test: `finalMessage` non ha prodotto l'EOF atteso nella fixture TLS del simulatore. Il peer ora completa l'invio del prefisso e cancella l'intera connessione; il proprietario deve chiudersi una sola volta per trasporto, senza `READY`, e ignorare vecchi comandi UI. La completion prova la scrittura locale, **non il consumo del prefisso remoto**: per verificare il decoder senza questa assunzione, il test Swift/Kotlin Native alimenta esplicitamente header/payload incompleti di un HELLO Kotlin valido, invoca `finish()` e richiede errore Swift, stato `CLOSED/TRANSPORT` e impossibilità di riuso. Nessun timeout aumentato, test saltato o sicurezza indebolita. Rimossa anche la `catch` irraggiungibile nella fixture: gli errori dell'autoclosure restano segnalati da XCTest.
+
+Proseguito con un solo comportamento collegato: nuovo XCTest su TLS/pin/firme OS reali per revocare `READY` tramite cancellazione locale o disconnessione del peer, dopo doppia conferma; chiusura di entrambi i proprietari osservata, callback unici e vecchi ticket/start/cancel inefficaci. Esteso il test Native per EOF dopo `READY`, azzeramento approvazione/funzionalità e rifiuto di callback/ticket precedenti. Non equivale ad autorizzazione chat o trust.
+
+**Verifica effettiva della nuova revisione:** revisione mirata di queue, ordine invio/chiusura, ownership e contratto Native; `git diff --check` riuscito. Swift/Xcode non disponibili su Windows: correzione e nuova regressione **scritte ma non compilate/eseguite**, da verificare nella nuova CI dopo push raggruppato. Nessuna build Kotlin/APK ripetuta per produzione invariata. Wire v0, identità, SQLite, versioni/lock e servizio attivo invariati; v1 isolato. Fase 0 chiusa; fase 1 e collaudi fisici obbligatori aperti/rinviati.
+
+**Un solo prossimo incremento:** verificare questa CI; se riuscita, test del ticket UI proveniente da un altro tentativo su TLS iOS reale. Nessuna attivazione v1 nel servizio. Le sezioni seguenti sono storiche.
+
+## Storico — framing e duplicati iOS v1
 
 CI `a01b625` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667145) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667144) entrambe `success`. Riepilogo effettivo: **31 XCTest riusciti, zero fallimenti**, inclusi i nove del proprietario e le tre regressioni firma errata/replay/deadline. Compilazione e simulatore verificati, non hardware o interoperabilità JVM ↔ iOS.
 

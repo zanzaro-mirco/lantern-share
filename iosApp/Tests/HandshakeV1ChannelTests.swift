@@ -343,14 +343,134 @@ final class HandshakeV1ChannelTests: XCTestCase {
         }
     }
 
-    func testEOFInHeaderOrPayloadInvalidatesBootstrapAndClosesTransport() throws {
+    func testPeerDisconnectAfterTruncatedWriteInvalidatesBootstrapWithoutReady() throws {
         for headerOnly in [true, false] {
-            try assertRejectedInput(expectedFailure: "TRANSPORT") { peer in
-                let hello = try peer.helloFrame()
-                let prefix = Data(hello.prefix(headerOnly ? 3 : hello.count - 1))
-                // Write-close preserves all preceding bytes and leaves the receive side open.
-                peer.finishSending(prefix)
+            let pair = try readyPair()
+            let written = expectation(description: "truncated TLS write completed")
+            let disconnected = expectation(description: "peer disconnect invalidates bootstrap")
+            weak var owner: HandshakeV1Channel?
+            var comparison: IosHandshakeV1Comparison?
+            var closedCount = 0
+            try queue.sync {
+                let remote = try scriptedPeer(pair, onComparison: { peer, _ in
+                    let hello = try peer.helloFrame()
+                    let prefix = Data(hello.prefix(headerOnly ? 3 : hello.count - 1))
+                    // Completion proves local processing, not that the decoder consumed the prefix.
+                    // Exact truncation/EOF semantics are covered separately at the Native bridge.
+                    peer.disconnectAfterSending(prefix) { written.fulfill() }
+                })
+                owner = try adopt(pair, client: true, onSnapshot: { snapshot in
+                    XCTAssertNotEqual(snapshot.phase.name, "READY")
+                    XCTAssertFalse(snapshot.remoteApproved)
+                }, onComparison: { ticket, _ in comparison = ticket }, onClosed: { failure in
+                    closedCount += 1
+                    XCTAssertEqual(closedCount, 1)
+                    Self.assertTransportClosure(failure)
+                    disconnected.fulfill()
+                })
+                try remote.start()
+                owner?.start()
             }
+            wait(for: [written, disconnected], timeout: 10)
+            queue.sync {
+                owner?.start()
+                if let comparison { owner?.confirm(comparison) }
+                owner?.cancel()
+                XCTAssertEqual(closedCount, 1)
+            }
+        }
+    }
+
+    func testReadyIsRevokedOnceByCancellationOrPeerDisconnect() throws {
+        for cancelLocally in [true, false] {
+            let pair = try readyPair()
+            let leftReady = expectation(description: "left ready before revocation")
+            let rightReady = expectation(description: "right ready before revocation")
+            let leftClosed = expectation(description: "left ready revoked")
+            let rightClosed = expectation(description: "right ready revoked")
+            weak var left: HandshakeV1Channel?
+            weak var right: HandshakeV1Channel?
+            var leftCode: (IosHandshakeV1Comparison, String)?
+            var rightCode: (IosHandshakeV1Comparison, String)?
+            var confirmed = false
+            var leftReadyCount = 0
+            var rightReadyCount = 0
+            var leftClosedCount = 0
+            var rightClosedCount = 0
+            try queue.sync {
+                func confirmBoth() {
+                    guard !confirmed, let leftCode, let rightCode else { return }
+                    XCTAssertEqual(leftCode.1, rightCode.1)
+                    XCTAssertEqual(leftCode.1.count, 64)
+                    confirmed = true // Explicit comparison simulated only in this test.
+                    left?.confirm(leftCode.0)
+                    right?.confirm(rightCode.0)
+                }
+                left = try adopt(pair, client: true, onSnapshot: { snapshot in
+                    XCTAssertEqual(leftClosedCount, 0)
+                    if snapshot.phase.name == "READY" {
+                        XCTAssertTrue(confirmed)
+                        XCTAssertTrue(snapshot.remoteApproved)
+                        leftReadyCount += 1
+                        XCTAssertEqual(leftReadyCount, 1)
+                        if leftReadyCount == 1 { leftReady.fulfill() }
+                    }
+                }, onComparison: { ticket, code in leftCode = (ticket, code); confirmBoth() }, onClosed: { failure in
+                    leftClosedCount += 1
+                    XCTAssertEqual(leftClosedCount, 1)
+                    XCTAssertEqual(leftReadyCount, 1)
+                    XCTAssertEqual(rightReadyCount, 1)
+                    if cancelLocally {
+                        if case .cancelled = failure {} else { XCTFail("Expected explicit cancellation") }
+                    } else { Self.assertTransportClosure(failure) }
+                    leftClosed.fulfill()
+                })
+                right = try adopt(pair, client: false, onSnapshot: { snapshot in
+                    XCTAssertEqual(rightClosedCount, 0)
+                    if snapshot.phase.name == "READY" {
+                        XCTAssertTrue(confirmed)
+                        XCTAssertTrue(snapshot.remoteApproved)
+                        rightReadyCount += 1
+                        XCTAssertEqual(rightReadyCount, 1)
+                        if rightReadyCount == 1 { rightReady.fulfill() }
+                    }
+                }, onComparison: { ticket, code in rightCode = (ticket, code); confirmBoth() }, onClosed: { failure in
+                    rightClosedCount += 1
+                    XCTAssertEqual(rightClosedCount, 1)
+                    XCTAssertEqual(leftReadyCount, 1)
+                    XCTAssertEqual(rightReadyCount, 1)
+                    Self.assertTransportClosure(failure)
+                    rightClosed.fulfill()
+                })
+                left?.start()
+                right?.start()
+            }
+            wait(for: [leftReady, rightReady], timeout: 10)
+            queue.sync {
+                if cancelLocally { left?.cancel() } else { pair.server.cancel() }
+            }
+            wait(for: [leftClosed, rightClosed], timeout: 5)
+            queue.sync {
+                left?.start()
+                right?.start()
+                if let leftCode { left?.confirm(leftCode.0) }
+                if let rightCode { right?.confirm(rightCode.0) }
+                left?.cancel()
+                right?.cancel()
+                XCTAssertEqual(leftClosedCount, 1)
+                XCTAssertEqual(rightClosedCount, 1)
+                XCTAssertEqual(leftReadyCount, 1)
+                XCTAssertEqual(rightReadyCount, 1)
+            }
+        }
+    }
+
+    private static func assertTransportClosure(_ failure: HandshakeV1ChannelFailure) {
+        // A Network error/state callback and a clean receive EOF can race; both revoke progress.
+        switch failure {
+        case .transport: break
+        case .bootstrap(let reason): XCTAssertEqual(reason.name, "TRANSPORT")
+        default: XCTFail("Expected transport closure")
         }
     }
 
@@ -597,12 +717,11 @@ final class HandshakeV1ChannelTests: XCTestCase {
             connection.send(content: HandshakeV1ChannelTests.data(ticket.bytes), completion: .contentProcessed { [weak self] error in
                 guard let self, !self.stopped else { return }
                 dispatchPrecondition(condition: .onQueue(self.queue))
-                do {
-                    XCTAssertNil(error)
-                    guard error == nil else { self.stop(); return }
-                    XCTAssertTrue(try self.bridge.sent(ticket: ticket))
-                    onSent()
-                } catch { self.fail(error) }
+                XCTAssertNil(error)
+                guard error == nil else { self.stop(); return }
+                // XCTest's throwing autoclosure reports bridge failures directly.
+                XCTAssertTrue(try self.bridge.sent(ticket: ticket))
+                onSent()
             })
         }
 
@@ -623,14 +742,14 @@ final class HandshakeV1ChannelTests: XCTestCase {
             connection.cancel()
         }
 
-        func finishSending(_ prefix: Data) {
+        func disconnectAfterSending(_ prefix: Data, onSent: @escaping () -> Void) {
             dispatchPrecondition(condition: .onQueue(queue))
-            connection.send(content: prefix, contentContext: .finalMessage, isComplete: true,
-                            completion: .contentProcessed { [weak self] error in
+            connection.send(content: prefix, completion: .contentProcessed { [weak self] error in
                 guard let self, !self.stopped else { return }
                 dispatchPrecondition(condition: .onQueue(self.queue))
                 XCTAssertNil(error)
-                if error != nil { self.stop() }
+                if error == nil { onSent() }
+                self.stop() // Close the whole TLS connection, not just its write side.
             })
         }
 

@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+CI `6451027`: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794508) riuscita; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37222794640) compilata ma fallita nel solo test EOF (35 XCTest, quattro asserzioni nello stesso caso; altri 34 riusciti). Frame malformati e duplicati HELLO/APPROVE verificati in simulatore. Nessun problema di visibilità del repository o setup Actions riscontrato.
+
+Corretta la fixture: half-close `finalMessage` non produceva l'EOF atteso; ora invio del prefisso completato e cancellazione dell'intera TLS, con errore trasporto/chiusura unica e vecchie UI inefficaci. Non dichiarare che la completion garantisca il consumo remoto: troncamento header/payload e `finish()` verificati separatamente dal test Swift/Kotlin Native con byte HELLO Kotlin espliciti. Nessun timeout aumentato o test saltato; eliminata la `catch` irraggiungibile attorno all'asserzione XCTest che già segnala gli errori.
+
+Nuova regressione correlata: revoca di `READY` dopo doppia conferma su TLS reale per cancellazione locale/disconnessione peer, entrambe le chiusure osservate una sola volta e azioni precedenti inefficaci. Test Native esteso per EOF dopo `READY` e pulizia dello snapshot. **Nuova revisione scritta/rivista, non compilata/eseguita su Windows**; `git diff --check` riuscito, nessuna build Kotlin/APK superflua. Produzione, wire v0, identità, SQLite e lock invariati.
+
+**Prossimo incremento:** verificare la nuova CI, poi test del ticket UI appartenente a un altro tentativo su TLS iOS reale. Nessuna attivazione v1/trust. Fase 1 e collaudi fisici obbligatori aperti/rinviati.
+
+## Storico — framing e duplicati
+
 CI `a01b625` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667145) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667144) entrambe `success`; 31 XCTest riusciti, zero fallimenti, inclusi i nove del proprietario. Firma errata, replay e scadenza durante firma ora verificati in simulatore, non hardware/JVM ↔ iOS.
 
 Nuovo incremento solo test: quattro XCTest per cinque frame malformati, EOF in header/payload di HELLO valido, HELLO duplicato e APPROVE duplicato soltanto dopo prova OS realmente accettata. Fixture esistente con TLS/pin/Keychain reali; byte validi generati in Kotlin. Write-close `finalMessage` per preservare i byte troncati, EOF remoto osservato, errori tipizzati, nessun `READY`/conferma locale, chiusura unica e vecchie azioni UI inefficaci. **Nuovi test scritti, non compilati/eseguiti su Windows**: verificare la nuova CI. Controlli locali: revisione mirata e `git diff --check`, nessuna build Kotlin/APK superflua. Produzione, wire, identità, SQLite e lock invariati.
