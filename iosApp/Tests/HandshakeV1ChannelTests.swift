@@ -328,6 +328,126 @@ final class HandshakeV1ChannelTests: XCTestCase {
         wait(for: [drained], timeout: 5)
     }
 
+    func testMalformedFramesAreRejectedAndCloseActualTLSConnection() throws {
+        let frames: [Data] = [
+            Data([0, 0, 0, 0]),                 // Zero payload length.
+            Data([0, 0, 0x14, 0x01]),          // 5121, just beyond the Kotlin limit.
+            Data([0xff, 0xff, 0xff, 0xff]),    // Unsigned length must not become negative.
+            Data([0, 0, 0, 1, 0xff]),          // Invalid UTF-8.
+            Data([0, 0, 0, 2, 0x7b, 0x7d]),   // JSON object without a bootstrap envelope.
+        ]
+        for frame in frames {
+            try assertRejectedInput(expectedFailure: "INVALID_FRAME") { peer in
+                peer.replay(frame)
+            }
+        }
+    }
+
+    func testEOFInHeaderOrPayloadInvalidatesBootstrapAndClosesTransport() throws {
+        for headerOnly in [true, false] {
+            try assertRejectedInput(expectedFailure: "TRANSPORT") { peer in
+                let hello = try peer.helloFrame()
+                let prefix = Data(hello.prefix(headerOnly ? 3 : hello.count - 1))
+                // Write-close preserves all preceding bytes and leaves the receive side open.
+                peer.finishSending(prefix)
+            }
+        }
+    }
+
+    func testDuplicateHelloIsRejectedWithoutLocalConfirmation() throws {
+        try assertRejectedInput(expectedFailure: "UNEXPECTED_MESSAGE") { peer in
+            peer.replay(try peer.helloFrame())
+        }
+    }
+
+    func testDuplicateAcceptedApprovalIsRejectedWithoutReachingReady() throws {
+        let pair = try readyPair()
+        let accepted = expectation(description: "first real OS approval accepted")
+        let rejected = expectation(description: "duplicate approval rejected")
+        let eof = expectation(description: "duplicate approval closes actual TLS connection")
+        try queue.sync {
+            weak var remote: ScriptedPeer?
+            var proof: Data?
+            var proofObserved = false
+            var closedCount = 0
+            remote = try scriptedPeer(pair, onComparison: { peer, comparison in
+                let ticket = try peer.approval(comparison, signer: pair.serverIdentity)
+                proof = Self.data(ticket.bytes)
+                peer.send(ticket)
+            }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved)
+                eof.fulfill()
+            })
+            let owner = try adopt(pair, client: true, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                if snapshot.remoteApproved, !proofObserved {
+                    XCTAssertEqual(snapshot.phase.name, "AWAITING_CONFIRMATION")
+                    proofObserved = true
+                    accepted.fulfill()
+                    // Only replay once the owner's Kotlin machine actually accepted the first proof.
+                    guard let proof, let remote else { XCTFail("Missing original proof/peer"); return }
+                    remote.replay(proof)
+                }
+            }, onClosed: { failure in
+                closedCount += 1
+                XCTAssertEqual(closedCount, 1)
+                XCTAssertTrue(proofObserved)
+                if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "UNEXPECTED_MESSAGE") }
+                else { XCTFail("Expected duplicate approval rejection") }
+                rejected.fulfill()
+            })
+            try remote?.start()
+            owner.start()
+        }
+        wait(for: [accepted, rejected, eof], timeout: 10)
+    }
+
+    /// Each hostile input uses a fresh real TLS pair, never a reset of a failed bootstrap.
+    private func assertRejectedInput(
+        expectedFailure: String,
+        inject: @escaping (ScriptedPeer) throws -> Void
+    ) throws {
+        let pair = try readyPair()
+        let rejected = expectation(description: "input rejected as \(expectedFailure)")
+        let eof = expectation(description: "rejected input closes actual TLS connection")
+        var owner: HandshakeV1Channel?
+        var comparison: IosHandshakeV1Comparison?
+        var closedCount = 0
+        try queue.sync {
+            var comparisonCount = 0
+            let remote = try scriptedPeer(pair, onComparison: { peer, _ in
+                try inject(peer)
+            }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved)
+                eof.fulfill()
+            })
+            owner = try adopt(pair, client: true, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                XCTAssertFalse(snapshot.remoteApproved)
+            }, onComparison: { ticket, _ in
+                comparisonCount += 1
+                XCTAssertEqual(comparisonCount, 1)
+                comparison = ticket // No local confirmation before rejection.
+            }, onClosed: { failure in
+                closedCount += 1
+                XCTAssertEqual(closedCount, 1)
+                if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, expectedFailure) }
+                else { XCTFail("Expected typed bootstrap failure \(expectedFailure)") }
+                rejected.fulfill()
+            })
+            try remote.start()
+            owner?.start()
+        }
+        wait(for: [rejected, eof], timeout: 10)
+        queue.sync {
+            // Old UI actions cannot reopen the failed attempt or publish a second closure.
+            owner?.start()
+            if let comparison { owner?.confirm(comparison) }
+            owner?.cancel()
+            XCTAssertEqual(closedCount, 1)
+        }
+    }
+
     private struct Pair {
         let client: NWConnection
         let server: NWConnection
@@ -421,6 +541,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
         private let onEOF: (IosHandshakeV1Snapshot) -> Void
         private var stopped = false
         private var comparisonPublished = false
+        private var hello: Data?
 
         init(pair: Pair, queue: DispatchQueue,
              onComparison: @escaping (ScriptedPeer, IosHandshakeV1Comparison) throws -> Void,
@@ -453,7 +574,13 @@ final class HandshakeV1ChannelTests: XCTestCase {
         func start() throws {
             dispatchPrecondition(condition: .onQueue(queue))
             let hello = try XCTUnwrap(bridge.start())
+            self.hello = HandshakeV1ChannelTests.data(hello.bytes)
             send(hello) { [weak self] in self?.receiveNext() }
+        }
+
+        func helloFrame() throws -> Data {
+            dispatchPrecondition(condition: .onQueue(queue))
+            return try XCTUnwrap(hello)
         }
 
         func approval(_ comparison: IosHandshakeV1Comparison, signer: AppleIdentity) throws -> IosHandshakeV1Write {
@@ -494,6 +621,17 @@ final class HandshakeV1ChannelTests: XCTestCase {
             stopped = true
             bridge.cancel()
             connection.cancel()
+        }
+
+        func finishSending(_ prefix: Data) {
+            dispatchPrecondition(condition: .onQueue(queue))
+            connection.send(content: prefix, contentContext: .finalMessage, isComplete: true,
+                            completion: .contentProcessed { [weak self] error in
+                guard let self, !self.stopped else { return }
+                dispatchPrecondition(condition: .onQueue(self.queue))
+                XCTAssertNil(error)
+                if error != nil { self.stop() }
+            })
         }
 
         private func receiveNext() {

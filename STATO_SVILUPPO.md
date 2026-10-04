@@ -1,6 +1,16 @@
 # Stato sviluppo — 4 ottobre 2026
 
-## Sintesi corrente — regressioni avversarie iOS v1
+## Sintesi corrente — framing e duplicati iOS v1
+
+CI `a01b625` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667145) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667144) entrambe `success`. Riepilogo effettivo: **31 XCTest riusciti, zero fallimenti**, inclusi i nove del proprietario e le tre regressioni firma errata/replay/deadline. Compilazione e simulatore verificati, non hardware o interoperabilità JVM ↔ iOS.
+
+Aggiunti quattro XCTest, senza modifiche di produzione: cinque input malformati (lunghezza zero, 5121, uint32 massimo, UTF-8 invalido, envelope assente), EOF in header e payload di un HELLO Kotlin valido, HELLO duplicato e APPROVE duplicato dopo la prima prova OS effettivamente accettata dal destinatario. Ogni scenario usa una nuova TLS reciproca pinnata, identità/nonce/crypto OS e la fixture esistente; i frame validi provengono dal bridge Kotlin. Nessun parser Swift di produzione. Controllati nei test: diagnostica `INVALID_FRAME`, `TRANSPORT` o `UNEXPECTED_MESSAGE`, nessun `READY`/conferma locale, EOF remoto e chiusura unica anche dopo vecchie azioni UI. Il troncamento usa write-close Network (`finalMessage`), non cancellazione anticipata che potrebbe perdere i byte.
+
+**Verifiche locali effettive:** revisione mirata del diff, queue/ownership/ordine degli invii e contratti di `ProtocolHandshakeBridge.finish()`/macchina; `git diff --check`. API write-close verificata nella documentazione ufficiale Apple citata in ADR 009. Nessun Swift/Xcode su Windows: i quattro nuovi test sono **scritti ma non compilati/eseguiti**, da verificare nella CI dopo push unico. Nessuna build Kotlin/APK ripetuta per codice invariato. Identità, SQLite, wire v0, servizio, versioni e lock invariati; v1 ancora isolato, nessuna chat/trust concessi. Fase 0 chiusa; fase 1 e collaudi fisici obbligatori restano aperti/rinviati.
+
+**Un solo prossimo incremento:** dopo CI verde, test iOS della revoca di `READY` su cancellazione/EOF e del ticket di conferma appartenente a un altro tentativo, senza attivare v1 nel servizio. Le sezioni seguenti sono storiche.
+
+## Storico — regressioni avversarie iOS v1
 
 CI `7e79c12` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675375) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675385) entrambe `success`. Estratto il riepilogo XCTest: **28 test riusciti, zero fallimenti**, inclusi i sei `HandshakeV1ChannelTests`. Proprietario Swift compilato e testato in simulatore, non hardware Apple o interoperabilità JVM ↔ iOS. La correzione dei due `try queue.sync` è quindi verificata in remoto.
 

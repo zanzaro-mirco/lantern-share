@@ -8,6 +8,14 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+CI `a01b625` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667145) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37194667144) entrambe `success`; 31 XCTest riusciti, zero fallimenti, inclusi i nove del proprietario. Firma errata, replay e scadenza durante firma ora verificati in simulatore, non hardware/JVM ↔ iOS.
+
+Nuovo incremento solo test: quattro XCTest per cinque frame malformati, EOF in header/payload di HELLO valido, HELLO duplicato e APPROVE duplicato soltanto dopo prova OS realmente accettata. Fixture esistente con TLS/pin/Keychain reali; byte validi generati in Kotlin. Write-close `finalMessage` per preservare i byte troncati, EOF remoto osservato, errori tipizzati, nessun `READY`/conferma locale, chiusura unica e vecchie azioni UI inefficaci. **Nuovi test scritti, non compilati/eseguiti su Windows**: verificare la nuova CI. Controlli locali: revisione mirata e `git diff --check`, nessuna build Kotlin/APK superflua. Produzione, wire, identità, SQLite e lock invariati.
+
+**Un solo prossimo incremento:** dopo CI riuscita, test iOS della revoca di `READY` su cancellazione/EOF e del ticket UI proveniente da un altro tentativo. Nessuna attivazione v1 o persistenza trust. Fase 1 e collaudi fisici obbligatori ancora aperti/rinviati.
+
+## Storico — regressioni avversarie precedenti
+
 CI `7e79c12` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675375) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675385) entrambe `success`. Riepilogo nativo: 28 XCTest riusciti, zero fallimenti, inclusi i sei del proprietario `HandshakeV1Channel`; nuovo Swift compilato e verificato in simulatore, non hardware/interoperabilità JVM ↔ iOS. Non ripetere il debug dei `try` già risolto.
 
 Nuovo incremento: tre regressioni `HandshakeV1ChannelTests` per firma OS della chiave sbagliata, replay dei byte di una prova già accettata su nuova TLS con identità riusate/nonce freschi e deadline durante firma bloccata (prova remota valida, EOF remoto, completamento OS tardivo drenato). Fixture avversaria solo nei test: bridge Kotlin per frame/transcript, certificati/crypto/TLS reali, callback su queue seriale, nessun verifier trust-all. Produzione e servizio v0 invariati. **Nuovi test scritti ma non compilati/eseguiti da Windows**, da verificare nella CI dopo push; controllo locale mirato e `git diff --check`, nessuna build Kotlin/APK superflua. ADR 009 aggiornato con questa distinzione.
