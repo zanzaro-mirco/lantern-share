@@ -1,4 +1,4 @@
-# Passaggio di consegne — 3 ottobre 2026
+# Passaggio di consegne — 4 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,14 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+CI `7e79c12` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675375) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675385) entrambe `success`. Riepilogo nativo: 28 XCTest riusciti, zero fallimenti, inclusi i sei del proprietario `HandshakeV1Channel`; nuovo Swift compilato e verificato in simulatore, non hardware/interoperabilità JVM ↔ iOS. Non ripetere il debug dei `try` già risolto.
+
+Nuovo incremento: tre regressioni `HandshakeV1ChannelTests` per firma OS della chiave sbagliata, replay dei byte di una prova già accettata su nuova TLS con identità riusate/nonce freschi e deadline durante firma bloccata (prova remota valida, EOF remoto, completamento OS tardivo drenato). Fixture avversaria solo nei test: bridge Kotlin per frame/transcript, certificati/crypto/TLS reali, callback su queue seriale, nessun verifier trust-all. Produzione e servizio v0 invariati. **Nuovi test scritti ma non compilati/eseguiti da Windows**, da verificare nella CI dopo push; controllo locale mirato e `git diff --check`, nessuna build Kotlin/APK superflua. ADR 009 aggiornato con questa distinzione.
+
+**Un solo prossimo incremento:** dopo CI riuscita, test del proprietario iOS su TLS reale per frame malformati/troncati e duplicati HELLO/APPROVE, con chiusura e errori tipizzati. Nessuna attivazione v1 nel servizio o persistenza del trust. Fase 1 e collaudi fisici obbligatori ancora aperti/rinviati. Le sezioni seguenti sono storiche.
+
+## Storico — correzione compilazione dei test iOS
 
 Correzione CI `c856346`: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37154309930) riuscita; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37154309979) fallita nella compilazione dei test, prima dell'esecuzione XCTest. Due chiamate `queue.sync` nei test di adozione rifiutata richiedevano `try` (righe 102 e 120 di `HandshakeV1ChannelTests.swift`). Aggiunto soltanto `try`, senza sopprimere errori o modificare codice di produzione. Verifica locale: revisione del diff e `git diff --check`; nessuna compilazione Swift/Xcode disponibile su Windows, nessuna nuova esecuzione di test Kotlin perché invariati. **Prossimo passo: verificare la CI della correzione prima dei test avversari successivi.** Fase 1 e collaudi fisici restano aperti. Il riepilogo seguente descrive l'incremento precedente, non una CI verde della correzione.
 

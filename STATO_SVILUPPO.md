@@ -1,4 +1,16 @@
-# Stato sviluppo — 3 ottobre 2026
+# Stato sviluppo — 4 ottobre 2026
+
+## Sintesi corrente — regressioni avversarie iOS v1
+
+CI `7e79c12` verificata il 4 ottobre: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675375) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37156675385) entrambe `success`. Estratto il riepilogo XCTest: **28 test riusciti, zero fallimenti**, inclusi i sei `HandshakeV1ChannelTests`. Proprietario Swift compilato e testato in simulatore, non hardware Apple o interoperabilità JVM ↔ iOS. La correzione dei due `try queue.sync` è quindi verificata in remoto.
+
+Aggiunti tre XCTest nello stesso file, senza modifiche al codice di produzione: firma ECDSA valida prodotta dalla chiave diversa dal pin TLS; replay esatto di una prova precedentemente accettata, su nuova connessione TLS con le stesse identità e nonce freschi; deadline durante firma in attesa, anche dopo una prova remota valida, con EOF remoto e firma OS completata/drenata dopo la chiusura. Asserzioni: errore tipizzato `INVALID_SIGNATURE` o `EXPIRED`, nessun `READY`, nessuna conferma locale trasmessa dal tentativo scaduto, callback di chiusura unico. Fixture `ScriptedPeer` solo nei test, con certificati/TLS/nonce/firme OS reali e framing/transcript dal bridge Kotlin; nessun parser Swift aggiunto. Gate della queue di firma e conferme utente simulate soltanto nei test. Riuso facoltativo delle identità nella fixture per riprovare il replay senza ruotare le chiavi; namespace Keychain casuali e risorse ripuliti.
+
+**Verifica del nuovo incremento:** revisione mirata di API Swift/Kotlin già verificate, ownership/queue/ticket e `git diff --check`. Nessun compilatore Swift/Xcode su Windows: i tre nuovi test sono **scritti, non ancora compilati o eseguiti**; la nuova CI dopo push deve verificarli. Nessuna build Kotlin/Android rilanciata per sorgenti e contratti invariati. Versioni/lock, identità, SQLite, wire v0 e servizio attivo invariati; bootstrap v1 ancora isolato, nessun trust o chat autorizzata. Fase 0 chiusa; fase 1 e collaudi fisici obbligatori restano aperti/rinviati. Un solo push raggruppato, controllo CI compatto senza attendere se non rimane lavoro indipendente.
+
+**Prossimo incremento:** dopo esito verde, test del proprietario iOS su TLS reale per frame malformati/troncati e duplicati HELLO/APPROVE, verificando chiusura e diagnostica tipizzata. Le sezioni seguenti sono storiche, non la verifica corrente.
+
+## Storico — correzione compilazione dei test iOS
 
 **Verifica corrente della CI `c856346`:** [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37154309930) riuscita; [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37154309979) fallita nella compilazione di `HandshakeV1ChannelTests.swift`, righe 102 e 120: `Call can throw but is not marked with 'try'`. XCTest non eseguiti. Corrette le due chiamate con `try queue.sync`, mantenendo propagazione degli errori e asserzioni di rifiuto dell'adozione. Nessun cambiamento al codice di produzione, al protocollo, a identità/SQLite o versioni/lock. Controlli locali: revisione mirata e `git diff --check`; compilazione/esecuzione Swift non disponibili su Windows, suite Kotlin invariate e non rilanciate. Nuova CI da verificare dopo push unico; non dichiarata superata. Prossimo passo: verificare la correzione in CI prima dei test avversari iOS. Fase 0 chiusa, fase 1 aperta e collaudi fisici ancora obbligatori/rinviati. Il riepilogo seguente conserva il contesto dell'incremento precedente.
 

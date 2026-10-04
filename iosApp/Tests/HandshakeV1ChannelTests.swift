@@ -10,6 +10,7 @@ import LanternUI
 final class HandshakeV1ChannelTests: XCTestCase {
     private let queue = DispatchQueue(label: "dev.lantern.tests.bootstrap-v1")
     private var channels: [HandshakeV1Channel] = []
+    private var scriptedPeers: [ScriptedPeer] = []
     private var connections: [NWConnection] = []
     private var listeners: [NWListener] = []
     private var namespaces: [String] = []
@@ -18,6 +19,8 @@ final class HandshakeV1ChannelTests: XCTestCase {
         queue.sync {
             channels.forEach { $0.cancel() }
             channels.removeAll()
+            scriptedPeers.forEach { $0.stop() }
+            scriptedPeers.removeAll()
             connections.forEach { $0.cancel() }
             connections.removeAll()
             listeners.forEach { $0.cancel() }
@@ -188,6 +191,143 @@ final class HandshakeV1ChannelTests: XCTestCase {
         wait(for: [drained], timeout: 5)
     }
 
+    func testApprovalSignedByDifferentKeyIsRejectedAndClosesTransport() throws {
+        let pair = try readyPair()
+        let rejected = expectation(description: "wrong signing key rejected")
+        let eof = expectation(description: "wrong proof closes actual TLS connection")
+        try queue.sync {
+            let remote = try scriptedPeer(pair, onComparison: { peer, comparison in
+                // Valid DER/ECDSA proof, but not from the identity pinned by the client's TLS.
+                let proof = try peer.approval(comparison, signer: pair.clientIdentity)
+                peer.send(proof)
+            }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved)
+                eof.fulfill()
+            })
+            let owner = try adopt(pair, client: true, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                XCTAssertFalse(snapshot.remoteApproved)
+            }, onClosed: { failure in
+                if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "INVALID_SIGNATURE") }
+                else { XCTFail("Expected invalid signature") }
+                rejected.fulfill()
+            })
+            try remote.start()
+            owner.start()
+        }
+        wait(for: [rejected, eof], timeout: 10)
+    }
+
+    func testPreviouslyAcceptedApprovalCannotBeReplayedOnNewTLSAttempt() throws {
+        let first = try readyPair()
+        let accepted = expectation(description: "original OS proof accepted without local confirmation")
+        var oldProof: Data?
+        var oldComparison: Data?
+        var originalOwner: HandshakeV1Channel?
+        var originalRemote: ScriptedPeer?
+        try queue.sync {
+            originalRemote = try scriptedPeer(first, onComparison: { peer, comparison in
+                oldComparison = Self.data(comparison.bytes)
+                let proof = try peer.approval(comparison, signer: first.serverIdentity)
+                oldProof = Self.data(proof.bytes)
+                peer.send(proof)
+            })
+            var proofObserved = false
+            originalOwner = try adopt(first, client: true, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                if snapshot.remoteApproved, !proofObserved {
+                    XCTAssertEqual(snapshot.phase.name, "AWAITING_CONFIRMATION")
+                    proofObserved = true
+                    accepted.fulfill()
+                }
+            })
+            try originalRemote?.start()
+            originalOwner?.start()
+        }
+        wait(for: [accepted], timeout: 10)
+        let captured = try queue.sync { () throws -> (Data, Data) in
+            originalOwner?.cancel()
+            originalRemote?.stop()
+            return (try XCTUnwrap(oldProof), try XCTUnwrap(oldComparison))
+        }
+
+        // Same persistent identities/pins, new real TLS connection and fresh HELLO nonces.
+        let replacement = try readyPair(clientIdentity: first.clientIdentity, serverIdentity: first.serverIdentity)
+        let rejected = expectation(description: "previously valid proof rejected in replacement attempt")
+        let eof = expectation(description: "replay closes replacement TLS connection")
+        try queue.sync {
+            let remote = try scriptedPeer(replacement, onComparison: { peer, comparison in
+                XCTAssertNotEqual(Self.data(comparison.bytes), captured.1)
+                peer.replay(captured.0) // Exact captured bytes, no re-encoding or replacement signature.
+            }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved)
+                eof.fulfill()
+            })
+            let owner = try adopt(replacement, client: true, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                XCTAssertFalse(snapshot.remoteApproved)
+            }, onClosed: { failure in
+                if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "INVALID_SIGNATURE") }
+                else { XCTFail("Expected replay rejection") }
+                rejected.fulfill()
+            })
+            try remote.start()
+            owner.start()
+        }
+        wait(for: [rejected, eof], timeout: 10)
+    }
+
+    func testDeadlineClosesTransportWhileRealSignerIsPendingAndIgnoresLateCompletion() throws {
+        let pair = try readyPair()
+        let expired = expectation(description: "deadline closes owner with signature still pending")
+        let approved = expectation(description: "valid remote proof cannot bypass pending local signature")
+        let eof = expectation(description: "expired owner sends no approval and closes TLS")
+        let drained = expectation(description: "real signature and late callback drained after expiration")
+        let cryptoQueue = DispatchQueue(label: "dev.lantern.tests.expiring-real-signer")
+        let gate = DispatchSemaphore(value: 0)
+        cryptoQueue.async { gate.wait() }
+        defer { gate.signal() }
+        try queue.sync {
+            weak var owner: HandshakeV1Channel?
+            var confirmationRequested = false
+            var proofObserved = false
+            var closedCount = 0
+            let remote = try scriptedPeer(pair, onComparison: { peer, comparison in
+                peer.send(try peer.approval(comparison, signer: pair.serverIdentity))
+            }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved) // No local APPROVE escaped before closure.
+                eof.fulfill()
+            })
+            owner = try adopt(pair, client: true,
+                              selectedAt: HandshakeV1Channel.monotonicMillis() - 117_000,
+                              signingQueue: cryptoQueue, onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "READY")
+                if snapshot.remoteApproved, snapshot.phase.name == "SIGNING_APPROVAL", !proofObserved {
+                    proofObserved = true
+                    approved.fulfill()
+                }
+            }, onComparison: { comparison, _ in
+                confirmationRequested = true
+                owner?.confirm(comparison)
+                // The marker is behind the real OS signing job and its completion on the owner queue.
+                cryptoQueue.async { self.queue.async { drained.fulfill() } }
+            }, onClosed: { failure in
+                closedCount += 1
+                XCTAssertEqual(closedCount, 1)
+                XCTAssertTrue(confirmationRequested)
+                XCTAssertTrue(proofObserved)
+                if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
+                else { XCTFail("Expected expiration while signing") }
+                expired.fulfill()
+            })
+            try remote.start()
+            owner?.start()
+        }
+        wait(for: [approved, expired, eof], timeout: 10)
+        gate.signal()
+        wait(for: [drained], timeout: 5)
+    }
+
     private struct Pair {
         let client: NWConnection
         let server: NWConnection
@@ -219,9 +359,10 @@ final class HandshakeV1ChannelTests: XCTestCase {
         return channel
     }
 
-    private func readyPair() throws -> Pair {
-        let clientIdentity = try identity()
-        let serverIdentity = try identity()
+    private func readyPair(clientIdentity suppliedClient: AppleIdentity? = nil,
+                           serverIdentity suppliedServer: AppleIdentity? = nil) throws -> Pair {
+        let clientIdentity = try suppliedClient ?? identity()
+        let serverIdentity = try suppliedServer ?? identity()
         let clientTransport = AppleTLSTransport(identity: clientIdentity)
         let serverTransport = AppleTLSTransport(identity: serverIdentity)
         let selectedAt = HandshakeV1Channel.monotonicMillis()
@@ -258,5 +399,142 @@ final class HandshakeV1ChannelTests: XCTestCase {
         let namespace = "dev.lantern.tests.v1-channel.\(UUID().uuidString)"
         namespaces.append(namespace)
         return try AppleIdentityStore(namespace: namespace).open()
+    }
+
+    private func scriptedPeer(
+        _ pair: Pair,
+        onComparison: @escaping (ScriptedPeer, IosHandshakeV1Comparison) throws -> Void,
+        onEOF: @escaping (IosHandshakeV1Snapshot) -> Void = { _ in XCTFail("Unexpected scripted peer EOF") }
+    ) throws -> ScriptedPeer {
+        let peer = try ScriptedPeer(pair: pair, queue: queue, onComparison: onComparison, onEOF: onEOF)
+        scriptedPeers.append(peer)
+        return peer
+    }
+
+    /// Test-only malicious peer: real pinned TLS/crypto, Kotlin codec, explicit proof substitution.
+    /// All state and callbacks use the same serial queue as the channel under test.
+    private final class ScriptedPeer {
+        private let bridge: IosHandshakeV1
+        private let connection: NWConnection
+        private let queue: DispatchQueue
+        private let onComparison: (ScriptedPeer, IosHandshakeV1Comparison) throws -> Void
+        private let onEOF: (IosHandshakeV1Snapshot) -> Void
+        private var stopped = false
+        private var comparisonPublished = false
+
+        init(pair: Pair, queue: DispatchQueue,
+             onComparison: @escaping (ScriptedPeer, IosHandshakeV1Comparison) throws -> Void,
+             onEOF: @escaping (IosHandshakeV1Snapshot) -> Void) throws {
+            dispatchPrecondition(condition: .onQueue(queue))
+            let certificate = try XCTUnwrap(pair.serverTransport.certificate(for: pair.server))
+            XCTAssertEqual(AppleIdentity.fingerprint(certificate), pair.clientIdentity.id)
+            var nonce = [UInt8](repeating: 0, count: 32)
+            let status = SecRandomCopyBytes(kSecRandomDefault, nonce.count, &nonce)
+            guard status == errSecSuccess else { throw IdentityError.cryptography }
+            bridge = try IosHandshakeV1.companion.create(
+                localIdentity: pair.serverIdentity.id,
+                localNonce: nonce.map { String(format: "%02x", $0) }.joined(),
+                capabilitiesJson: "{\"version\":1,\"supportedFeatures\":[\"text\",\"receipts\"],\"requiredFeatures\":[\"text\"]}",
+                authenticatedLocalIdentity: pair.serverTransport.localIdentityID,
+                selectedPeerIdentity: pair.clientIdentity.id,
+                authenticatedPeerIdentity: AppleIdentity.fingerprint(certificate),
+                selectedAtMillis: pair.selectedAt,
+                nowMillis: { KotlinLong(longLong: HandshakeV1Channel.monotonicMillis()) },
+                verifyRemoteSignature: { bytes, signature in
+                    KotlinBoolean(bool: AppleIdentity.verify(certificate: certificate, message: HandshakeV1ChannelTests.data(bytes), signature: signature))
+                }
+            )
+            connection = pair.server
+            self.queue = queue
+            self.onComparison = onComparison
+            self.onEOF = onEOF
+        }
+
+        func start() throws {
+            dispatchPrecondition(condition: .onQueue(queue))
+            let hello = try XCTUnwrap(bridge.start())
+            send(hello) { [weak self] in self?.receiveNext() }
+        }
+
+        func approval(_ comparison: IosHandshakeV1Comparison, signer: AppleIdentity) throws -> IosHandshakeV1Write {
+            dispatchPrecondition(condition: .onQueue(queue))
+            let signing = try XCTUnwrap(bridge.confirm(ticket: comparison))
+            let message = HandshakeV1ChannelTests.data(signing.bytes)
+            let signature = try signer.sign(message)
+            XCTAssertTrue(AppleIdentity.verify(certificate: signer.certificate, message: message, signature: signature))
+            return try XCTUnwrap(bridge.signed(ticket: signing, signature: signature))
+        }
+
+        func send(_ ticket: IosHandshakeV1Write, onSent: @escaping () -> Void = {}) {
+            dispatchPrecondition(condition: .onQueue(queue))
+            connection.send(content: HandshakeV1ChannelTests.data(ticket.bytes), completion: .contentProcessed { [weak self] error in
+                guard let self, !self.stopped else { return }
+                dispatchPrecondition(condition: .onQueue(self.queue))
+                do {
+                    XCTAssertNil(error)
+                    guard error == nil else { self.stop(); return }
+                    XCTAssertTrue(try self.bridge.sent(ticket: ticket))
+                    onSent()
+                } catch { self.fail(error) }
+            })
+        }
+
+        func replay(_ frame: Data) {
+            dispatchPrecondition(condition: .onQueue(queue))
+            connection.send(content: frame, completion: .contentProcessed { [weak self] error in
+                guard let self, !self.stopped else { return }
+                dispatchPrecondition(condition: .onQueue(self.queue))
+                XCTAssertNil(error)
+                if error != nil { self.stop() }
+            })
+        }
+
+        func stop() {
+            dispatchPrecondition(condition: .onQueue(queue))
+            stopped = true
+            bridge.cancel()
+            connection.cancel()
+        }
+
+        private func receiveNext() {
+            dispatchPrecondition(condition: .onQueue(queue))
+            guard !stopped else { return }
+            connection.receive(minimumIncompleteLength: 1, maximumLength: Int(bridge.maximumChunkBytes)) { [weak self] chunk, _, complete, error in
+                guard let self, !self.stopped else { return }
+                dispatchPrecondition(condition: .onQueue(self.queue))
+                do {
+                    if let chunk, !chunk.isEmpty {
+                        XCTAssertTrue(try self.bridge.accept(chunk: HandshakeV1ChannelTests.bytes(chunk)))
+                    }
+                    let snapshot = try self.bridge.snapshot()
+                    XCTAssertNotEqual(snapshot.phase.name, "READY")
+                    if complete || error != nil {
+                        self.onEOF(snapshot)
+                        self.stop()
+                        return
+                    }
+                    if !self.comparisonPublished, let comparison = try self.bridge.comparison() {
+                        self.comparisonPublished = true
+                        try self.onComparison(self, comparison)
+                    }
+                    self.receiveNext()
+                } catch { self.fail(error) }
+            }
+        }
+
+        private func fail(_ error: Error) {
+            XCTFail("Scripted TLS fixture failed: \(error)")
+            stop()
+        }
+    }
+
+    private static func bytes(_ data: Data) -> KotlinByteArray {
+        let result = KotlinByteArray(size: Int32(data.count))
+        for (index, byte) in data.enumerated() { result.set(index: Int32(index), value: Int8(bitPattern: byte)) }
+        return result
+    }
+
+    private static func data(_ bytes: KotlinByteArray) -> Data {
+        Data((0..<Int(bytes.size)).map { UInt8(bitPattern: bytes.get(index: Int32($0))) })
     }
 }
