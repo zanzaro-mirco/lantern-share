@@ -46,6 +46,11 @@ on:
       - '.github/workflows/ios.yml'
       - '.github/scripts/**'
   workflow_dispatch:
+    inputs:
+      bootstrap_interop:
+        description: 'Run opt-in real JVM/iOS bootstrap interoperability on simulator'
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -63,6 +68,8 @@ jobs:
           xcode-version: '16.3'
       - name: Verify simulator setup orchestration
         run: bash .github/scripts/test-prepare-ios-simulator.sh
+      - name: Verify bootstrap interop controller
+        run: python3 -B .github/scripts/test-ios-bootstrap-interop.py
       - name: Install matching simulator runtime
         shell: bash
         run: |
@@ -84,6 +91,13 @@ jobs:
         run: |
           device_id=$(xcrun simctl create LanternIdentityTests com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
           xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
+      - name: Compile opt-in bootstrap XCTest without running it
+        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme LanternBootstrapInterop -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build-for-testing
+      - name: Test opt-in JVM and iOS bootstrap interoperability
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_interop }}
+        run: |
+          device_id=$(xcrun simctl create LanternBootstrapInterop com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
+          python3 -B .github/scripts/ios-bootstrap-interop.py --device-id "$device_id"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -91,6 +105,7 @@ jobs:
           path: |
             build/ios-simulator-setup.log
             build/ios-identity-tests.xcresult
+            build/ios-bootstrap-interop-*.xcresult
             iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
             persistence/build/reports/tests/
             protocol/build/reports/tests/

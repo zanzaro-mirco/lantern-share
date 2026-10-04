@@ -1,6 +1,16 @@
 # Stato sviluppo — 4 ottobre 2026
 
-## Sintesi corrente — fixture JVM per il futuro collaudo bootstrap Apple
+## Sintesi corrente — orchestrazione opt-in JVM ↔ iOS
+
+Incremento solo infrastruttura di collaudo: controller Python standard library su TCP loopback, processo JVM posseduto con stdout/stdin limitati e gruppo separato macOS (`--no-daemon`), XCTest in target/scheme dedicato `LanternBootstrapInterop`. Pin selezionati prima di TLS, identità Apple isolata in Keychain e JVM effimera, codice completo confrontato, azioni UI distinte con ticket propri, doppio `READY` prima di `CLOSE`, exit JVM 0 e chiusura osservata da Apple prima di cleanup/`COMPLETE`. Nessuna modifica al servizio/produzione, wire, schema, identità persistenti o versioni/lock.
+
+**Verifica effettiva Windows:** Python bundled, `-B .github/scripts/test-ios-bootstrap-interop.py`, **12 test riusciti** del controller/processi/TCP. Fixture sostitutive solo per il contratto di orchestrazione, sottoprocessi/pipe e socket reali: non è evidenza crittografica Apple. Revisione Swift/YAML e `git diff --check`; Swift/Xcode indisponibili, **nuovo XCTest scritto ma non compilato/eseguito localmente**. Nessuna build Kotlin/APK ripetuta perché i sorgenti Kotlin non cambiano. Ultima evidenza nativa confermata resta `48dd53a`: 38 XCTest riusciti in simulatore, non questa interoperabilità; CI `54e92f7` non consultata durante l'incremento.
+
+CI iOS ordinaria selettiva: verifica 12 test controller e compila il target opt-in senza eseguirlo. Esecuzione JVM ↔ iOS solo manuale `workflow_dispatch` con `bootstrap_interop = true`, non a ogni push; artefatto `.xcresult` dedicato. Nuova CI dopo push non monitorata né dichiarata riuscita. Polling vietato. Fase 0 chiusa; fase 1/collaudi fisici obbligatori ancora aperti/rinviati.
+
+**Un solo prossimo incremento:** run manuale iOS con `bootstrap_interop = true`, verifica del percorso reale e correzione mirata di eventuali problemi. Loopback simulatore, espansione della variabile dello scheme e compatibilità dei provider OS ancora da verificare su macOS. Contratto/comandi in `docs/COLLAUDO_BOOTSTRAP_INTEROP.md`; nessuna attivazione v1 nel servizio o trust/chat impliciti.
+
+## Storico — fixture JVM per il futuro collaudo bootstrap Apple
 
 CI del codice `48dd53a` conclusa: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37226631305) riuscita, riepilogo letto una sola volta dopo la comunicazione dell'utente: **38 XCTest, zero fallimenti**, compresi 15 del proprietario e quattro del bridge. Confermati EOF/trasporto troncato, revoca di `READY` e i due test dei ticket estranei. [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37226631354) già verificata `success` nella sessione precedente. Questi test sono compilati/eseguiti in simulatore, non hardware o interoperabilità JVM ↔ iOS. Il 4 ottobre l'utente ha revocato il polling CI: `AGENTS.md` aggiornato, nessun monitoraggio della nuova run.
 

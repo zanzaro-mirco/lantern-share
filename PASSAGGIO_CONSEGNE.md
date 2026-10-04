@@ -8,6 +8,14 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+Scritto controller `.github/scripts/ios-bootstrap-interop.py` e XCTest dedicato `iosApp/InteropTests/BootstrapInteropTests.swift`, scheme `LanternBootstrapInterop`. Test di bootstrap isolato, pin espliciti prima di TLS, codice completo/due conferme, doppio `READY`, cleanup JVM osservato e namespace Apple eliminato. Nessuna modifica produzione/Kotlin/schema/wire/lock. Contratto e avvio macOS in `docs/COLLAUDO_BOOTSTRAP_INTEROP.md`.
+
+**Verificato localmente:** Python bundled `-B .github/scripts/test-ios-bootstrap-interop.py`, 12 test riusciti (controller con sostituti di test, sottoprocessi/TCP reali), revisione mirata e `git diff --check`. Nuovo Swift **non compilato/eseguito su Windows**, nessuna interoperabilità Apple/hardware dichiarata. Nessuna nuova build Kotlin/APK necessaria. CI `54e92f7` non consultata; ultima suite Apple effettivamente confermata resta 38 XCTest di `48dd53a`.
+
+CI iOS selettiva ora compila il nuovo target e verifica il controller; non esegue questo collaudo a ogni push. **Prossimo incremento unico:** eseguire manualmente `Verify Lantern iOS` con `bootstrap_interop = true`, controllare compilazione e collegamento JVM/iOS, correggendo solo eventuali errori del percorso. Loopback simulatore, variabile nello scheme e compatibilità firme OS ancora da verificare. Polling vietato: non monitorare la run del push. Fase 1/collaudi fisici obbligatori aperti/rinviati.
+
+## Storico — preparazione fixture JVM
+
 CI `48dd53a`: [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37226631305) riuscita, **38 XCTest/zero fallimenti**, inclusi 15 proprietario e quattro bridge. EOF, revoca e ticket estranei ora compilati/verificati in simulatore, non hardware/JVM ↔ Apple. [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37226631354) già verificata riuscita. **Polling CI revocato dall'utente il 4 ottobre**, registrato in AGENTS; letto solo il riepilogo della run conclusa, non monitorare quelle nuove.
 
 Ora preparato soltanto il lato JVM della futura fixture di interoperabilità: `HandshakeV1InteropFixture` in jvmTest e task `:connectivity:runHandshakeV1InteropFixture`, JDK 17, pin esplicito prima di TLS, identità JCA effimera in memoria, endpoint solo loopback, proprietario/crypto/codec esistenti. Controllo stdin ASCII limitato con confronto completo e ACK cleanup; stdout solo metadati pubblici e stato. Mantiene TLS dopo `READY` finché il controller attesta la conclusione dell'altro lato. Contratto/comandi in `docs/COLLAUDO_BOOTSTRAP_INTEROP.md`. Nessuna modifica a produzione, wire v0, chiavi persistenti, SQLite o lock.

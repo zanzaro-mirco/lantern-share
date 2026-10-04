@@ -41,6 +41,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.lantern.poc.identity-tests
         # Tests import the bridge API; the static framework remains linked only by the host app.
         FRAMEWORK_SEARCH_PATHS: '$(inherited) $(SRCROOT)/../ui/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)'
+  LanternBootstrapInteropTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [InteropTests]
+    dependencies:
+      - target: Lantern
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lantern.poc.bootstrap-interop-tests
+        FRAMEWORK_SEARCH_PATHS: '$(inherited) $(SRCROOT)/../ui/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)'
+        LANTERN_INTEROP_CONTROL: ''
 schemes:
   Lantern:
     build:
@@ -48,3 +60,11 @@ schemes:
         Lantern: all
     test:
       targets: [LanternIdentityTests]
+  LanternBootstrapInterop:
+    build:
+      targets:
+        Lantern: all
+    test:
+      targets: [LanternBootstrapInteropTests]
+      environmentVariables:
+        LANTERN_INTEROP_CONTROL: '$(LANTERN_INTEROP_CONTROL)'
