@@ -8,6 +8,24 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+Su richiesta dell'utente accelerata la CI: nuovo `ci-plan.py`/test (diff completo Git, fallback conservativo; nessun limite 300 file), job automatici solo per target coinvolti, niente job pesanti per Markdown. JVM automatico Windows/test+classi; Android compile/test protocollo; iOS framework e compilazione app/tutti i target XCTest, senza runtime/test simulatore. Manuali `verify.yml`: matrice completa, Keychain Mac, APK/lint/pacchetti; `ios.yml`: tutti i test Native/XCTest. Checkpoint completi restano obbligatori prima di attestare traguardi o preparare pacchetti fisici. Non confondere step rinviati con test superati.
+
+Interop manuale `bootstrap_scenario=all` default workflow (CLI default success conservato), una preparazione/build-for-testing interop e tre test-without-building, `.xcresult` separati/controller/processi/namespace nuovi. Copia `.xctestrun` nella cartella prodotti, cambia solo l'ambiente controllo, cleanup copia su esito positivo/negativo; errore propagato e batch fermato senza attestare scenari successivi. DerivedData condiviso nella singola run; nessuna build unsigned app duplicata. Auto-concurrency cancella run automatiche obsolete, mai checkpoint manuali.
+
+**Verificato locale:** 10 test piano, 26 controller/batch/manifest/orchestrazione; actionlint 1.7.12 ufficiale/checksum verificato senza diagnostica; Gradle `-Pandroid=true :androidApp:compileDebugKotlin :protocol:testDebugUnitTest :desktopApp:classes --dry-run --console=plain` riuscito in 14 s, task soltanto risolti/non eseguiti. `git diff --check`; codice prodotto/Swift/versioni/lock invariati, nessun nuovo hardware. Nuova orchestrazione **non ancora eseguita in macOS/Actions**, risparmio non misurato. Vecchia run cancel `37371449506`/`097ce6f` non consultata in questo incremento.
+
+**Prossimo incremento unico:** leggere la CI rapida conclusa del nuovo commit, poi un checkpoint iOS `bootstrap_interop=true`, `bootstrap_scenario=all` per verificare il riuso nativo dei binari; link una volta e stop se pendente. Nessun polling, niente nuova espansione di soli test bootstrap salvo regressioni; dopo verifica riprendere una funzionalità circoscritta del piano con test raggruppati. Fase 1/collaudi fisici obbligatori aperti/rinviati; istruzioni download aggiornate, pacchetti soltanto in checkpoint manuali. Nessuna attivazione v1/trust/chat.
+
+## Storico — avvio del collaudo cancellazione interop
+
+**CI `097ce6f` verificata `success`:** [iOS 37332831411](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37332831411) e [Android/desktop 37332831329](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37332831329). iOS: 21 test controller, 38 XCTest/zero fallimenti, `TEST BUILD SUCCEEDED` del target interop. Nuovo `cancel` compilato, non eseguito nella run ordinaria. Usare SHA completo nel filtro `gh run list --commit`: l'abbreviazione non trova le run.
+
+Avviata una sola run manuale `bootstrap_interop=true`, `bootstrap_scenario=cancel`: [37371449506](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37371449506), commit `097ce6f86a3641a5da1282379ae4b33eb5cad25d`. Link restituito dal comando di avvio; **esito pendente/non verificato**, nessun polling o nuovo test/build locale per questa verifica documentale.
+
+**Prossimo incremento unico:** leggere l'esito concluso di `37371449506` e correggere soltanto eventuali errori del collaudo `cancel`. Se pendente riportare link/commit e stop, senza rilanciarlo. Nessuna attivazione v1/trust/chat, fase 1/collaudi fisici obbligatori aperti/rinviati. Evidenze da pubblicare col prossimo incremento, evitando push Markdown/CI PoC ridondanti.
+
+## Storico — preparazione della cancellazione interop
+
 Preparato scenario opt-in `cancel` e XCTest `testLocalCancellationBeforeConfirmationClosesBothOwners`: digest completo uguale prima di armare l'osservazione, nessun `CONFIRM`; cancellazione del proprietario Apple prima dell'approvazione, chiusura `.cancelled` unica e vecchie azioni inefficaci. JVM richiede EOF/reset reale tramite proprietario, `Closed.Io`/socket chiusa, nessun frame o timeout accettato; marker `CLOSED BEFORE_CONFIRMATION` dopo cleanup ed exit 0, poi namespace Apple eliminato e `CLOSED LOCAL`/`COMPLETE`. Solo fixture/controller/XCTest/workflow, nessuna modifica produzione/wire/SQLite/identità/lock.
 
 **Verificato localmente:** 21 test Python controller riusciti; `.\gradlew.bat :connectivity:jvmTest --console=plain`, JDK 17/cache utente espliciti, finale 11 s: **57 riusciti/un multicast opt-in saltato**, dieci fixture incluse. Quattro regressioni JVM TLS/JCA reali per cancellazione, mancata chiusura, APPROVE non confuso con EOF e cleanup fallito senza marker. Swift **scritto/rivisto, non compilato/eseguito su Windows**; nessun nuovo hardware/APK. `git diff --check` riuscito; nessun polling.

@@ -1,50 +1,7 @@
 name: Verify Lantern iOS
 on:
   push:
-    paths:
-      - 'iosApp/**'
-      - 'domain/src/**'
-      - 'protocol/src/**'
-      - 'persistence/src/**'
-      - 'ui/src/**'
-      - '!**/src/android*/**'
-      - '!**/src/jvm*/**'
-      # All module build scripts are configured by the same Gradle invocation.
-      - '**/*.gradle.kts'
-      - '**/*.gradle'
-      - 'gradle/**'
-      - 'gradle.properties'
-      - 'gradlew'
-      - 'gradlew.bat'
-      - 'settings-gradle.lockfile'
-      - 'domain/gradle.lockfile'
-      - 'protocol/gradle.lockfile'
-      - 'persistence/gradle.lockfile'
-      - 'ui/gradle.lockfile'
-      - '.github/workflows/ios.yml'
-      - '.github/scripts/**'
   pull_request:
-    paths:
-      - 'iosApp/**'
-      - 'domain/src/**'
-      - 'protocol/src/**'
-      - 'persistence/src/**'
-      - 'ui/src/**'
-      - '!**/src/android*/**'
-      - '!**/src/jvm*/**'
-      - '**/*.gradle.kts'
-      - '**/*.gradle'
-      - 'gradle/**'
-      - 'gradle.properties'
-      - 'gradlew'
-      - 'gradlew.bat'
-      - 'settings-gradle.lockfile'
-      - 'domain/gradle.lockfile'
-      - 'protocol/gradle.lockfile'
-      - 'persistence/gradle.lockfile'
-      - 'ui/gradle.lockfile'
-      - '.github/workflows/ios.yml'
-      - '.github/scripts/**'
   workflow_dispatch:
     inputs:
       bootstrap_interop:
@@ -54,12 +11,30 @@ on:
       bootstrap_scenario:
         description: 'Opt-in bootstrap scenario'
         type: choice
-        options: [success, mismatch, cancel]
-        default: success
+        options: [all, success, mismatch, cancel]
+        default: all
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.targets.outputs.ios }}
+      full: ${{ steps.targets.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 -B .github/scripts/test-ci-plan.py
+      - id: targets
+        run: python3 -B .github/scripts/ci-plan.py
   ios:
+    needs: plan
+    if: needs.plan.outputs.ios == 'true'
     timeout-minutes: 35
     runs-on: macos-15
     steps:
@@ -76,28 +51,35 @@ jobs:
       - name: Verify bootstrap interop controller
         run: python3 -B .github/scripts/test-ios-bootstrap-interop.py
       - name: Install matching simulator runtime
+        if: needs.plan.outputs.full == 'true'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p build
           bash .github/scripts/prepare-ios-simulator.sh 2>&1 | tee build/ios-simulator-setup.log
       - uses: gradle/actions/setup-gradle@v4
-      - name: Shared iOS framework and protocol tests
-        run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
+      - name: Shared iOS framework
+        run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 --console=plain
+      - name: Checkpoint Native protocol and persistence tests
+        if: needs.plan.outputs.full == 'true'
+        run: bash ./gradlew :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
       - name: Generate Xcode project
         run: |
           git clone --depth 1 --branch 2.43.0 https://github.com/yonaskolb/XcodeGen.git "$RUNNER_TEMP/XcodeGen"
           swift run --package-path "$RUNNER_TEMP/XcodeGen" xcodegen generate --spec iosApp/project.yml --project iosApp
           mkdir -p iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
           cp iosApp/Package.resolved iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-      - name: Compile unsigned simulator app
-        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=NO build
+      # build-for-testing compiles the host app too: no redundant unsigned build.
+      - name: Compile app and ordinary XCTest
+        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -derivedDataPath build/ios-derived -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build-for-testing
       - name: Test iOS Keychain and TLS on simulator
+        if: needs.plan.outputs.full == 'true'
         run: |
           device_id=$(xcrun simctl create LanternIdentityTests com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
-          xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
+          xcodebuild -project iosApp/Lantern.xcodeproj -scheme Lantern -configuration Debug -derivedDataPath build/ios-derived -destination "platform=iOS Simulator,id=$device_id" -resultBundlePath build/ios-identity-tests.xcresult -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test-without-building
       - name: Compile opt-in bootstrap XCTest without running it
-        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme LanternBootstrapInterop -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build-for-testing
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bootstrap_interop) }}
+        run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme LanternBootstrapInterop -configuration Debug -derivedDataPath build/ios-derived -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build-for-testing
       - name: Test opt-in JVM and iOS bootstrap interoperability
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_interop }}
         env:

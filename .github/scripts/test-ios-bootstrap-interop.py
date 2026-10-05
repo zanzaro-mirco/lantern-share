@@ -3,10 +3,12 @@
 import importlib.util
 from pathlib import Path
 import socket
+import plistlib
 import sys
 import threading
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("interop", Path(__file__).with_name("ios-bootstrap-interop.py"))
 interop = importlib.util.module_from_spec(spec)
@@ -228,6 +230,107 @@ class CancellationControllerTests(unittest.TestCase):
                 controller.exchange("ARM_CANCEL", CODE)
             self.assertEqual(fixture.commands, [])
             self.assertTrue(fixture.closed)
+
+
+class BatchTests(unittest.TestCase):
+    def test_prebuilt_run_uses_owned_manifest_and_removes_it_even_on_failure(self):
+        # Only orchestration substitutes; not a cryptographic/simulator test.
+        for exit_code in [0, 1]:
+            with tempfile.TemporaryDirectory(prefix="lantern-batch-test-") as directory:
+                root = Path(directory)
+                template = root / "original.xctestrun"
+                template.write_bytes(plistlib.dumps({"LanternBootstrapInteropTests": {}}))
+                server = Mock()
+                server.token = "a" * 32
+                server.server_address = ("127.0.0.1", 1234)
+                context = Mock()
+                context.__enter__ = Mock(return_value=server)
+                context.__exit__ = Mock(return_value=False)
+                worker = Mock()
+                worker.is_alive.return_value = False
+                controller = Mock()
+                controller.failure = None
+                controller.phase = "COMPLETE"
+                child = Mock()
+                child.wait.return_value = exit_code
+                child.poll.return_value = exit_code
+                observed = []
+
+                def spawn(command, **kwargs):
+                    manifest = Path(command[command.index("-xctestrun") + 1])
+                    self.assertTrue(manifest.exists())
+                    self.assertEqual(manifest.parent, template.parent)
+                    self.assertNotEqual(manifest, template)
+                    configured = plistlib.loads(manifest.read_bytes())
+                    self.assertEqual(configured["LanternBootstrapInteropTests"]["EnvironmentVariables"]
+                                     ["LANTERN_INTEROP_CONTROL"], "127.0.0.1:1234:" + server.token)
+                    self.assertEqual(command[-1], "test-without-building")
+                    self.assertIn("-only-testing:LanternBootstrapInteropTests/BootstrapInteropTests/" +
+                                  interop.SCENARIOS["cancel"], command)
+                    observed.append(manifest)
+                    return child
+
+                with patch.object(interop, "ControlServer", return_value=context), \
+                     patch.object(interop, "Controller", return_value=controller), \
+                     patch.object(interop.threading, "Thread", return_value=worker), \
+                     patch.object(interop.subprocess, "Popen", side_effect=spawn), patch("builtins.print"):
+                    if exit_code:
+                        with self.assertRaises(RuntimeError):
+                            interop.run_scenario(root, "simulator-id", "cancel", template)
+                    else:
+                        interop.run_scenario(root, "simulator-id", "cancel", template)
+                self.assertFalse(observed[0].exists())
+                self.assertTrue(template.exists())
+                server.shutdown.assert_called_once_with()
+                controller.close.assert_called_once_with()
+
+    def test_all_scenarios_prepare_once_and_keep_separate_runs(self):
+        prepare = Mock(return_value="compiled-manifest")
+        run = Mock()
+        interop.run_batch(list(interop.SCENARIOS), prepare, run)
+        prepare.assert_called_once_with()
+        self.assertEqual([call.args for call in run.call_args_list],
+                         [(scenario, "compiled-manifest") for scenario in ["success", "mismatch", "cancel"]])
+
+    def test_failed_build_or_scenario_is_never_hidden_or_retried(self):
+        prepare = Mock(side_effect=RuntimeError("Test build failed"))
+        run = Mock()
+        with self.assertRaises(RuntimeError):
+            interop.run_batch(list(interop.SCENARIOS), prepare, run)
+        run.assert_not_called()
+        prepare = Mock(return_value="manifest")
+        run = Mock(side_effect=[None, RuntimeError("Test mismatch failed")])
+        with self.assertRaises(RuntimeError):
+            interop.run_batch(list(interop.SCENARIOS), prepare, run)
+        self.assertEqual(run.call_count, 2)
+        prepare.assert_called_once_with()
+
+    def test_test_manifest_control_environment_changes_only_expected_target(self):
+        for document in [
+            {"LanternBootstrapInteropTests": {"EnvironmentVariables": {"KEEP": "yes"}, "TestHostPath": "__TESTROOT__/App"},
+             "__xctestrun_metadata__": {"FormatVersion": 1}},
+            {"TestConfigurations": [{"TestTargets": [{"BlueprintName": "LanternBootstrapInteropTests",
+                                                       "EnvironmentVariables": {"KEEP": "yes"}, "TestHostPath": "__TESTROOT__/App"}]}],
+             "__xctestrun_metadata__": {"FormatVersion": 2}},
+        ]:
+            template = Mock()
+            template.read_bytes.return_value = plistlib.dumps(document)
+            endpoint = "127.0.0.1:1234:" + "a" * 32
+            configured = plistlib.loads(interop.configured_test_run(template, endpoint))
+            target = (configured.get("LanternBootstrapInteropTests") or
+                      configured["TestConfigurations"][0]["TestTargets"][0])
+            self.assertEqual(target["EnvironmentVariables"], {"KEEP": "yes", "LANTERN_INTEROP_CONTROL": endpoint})
+            self.assertEqual(target["TestHostPath"], "__TESTROOT__/App")
+            self.assertNotIn("LANTERN_INTEROP_CONTROL", str(document))  # Template untouched.
+
+    def test_missing_disabled_or_ambiguous_bootstrap_manifest_fails(self):
+        for document in [{"OtherTests": {}}, {"LanternBootstrapInteropTests": {"IsEnabled": False}},
+                         {"TestConfigurations": [{"TestTargets": [{"BlueprintName": "LanternBootstrapInteropTests"}]},
+                                                 {"TestTargets": [{"BlueprintName": "LanternBootstrapInteropTests"}]}]}]:
+            template = Mock()
+            template.read_bytes.return_value = plistlib.dumps(document)
+            with self.assertRaises(RuntimeError):
+                interop.configured_test_run(template, "endpoint")
 
 
 class ProcessTests(unittest.TestCase):

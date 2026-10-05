@@ -2,13 +2,33 @@ name: Verify Lantern PoC
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      jvm: ${{ steps.targets.outputs.jvm }}
+      android: ${{ steps.targets.outputs.android }}
+      full: ${{ steps.targets.outputs.full }}
+      desktop_os: ${{ steps.targets.outputs.desktop_os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 -B .github/scripts/test-ci-plan.py
+      - id: targets
+        run: python3 -B .github/scripts/ci-plan.py
   desktop:
+    needs: plan
+    if: needs.plan.outputs.jvm == 'true'
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-24.04, macos-15, macos-15-intel]
+        os: ${{ fromJSON(needs.plan.outputs.desktop_os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +39,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: JVM tests and desktop application
         shell: bash
-        run: bash ./gradlew :protocol:jvmTest :connectivity:jvmTest :desktopApp:classes :desktopApp:createDistributable --console=plain
+        run: bash ./gradlew :protocol:jvmTest :connectivity:jvmTest :desktopApp:classes --console=plain
+      - name: Package checkpoint desktop application
+        if: needs.plan.outputs.full == 'true'
+        shell: bash
+        run: bash ./gradlew :desktopApp:createDistributable --console=plain
       - name: Native Keychain integration in disposable macOS runner
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && needs.plan.outputs.full == 'true'
         shell: bash
         env:
           LANTERN_DISPOSABLE_KEYCHAIN: 'true'
@@ -49,7 +73,7 @@ jobs:
           name: reports-${{ matrix.os }}
           path: '**/build/reports/tests/'
       - name: Upload Windows test application with runtime
-        if: runner.os == 'Windows' && success()
+        if: runner.os == 'Windows' && needs.plan.outputs.full == 'true' && success()
         uses: actions/upload-artifact@v4
         with:
           name: lantern-windows-x64-test-${{ github.sha }}
@@ -57,7 +81,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -70,8 +97,18 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - run: bash ./gradlew -Pandroid=true :androidApp:assembleDebug :androidApp:lintDebug --console=plain
+      - name: Android compilation and protocol tests
+        run: bash ./gradlew -Pandroid=true :androidApp:compileDebugKotlin :protocol:testDebugUnitTest --console=plain
+      - name: Checkpoint APK and lint
+        if: needs.plan.outputs.full == 'true'
+        run: bash ./gradlew -Pandroid=true :androidApp:assembleDebug :androidApp:lintDebug --console=plain
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports-android
+          path: '**/build/reports/tests/'
       - name: Upload Android test APK
+        if: needs.plan.outputs.full == 'true' && success()
         uses: actions/upload-artifact@v4
         with:
           name: lantern-android-debug-test-${{ github.sha }}

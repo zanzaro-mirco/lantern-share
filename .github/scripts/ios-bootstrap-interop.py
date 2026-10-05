@@ -4,12 +4,14 @@
 import argparse
 import os
 from pathlib import Path
+import plistlib
 import queue
 import re
 import signal
 import socketserver
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 
@@ -223,37 +225,48 @@ class ControlRequest(socketserver.StreamRequestHandler):
         self.wfile.write((response + "\n").encode("ascii"))
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device-id", required=True, help="Existing disposable simulator UDID")
-    parser.add_argument("--scenario", choices=SCENARIOS, default="success")
-    args = parser.parse_args()
-    if sys.platform != "darwin":
-        parser.error("The integration launcher requires macOS/Xcode")
-    root = Path(__file__).resolve().parents[2]
-    (root / "build").mkdir(exist_ok=True)
-    # Warm compilation before the 10-second fixture accept window and XCTest starts.
-    subprocess.run(["bash", "./gradlew", ":connectivity:jvmTestClasses", "--console=plain"],
-                   cwd=root, check=True, timeout=600)
+def configured_test_run(template, endpoint):
+    """Copy Xcode's test manifest; change only this test target's control environment."""
+    document = plistlib.loads(template.read_bytes())
+    if "TestConfigurations" in document:  # Xcode format 2 (test plans).
+        targets = [target for config in document["TestConfigurations"] for target in config["TestTargets"]
+                   if target.get("BlueprintName") == "LanternBootstrapInteropTests"]
+    else:  # Xcode format 1 (our existing scheme without a test plan).
+        targets = [value for key, value in document.items() if key == "LanternBootstrapInteropTests"]
+    if len(targets) != 1:
+        raise RuntimeError("Expected exactly one bootstrap test target in Xcode manifest")
+    target = targets[0]
+    if target.get("IsEnabled") is False:
+        raise RuntimeError("Bootstrap test target is disabled")
+    target.setdefault("EnvironmentVariables", {})["LANTERN_INTEROP_CONTROL"] = endpoint
+    return plistlib.dumps(document)
+
+
+def run_scenario(root, device_id, scenario, template):
     controller = Controller(lambda pin: FixtureProcess([
         "bash", "./gradlew", ":connectivity:runHandshakeV1InteropFixture",
         "-PinteropPeerPin=" + pin, "--no-daemon", "--quiet", "--console=plain",
-    ], root), scenario=args.scenario)
+    ], root), scenario=scenario)
     with ControlServer(controller) as server:
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         port = server.server_address[1]
         endpoint = f"127.0.0.1:{port}:{server.token}"
-        command = [
-            "xcodebuild", "-project", "iosApp/Lantern.xcodeproj", "-scheme", "LanternBootstrapInterop",
-            "-configuration", "Debug", "-destination", "platform=iOS Simulator,id=" + args.device_id,
-            "-resultBundlePath", "build/ios-bootstrap-interop-" + uuid.uuid4().hex + ".xcresult",
-            "-onlyUsePackageVersionsFromResolvedFile", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
-            "-only-testing:LanternBootstrapInteropTests/BootstrapInteropTests/" + SCENARIOS[args.scenario],
-            "LANTERN_INTEROP_CONTROL=" + endpoint, "test",
-        ]
+        # Keep the copy beside Xcode's manifest: __TESTROOT__ must still resolve to the built products.
+        manifest = None
         child = None
         try:
+            with tempfile.NamedTemporaryFile(prefix="lantern-control-", suffix=".xctestrun",
+                                             dir=template.parent, delete=False) as output:
+                manifest = Path(output.name)
+                output.write(configured_test_run(template, endpoint))
+            command = [
+                "xcodebuild", "-xctestrun", str(manifest),
+                "-destination", "platform=iOS Simulator,id=" + device_id,
+                "-resultBundlePath", "build/ios-bootstrap-interop-" + scenario + "-" + uuid.uuid4().hex + ".xcresult",
+                "-only-testing:LanternBootstrapInteropTests/BootstrapInteropTests/" + SCENARIOS[scenario],
+                "test-without-building",
+            ]
             child = subprocess.Popen(command, cwd=root, start_new_session=True)
             exit_code = child.wait(timeout=1200)
             if controller.failure is not None:
@@ -262,9 +275,9 @@ def main():
                 raise RuntimeError("Interop XCTest failed")
             if controller.phase != "COMPLETE":
                 raise RuntimeError("Interop control/cleanup did not complete")
-            if args.scenario == "mismatch":
+            if scenario == "mismatch":
                 print("Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed")
-            elif args.scenario == "cancel":
+            elif scenario == "cancel":
                 print("Bootstrap JVM/iOS: local cancellation without READY; both closures/namespace cleanup observed")
             else:
                 print("Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed")
@@ -280,11 +293,52 @@ def main():
                     os.killpg(child.pid, signal.SIGKILL)
                     child.wait(timeout=5)
             # The server owns the fixture during a request; stop/join before closing its pipes.
-            server.shutdown()
-            worker.join(timeout=100)
-            controller.close()
-            if worker.is_alive():
-                raise RuntimeError("Interop controller did not stop")
+            try:
+                server.shutdown()
+                worker.join(timeout=100)
+                controller.close()
+                if worker.is_alive():
+                    raise RuntimeError("Interop controller did not stop")
+            finally:
+                if manifest is not None:
+                    manifest.unlink()  # Only the temporary copy owned by this run, never compiled products.
+
+
+def run_batch(scenarios, prepare, run):
+    template = prepare()  # One compilation for the whole batch; fresh controllers for each scenario.
+    for scenario in scenarios:
+        run(scenario, template)  # Propagate any failure. No remaining test is reported as successful.
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--device-id", required=True, help="Existing disposable simulator UDID")
+    parser.add_argument("--scenario", choices=["all", *SCENARIOS], default="success")
+    args = parser.parse_args()
+    if sys.platform != "darwin":
+        parser.error("The integration launcher requires macOS/Xcode")
+    root = Path(__file__).resolve().parents[2]
+    (root / "build").mkdir(exist_ok=True)
+
+    def prepare():
+        # Warm compilation before the 10-second fixture accept window and XCTest starts.
+        subprocess.run(["bash", "./gradlew", ":connectivity:jvmTestClasses", "--console=plain"],
+                       cwd=root, check=True, timeout=600)
+        derived = root / "build" / "ios-derived"
+        subprocess.run([
+            "xcodebuild", "-project", "iosApp/Lantern.xcodeproj", "-scheme", "LanternBootstrapInterop",
+            "-configuration", "Debug", "-derivedDataPath", str(derived),
+            "-destination", "platform=iOS Simulator,id=" + args.device_id,
+            "-onlyUsePackageVersionsFromResolvedFile", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
+            "build-for-testing",
+        ], cwd=root, check=True, timeout=600)
+        templates = list((derived / "Build" / "Products").glob("LanternBootstrapInterop_*.xctestrun"))
+        if len(templates) != 1:
+            raise RuntimeError("Expected exactly one compiled bootstrap test manifest")
+        return templates[0]
+
+    scenarios = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
+    run_batch(scenarios, prepare, lambda scenario, template: run_scenario(root, args.device_id, scenario, template))
 
 
 if __name__ == "__main__":
