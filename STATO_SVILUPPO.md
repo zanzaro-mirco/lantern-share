@@ -1,6 +1,16 @@
 # Stato sviluppo — 5 ottobre 2026
 
-## Sintesi corrente — caso negativo di confronto interop preparato
+## Sintesi corrente — collaudo negativo JVM ↔ iOS riuscito
+
+**CI `c9d1bb4` verificata il 5 ottobre:** [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37281270769) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37281270705) concluse `success`. Riepiloghi iOS: 17 test controller riusciti, 38 XCTest/zero fallimenti e `TEST BUILD SUCCEEDED` per il target interop. Entrambi gli XCTest interop ora **compilati in CI**, ma non eseguiti dalla run ordinaria.
+
+**Run manuale `mismatch` conclusa e verificata `success`:** [37324594616](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37324594616), commit `c9d1bb4d4a4a1911b69315c6b032abbe20dd74cb`, `bootstrap_interop=true`, `bootstrap_scenario=mismatch`. XCTest `testDiscordantComparisonClosesWithoutApprovalOrReady` passato in **71,911 s**, `TEST SUCCEEDED` e attestazione finale `Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed`. Confermati confronto originale identico prima della variante, rifiuto JVM con marker/exit 1 richiesti, nessuna conferma Apple/approvazione remota/`READY`, chiusura unica, vecchie azioni inefficaci e cleanup. `ComparisonRejected` nel log è l'errore intenzionale della fixture: non un fallimento del job, né un errore arbitrario ignorato. Stessa run: 38 XCTest ordinari/zero fallimenti e 17 test controller riusciti. Evidenza **JVM macOS ↔ iOS simulatore su TLS reale**, non Android/Conscrypt, LAN o hardware. Nessun polling; letti soltanto stato concluso e riepiloghi pertinenti. Fase 0 chiusa, fase 1 aperta.
+
+Nessuna correzione di codice o nuova build necessaria per questa verifica; `git diff --check` come controllo documentale. Evidenze da pubblicare col prossimo incremento, senza push Markdown che avvierebbe la CI PoC.
+
+**Un solo prossimo incremento:** preparare un test interop JVM ↔ iOS di cancellazione locale prima della conferma, con chiusura osservata da entrambi e nessun `APPROVE`/`READY`; riusare fixture, proprietari e cleanup esistenti. Nessuna attivazione v1/trust/chat. Collaudi fisici obbligatori della fase 1 ancora rinviati, non superati.
+
+## Storico — preparazione del caso negativo
 
 Incremento circoscritto solo fixture/test: nuovo XCTest `testDiscordantComparisonClosesWithoutApprovalOrReady`, riuso della stessa preparazione TLS/Keychain e selezione pin del caso positivo. Codice completo originale passato al controller insieme alla variante di un carattere; il controller richiede prima che l'originale coincida col digest JVM, poi invia il comando volutamente invalido alla fixture. Richiesti evento `REJECTED COMPARISON` e **exit 1 esatto**, prima di ogni `owner.confirm`; un crash/timeout generico o `READY` non valgono come rifiuto atteso. Apple non conferma, richiede `remoteApproved=false` in ogni snapshot, nessun `READY`, chiusura per trasporto una sola volta, vecchi ticket inefficaci e cleanup prima di `COMPLETE`.
 

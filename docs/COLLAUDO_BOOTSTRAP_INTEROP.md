@@ -22,7 +22,7 @@ Su Windows usare `gradlew.bat`. Sostituire il segnaposto con il pin minuscolo di
 
 ## Verifiche effettive e limite
 
-Sei test JVM con TLS 1.3/P-256/JCA reali: doppio `READY` prima di cleanup, codice errato/input oversize/non-ASCII, controllo assente, parametri invalidi, certificato diverso dal pin selezionato e cleanup fallito senza falso marker di rifiuto. CRLF Windows corretto nel primo incremento. Suite corrente connettività: 53 riusciti, un multicast opt-in saltato. Avvio del task e rifiuto del pin invalido già verificati (exit 1 atteso). Percorso positivo con processo Apple/loopback/selezioni/conferme verificato nella run opt-in riportata sotto; nuovo caso negativo Apple/JVM scritto ma non ancora compilato/eseguito.
+Sei test JVM con TLS 1.3/P-256/JCA reali: doppio `READY` prima di cleanup, codice errato/input oversize/non-ASCII, controllo assente, parametri invalidi, certificato diverso dal pin selezionato e cleanup fallito senza falso marker di rifiuto. CRLF Windows corretto nel primo incremento. Suite corrente connettività: 53 riusciti, un multicast opt-in saltato. Avvio del task e rifiuto del pin invalido già verificati (exit 1 atteso). Percorsi positivo e negativo Apple/JVM compilati/eseguiti nelle run opt-in riportate sotto; nessun collaudo hardware.
 
 ## Controller e XCTest dedicati
 
@@ -46,7 +46,7 @@ Usare un simulatore usa-e-getta, non quello con dati personali: una terminazione
 
 Aggiornamento 5 ottobre: [CI iOS ordinaria `a619f5e`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37231384877) riuscita: 38 XCTest ordinari/zero fallimenti, 12 test controller e nuovo target opt-in compilato (`TEST BUILD SUCCEEDED`). La successiva [run manuale con `bootstrap_interop = true`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37274723780), stesso commit, è **conclusa `success`**: XCTest interop passato in 62,312 s, `TEST SUCCEEDED` e messaggio del launcher `Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed`. Confermati pin selezionati prima di TLS, codice completo identico, prove accettate dai provider OS, doppia conferma, doppio `READY` e cleanup osservati. Riusciti anche 38 XCTest ordinari e 12 test controller. Verifica simulatore/JVM su macOS, non hardware/LAN/Android; nessun polling.
 
-## Caso negativo di confronto (implementato, Apple da verificare)
+## Caso negativo di confronto (verificato in simulatore/JVM)
 
 ```text
 python3 -B .github/scripts/ios-bootstrap-interop.py --device-id UDID_SIMULATORE --scenario mismatch
@@ -56,6 +56,6 @@ Lo XCTest `testDiscordantComparisonClosesWithoutApprovalOrReady` riusa preparazi
 
 Apple richiede `remoteApproved=false` su ogni snapshot, nessun `READY` e chiusura trasporto una sola volta. Verifica che il vecchio ticket/start/cancel non riaprano l'istanza, ripulisce il namespace e attesta `CLOSED TRANSPORT`. Soltanto questo percorso completo permette `COMPLETE`/successo di xcodebuild/launcher. Il marker JVM viene pubblicato soltanto dopo cleanup di proprietario/socket/listener/input/executor; eccezioni di cleanup, incluse quelle soppresse da `use`, impediscono il marker. La fixture JVM mostra un fallimento Gradle intenzionale dovuto al comando invalido; il controller non ignora fallimenti arbitrari di compilazione, TLS o protocollo. Nessuna modifica alla gestione degli errori di produzione.
 
-JVM locale: 53 test riusciti/un multicast opt-in saltato, incluse le sei fixture con nuove asserzioni sul marker/rifiuto/chiusura I/O e regressione su cleanup fallito che impedisce il marker. Nuovo XCTest **scritto/rivisto, non compilato/eseguito su Windows**. Non usare il successo positivo precedente come evidenza del negativo.
+JVM locale: 53 test riusciti/un multicast opt-in saltato, incluse le sei fixture con nuove asserzioni sul marker/rifiuto/chiusura I/O e regressione su cleanup fallito che impedisce il marker. XCTest non eseguibile su questo host Windows; **verificato in CI macOS/iOS simulatore** nella [run negativa 37324594616](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37324594616), commit `c9d1bb4`, conclusa `success`: test passato in 71,911 s, `TEST SUCCEEDED`, launcher `Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed`. Stessa run: 38 XCTest ordinari/zero fallimenti e 17 test controller riusciti. `ComparisonRejected` è intenzionale, accettato soltanto insieme al marker/exit previsti e alla conclusione Apple/cleanup. Nessuna prova hardware/LAN/Android o polling.
 
-**Prossimo incremento unico:** verificare la CI conclusa della nuova revisione e avviare la run manuale `bootstrap_interop=true`, `bootstrap_scenario=mismatch`, poi correggere solo eventuali problemi del percorso. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.
+**Prossimo incremento unico:** test interop di cancellazione locale prima della conferma, chiusura osservata da entrambi e nessun `APPROVE`/`READY`, con le fixture esistenti. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.
