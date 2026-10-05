@@ -170,6 +170,66 @@ class ControllerTests(unittest.TestCase):
             self.assertNotEqual(controller.phase, "CLOSED")
 
 
+class CancellationControllerTests(unittest.TestCase):
+    def controller(self, terminal="CLOSED BEFORE_CONFIRMATION", exit_code=0):
+        fixture = FakeFixture([ENDPOINT, "COMPARISON " + CODE, terminal], exit_code=exit_code)
+        controller = interop.Controller(lambda pin: fixture, scenario="cancel")
+        self.addCleanup(controller.close)
+        controller.exchange("SELECT", PIN)
+        return controller, fixture
+
+    def test_cancellation_requires_both_closures_and_cleanup_without_confirm(self):
+        controller, fixture = self.controller()
+        self.assertEqual(controller.exchange("ARM_CANCEL", CODE), "ARMED CANCEL")
+        self.assertEqual(fixture.commands, ["OBSERVE_CLOSE"])
+        self.assertFalse(fixture.finished)
+        self.assertEqual(controller.exchange("CANCELLED", "LOCAL"), "CLOSED BEFORE_CONFIRMATION")
+        self.assertTrue(fixture.finished)
+        self.assertEqual(controller.exchange("CLOSED", "LOCAL"), "COMPLETE")
+        self.assertEqual(fixture.commands, ["OBSERVE_CLOSE"])
+
+    def test_wrong_digest_and_early_closure_fail_without_arming(self):
+        for command, argument in [("ARM_CANCEL", "d" * 64), ("ARM_CANCEL", "invalid"),
+                                  ("CANCELLED", "LOCAL"), ("COMPARE", CODE), ("READY", "receipts,text")]:
+            controller, fixture = self.controller()
+            with self.assertRaises(ValueError):
+                controller.exchange(command, argument)
+            self.assertEqual(fixture.commands, [])
+            self.assertTrue(fixture.closed)
+
+    def test_missing_wrong_marker_or_failed_exit_cannot_attest_cancellation(self):
+        for terminal, exit_code in [("READY receipts,text", 0), ("REJECTED COMPARISON", 1),
+                                    ("CLOSED BEFORE_CONFIRMATION", 1)]:
+            controller, fixture = self.controller(terminal, exit_code)
+            controller.exchange("ARM_CANCEL", CODE)
+            with self.assertRaises((ValueError, RuntimeError)):
+                controller.exchange("CANCELLED", "LOCAL")
+            self.assertNotEqual(controller.phase, "CLOSED")
+            self.assertTrue(fixture.closed)
+        controller, fixture = self.controller()
+        controller.exchange("ARM_CANCEL", CODE)
+        with patch.object(fixture, "event", side_effect=TimeoutError("Test missing closure")):
+            with self.assertRaises(TimeoutError):
+                controller.exchange("CANCELLED", "LOCAL")
+        self.assertTrue(fixture.closed)
+
+    def test_cancel_requires_local_cleanup_and_is_unavailable_in_other_scenarios(self):
+        controller, fixture = self.controller()
+        controller.exchange("ARM_CANCEL", CODE)
+        controller.exchange("CANCELLED", "LOCAL")
+        with self.assertRaises(ValueError):
+            controller.exchange("CLOSED", "TRANSPORT")
+        self.assertNotEqual(controller.phase, "COMPLETE")
+        for scenario in ["success", "mismatch"]:
+            fixture = FakeFixture()
+            controller = interop.Controller(lambda pin: fixture, scenario=scenario)
+            controller.exchange("SELECT", PIN)
+            with self.assertRaises(ValueError):
+                controller.exchange("ARM_CANCEL", CODE)
+            self.assertEqual(fixture.commands, [])
+            self.assertTrue(fixture.closed)
+
+
 class ProcessTests(unittest.TestCase):
     def launch(self, script):
         fixture = interop.FixtureProcess([sys.executable, "-u", "-c", script], Path(__file__).parent)

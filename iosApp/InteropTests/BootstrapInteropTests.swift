@@ -9,14 +9,20 @@ import LanternUI
 /// Dedicated opt-in scheme. Uses actual OS keys/TLS and the existing Kotlin bootstrap owners.
 final class BootstrapInteropTests: XCTestCase {
     func testJVMAndIOSBootstrapWithExplicitComparisonAndObservedCleanup() throws {
-        try runBootstrap(expectMismatch: false)
+        try runBootstrap(scenario: .success)
     }
 
     func testDiscordantComparisonClosesWithoutApprovalOrReady() throws {
-        try runBootstrap(expectMismatch: true)
+        try runBootstrap(scenario: .mismatch)
     }
 
-    private func runBootstrap(expectMismatch: Bool) throws {
+    func testLocalCancellationBeforeConfirmationClosesBothOwners() throws {
+        try runBootstrap(scenario: .cancel)
+    }
+
+    private enum Scenario: Equatable { case success, mismatch, cancel }
+
+    private func runBootstrap(scenario: Scenario) throws {
         let config = ProcessInfo.processInfo.environment["LANTERN_INTEROP_CONTROL"] ?? ""
         let parts = config.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0] == "127.0.0.1",
@@ -84,8 +90,8 @@ final class BootstrapInteropTests: XCTestCase {
         }
         wait(for: [tlsReady], timeout: 10)
         let comparisonAvailable = expectation(description: "iOS comparison available")
-        let appleReady = expectMismatch ? nil : expectation(description: "iOS bootstrap ready")
-        let appleClosed = expectation(description: "iOS observed JVM transport cleanup")
+        let appleReady = scenario == .success ? expectation(description: "iOS bootstrap ready") : nil
+        let appleClosed = expectation(description: "iOS bootstrap closure observed")
         var comparison: (IosHandshakeV1Comparison, String)?
         var confirmed = false
         var readyCount = 0
@@ -95,7 +101,7 @@ final class BootstrapInteropTests: XCTestCase {
                 connection: client, identity: identity, transport: transport,
                 selectedPeerID: selectedPin, selectedAtMillis: selectedAt, queue: queue,
                 onSnapshot: { snapshot in
-                    if expectMismatch {
+                    if scenario != .success {
                         XCTAssertFalse(snapshot.remoteApproved)
                         XCTAssertNotEqual(snapshot.phase.name, "READY")
                     }
@@ -114,11 +120,14 @@ final class BootstrapInteropTests: XCTestCase {
                 }, onClosed: { failure in
                     closedCount += 1
                     XCTAssertEqual(closedCount, 1)
-                    XCTAssertEqual(readyCount, expectMismatch ? 0 : 1)
+                    XCTAssertEqual(readyCount, scenario == .success ? 1 : 0)
                     switch failure {
-                    case .transport: break
-                    case .bootstrap(let reason): XCTAssertEqual(reason.name, "TRANSPORT")
-                    default: XCTFail("Expected JVM transport closure")
+                    case .cancelled: XCTAssertEqual(scenario, .cancel)
+                    case .transport: XCTAssertNotEqual(scenario, .cancel)
+                    case .bootstrap(let reason):
+                        XCTAssertNotEqual(scenario, .cancel)
+                        XCTAssertEqual(reason.name, "TRANSPORT")
+                    default: XCTFail("Unexpected bootstrap closure")
                     }
                     if closedCount == 1 { appleClosed.fulfill() }
                 }
@@ -128,7 +137,33 @@ final class BootstrapInteropTests: XCTestCase {
         wait(for: [comparisonAvailable], timeout: 10)
         let current = try queue.sync { try XCTUnwrap(comparison) }
         XCTAssertEqual(current.1.count, 64)
-        if expectMismatch {
+        if scenario == .cancel {
+            let armed = try exchange("ARM_CANCEL \(current.1)", port: controlPort, token: token)
+            guard armed == "ARMED CANCEL" else { throw TestError.comparison }
+            queue.sync {
+                XCTAssertFalse(confirmed)
+                XCTAssertEqual(closedCount, 0)
+                XCTAssertEqual(readyCount, 0)
+                owner?.cancel() // Actual local owner cancellation, no raw socket substitute.
+            }
+            wait(for: [appleClosed], timeout: 5)
+            try queue.sync {
+                guard closedCount == 1 else { throw TestError.notClosed }
+                owner?.confirm(current.0)
+                owner?.start()
+                owner?.cancel()
+                XCTAssertFalse(confirmed)
+                XCTAssertEqual(closedCount, 1)
+                XCTAssertEqual(readyCount, 0)
+            }
+            let closed = try exchange("CANCELLED LOCAL", port: controlPort, token: token)
+            guard closed == "CLOSED BEFORE_CONFIRMATION" else { throw TestError.notClosed }
+            cleanup()
+            let complete = try exchange("CLOSED LOCAL", port: controlPort, token: token)
+            XCTAssertEqual(complete, "COMPLETE")
+            return
+        }
+        if scenario == .mismatch {
             // Preserve the actual full transcript digest, then deliberately alter one character.
             let changed = (current.1.first == "0" ? "1" : "0") + String(current.1.dropFirst())
             let rejection = try exchange("MISMATCH \(current.1):\(changed)", port: controlPort, token: token)

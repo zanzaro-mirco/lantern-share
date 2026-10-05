@@ -19,6 +19,7 @@ MAX_LINE = 256
 SCENARIOS = {
     "success": "testJVMAndIOSBootstrapWithExplicitComparisonAndObservedCleanup",
     "mismatch": "testDiscordantComparisonClosesWithoutApprovalOrReady",
+    "cancel": "testLocalCancellationBeforeConfirmationClosesBothOwners",
 }
 
 
@@ -136,8 +137,20 @@ class Controller:
                         or not parts[2].isascii() or not parts[2].isdigit()
                         or not 1 <= int(parts[2]) <= 65535 or not PIN.fullmatch(parts[3])):
                     raise ValueError("Invalid fixture endpoint")
-                self.phase = "MISMATCH" if self.scenario == "mismatch" else "COMPARE"
+                self.phase = {"mismatch": "MISMATCH", "cancel": "ARM_CANCEL"}.get(self.scenario, "COMPARE")
                 return event
+            if command == "ARM_CANCEL":
+                if not PIN.fullmatch(argument) or self.fixture.event(10) != "COMPARISON " + argument:
+                    raise ValueError("Cancellation comparison codes differ")
+                self.fixture.send("OBSERVE_CLOSE")  # Never CONFIRM; JVM waits for actual Apple closure.
+                self.phase = "CANCELLED"
+                return "ARMED CANCEL"
+            if command == "CANCELLED":
+                if argument != "LOCAL" or self.fixture.event(10) != "CLOSED BEFORE_CONFIRMATION":
+                    raise ValueError("Both owners must observe cancellation before confirmation")
+                self.fixture.finish()  # Real closure marker AND clean exit 0, not killed/failed JVM.
+                self.phase = "CLOSED"
+                return "CLOSED BEFORE_CONFIRMATION"
             if command == "MISMATCH":
                 codes = argument.split(":")
                 if len(codes) != 2 or not all(PIN.fullmatch(code) for code in codes) or codes[0] == codes[1]:
@@ -169,7 +182,7 @@ class Controller:
                 self.phase = "CLOSED"
                 return "READY receipts,text"
             if command == "CLOSED":
-                if argument != "TRANSPORT":
+                if argument != ("LOCAL" if self.scenario == "cancel" else "TRANSPORT"):
                     raise ValueError("Apple must observe transport closure and cleanup")
                 self.phase = "COMPLETE"
                 return "COMPLETE"
@@ -251,6 +264,8 @@ def main():
                 raise RuntimeError("Interop control/cleanup did not complete")
             if args.scenario == "mismatch":
                 print("Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed")
+            elif args.scenario == "cancel":
+                print("Bootstrap JVM/iOS: local cancellation without READY; both closures/namespace cleanup observed")
             else:
                 print("Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed")
         finally:

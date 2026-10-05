@@ -5,6 +5,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.PrintStream
 import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -48,6 +49,7 @@ object HandshakeV1InteropFixture {
             Thread(task, "lantern-interop-fixture-control").apply { isDaemon = true }
         }
         var rejection: ComparisonRejected? = null
+        var cancelled: Result? = null
         try {
             input.use {
                 val loopback = InetAddress.getByName("127.0.0.1")
@@ -76,19 +78,42 @@ object HandshakeV1InteropFixture {
                                     throw error.cause ?: error
                                 } finally { pending.cancel(true) }
                             }
-                            if (command() != "CONFIRM $code") {
-                                throw ComparisonRejected() // No signing/APPROVE for discordant test UI.
+                            val action = command()
+                            if (action == "OBSERVE_CLOSE") {
+                                // Test-only branch: observe real peer EOF/reset without confirming.
+                                val waiting = owner.state as? HandshakeV1ConnectionState.Active
+                                val awaiting = waiting?.handshake as? ProtocolHandshakeState.AwaitingConfirmation
+                                checkNotNull(awaiting) { "Fixture not awaiting confirmation" }
+                                check(!awaiting.remoteApproved) { "Unexpected remote approval" }
+                                val pending = control.submit<Boolean> { owner.readNext() }
+                                try {
+                                    pending.get(controlTimeoutMillis, TimeUnit.MILLISECONDS)
+                                    error("Expected peer transport closure, not a bootstrap frame")
+                                } catch (error: ExecutionException) {
+                                    val cause = error.cause
+                                    if (cause !is IOException || cause is SocketTimeoutException) throw error
+                                    val closed = owner.state as? HandshakeV1ConnectionState.Closed
+                                    check(closed?.reason == HandshakeV1ConnectionFailure.Io && socket.isClosed) {
+                                        "Peer closure not observed"
+                                    }
+                                    check(!owner.confirm(comparison) && !owner.start()) { "Closed fixture resumed" }
+                                } finally { pending.cancel(true) }
+                                cancelled = Result(code, emptySet())
+                            } else {
+                                if (action != "CONFIRM $code") {
+                                    throw ComparisonRejected() // No signing/APPROVE for discordant test UI.
+                                }
+                                check(owner.confirm(comparison)) { "Fixture confirmation rejected" }
+                                check(owner.readNext()) { "Fixture peer approval rejected" }
+                                val active = owner.state as? HandshakeV1ConnectionState.Active
+                                val ready = active?.handshake as? ProtocolHandshakeState.Ready
+                                checkNotNull(ready) { "Fixture bootstrap not ready" }
+                                event(output, "READY ${ready.capabilities.features.sorted().joinToString(",")}")
+                                // Keep TLS alive until the host has also observed peer READY. Immediate
+                                // linger-zero close could discard an APPROVE still queued for the peer.
+                                check(command() == "CLOSE") { "Fixture cleanup acknowledgement rejected" }
+                                return Result(code, ready.capabilities.features.toSet())
                             }
-                            check(owner.confirm(comparison)) { "Fixture confirmation rejected" }
-                            check(owner.readNext()) { "Fixture peer approval rejected" }
-                            val active = owner.state as? HandshakeV1ConnectionState.Active
-                            val ready = active?.handshake as? ProtocolHandshakeState.Ready
-                            checkNotNull(ready) { "Fixture bootstrap not ready" }
-                            event(output, "READY ${ready.capabilities.features.sorted().joinToString(",")}")
-                            // Keep TLS alive until the host has also observed peer READY. Immediate
-                            // linger-zero close could discard an APPROVE still queued for the peer.
-                            check(command() == "CLOSE") { "Fixture cleanup acknowledgement rejected" }
-                            return Result(code, ready.capabilities.features.toSet())
                         }
                     }
                 }
@@ -100,6 +125,10 @@ object HandshakeV1InteropFixture {
         } finally {
             control.shutdownNow()
             scheduler.shutdownNow()
+        }
+        cancelled?.let {
+            event(output, "CLOSED BEFORE_CONFIRMATION") // Attest only after successful cleanup.
+            return it
         }
         val rejected = checkNotNull(rejection)
         event(output, "REJECTED COMPARISON") // Only after resource cleanup, not a TLS frame.

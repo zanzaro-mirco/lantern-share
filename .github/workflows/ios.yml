@@ -54,7 +54,7 @@ on:
       bootstrap_scenario:
         description: 'Opt-in bootstrap scenario'
         type: choice
-        options: [success, mismatch]
+        options: [success, mismatch, cancel]
         default: success
 permissions:
   contents: read

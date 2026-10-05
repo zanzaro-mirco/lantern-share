@@ -58,4 +58,16 @@ Apple richiede `remoteApproved=false` su ogni snapshot, nessun `READY` e chiusur
 
 JVM locale: 53 test riusciti/un multicast opt-in saltato, incluse le sei fixture con nuove asserzioni sul marker/rifiuto/chiusura I/O e regressione su cleanup fallito che impedisce il marker. XCTest non eseguibile su questo host Windows; **verificato in CI macOS/iOS simulatore** nella [run negativa 37324594616](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37324594616), commit `c9d1bb4`, conclusa `success`: test passato in 71,911 s, `TEST SUCCEEDED`, launcher `Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed`. Stessa run: 38 XCTest ordinari/zero fallimenti e 17 test controller riusciti. `ComparisonRejected` è intenzionale, accettato soltanto insieme al marker/exit previsti e alla conclusione Apple/cleanup. Nessuna prova hardware/LAN/Android o polling.
 
-**Prossimo incremento unico:** test interop di cancellazione locale prima della conferma, chiusura osservata da entrambi e nessun `APPROVE`/`READY`, con le fixture esistenti. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.
+## Cancellazione locale prima della conferma (preparata, Apple da verificare)
+
+```text
+python3 -B .github/scripts/ios-bootstrap-interop.py --device-id UDID_SIMULATORE --scenario cancel
+```
+
+In workflow_dispatch scegliere `bootstrap_interop=true`, `bootstrap_scenario=cancel`. Seleziona soltanto `testLocalCancellationBeforeConfirmationClosesBothOwners`. Dopo SELECT/HELLO, `ARM_CANCEL <digestCompleto>` richiede uguaglianza con COMPARISON JVM; il controller invia `OBSERVE_CLOSE`, mai CONFIRM, e risponde `ARMED CANCEL`. Apple cancella il proprio `HandshakeV1Channel`, non la socket grezza; richiede chiusura `.cancelled` unica, nessuna approvazione remota/READY e vecchi ticket/start/cancel inefficaci.
+
+`CANCELLED LOCAL` richiede il marker JVM `CLOSED BEFORE_CONFIRMATION` e exit 0 esatto. La fixture osserva EOF/reset tramite `readNext`, stato `Closed.Io` e socket chiusa, rifiuta frame ricevuti/timeouts/eccezioni diverse e verifica azioni vecchie inefficaci. Attesa limitata a 10 s, senza modificare la deadline del protocollo. Marker soltanto dopo cleanup riuscito: nessun errore di chiusura o processo ucciso può valere come successo. Apple cancella risorse/elimina il namespace prima di `CLOSED LOCAL`/COMPLETE. Xcodebuild deve riuscire come negli altri scenari.
+
+Verifica locale: 21 test Python controller, nuovi casi di ordine/digest/marker/exit/timeouts e isolamento; suite JVM corrente **57 riusciti/un multicast opt-in saltato**, dieci fixture incluse. Quattro regressioni JVM TLS/JCA reali (cancellazione, peer rimasto aperto, APPROVE ricevuto anziché EOF, cleanup fallito senza marker). Nuovo Swift non compilato/eseguito su Windows; non usare positivo/mismatch precedenti come prova di `cancel`. Nessuna modifica al prodotto o prova hardware. I conteggi precedenti sopra documentano le verifiche dei due scenari già conclusi.
+
+**Prossimo incremento unico:** verificare la nuova CI conclusa, poi avviare una sola run manuale `cancel`, senza polling. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.

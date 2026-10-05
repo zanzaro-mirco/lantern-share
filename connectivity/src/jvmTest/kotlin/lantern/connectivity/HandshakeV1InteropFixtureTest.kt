@@ -101,6 +101,68 @@ class HandshakeV1InteropFixtureTest {
     }
 
     @Test
+    fun localCancellationBeforeConfirmationIsObservedBeforeSuccessfulCleanup() = withFixture { peer ->
+        val ticket = assertNotNull(peer.owner.comparison())
+        val code = digest(ticket.bytes)
+        assertEquals("COMPARISON $code", peer.events.readLine())
+        val waiting = assertIs<ProtocolHandshakeState.AwaitingConfirmation>(
+            assertIs<HandshakeV1ConnectionState.Active>(peer.owner.state).handshake,
+        )
+        assertFalse(waiting.remoteApproved)
+        peer.commands.println("OBSERVE_CLOSE")
+        peer.owner.close()
+        val result = peer.result.get(5, TimeUnit.SECONDS)
+        assertEquals(code, result.comparisonCode)
+        assertEquals(emptySet(), result.negotiatedFeatures)
+        assertEquals("CLOSED BEFORE_CONFIRMATION", peer.events.readLine())
+        assertTrue(peer.socket.isClosed)
+        assertFalse(peer.owner.confirm(ticket))
+        assertFalse(peer.owner.start())
+    }
+
+    @Test
+    fun peerApprovalIsNotMistakenForCancellationClosure() = withFixture { peer ->
+        val ticket = assertNotNull(peer.owner.comparison())
+        assertEquals("COMPARISON ${digest(ticket.bytes)}", peer.events.readLine())
+        peer.commands.println("OBSERVE_CLOSE")
+        assertTrue(peer.owner.confirm(ticket)) // Deliberately violate the cancellation test contract.
+        val error = assertFailsWith<ExecutionException> { peer.result.get(5, TimeUnit.SECONDS) }
+        assertIs<IllegalStateException>(error.cause)
+        assertFalse(peer.events.ready())
+        assertFailsWith<IOException> { peer.owner.readNext() }
+        assertTrue(peer.socket.isClosed)
+    }
+
+    @Test
+    fun cancellationObservationCannotPassWithoutPeerClosure() = withFixture(controlTimeoutMillis = 1000) { peer ->
+        assertEquals("COMPARISON ${digest(assertNotNull(peer.owner.comparison()).bytes)}", peer.events.readLine())
+        peer.commands.println("OBSERVE_CLOSE")
+        val error = assertFailsWith<ExecutionException> { peer.result.get(5, TimeUnit.SECONDS) }
+        assertIs<TimeoutException>(error.cause)
+        assertFalse(peer.events.ready())
+        assertFailsWith<IOException> { peer.owner.readNext() }
+        assertTrue(peer.socket.isClosed)
+    }
+
+    @Test
+    fun cancellationCleanupFailureCannotPublishClosureMarker() = withFixture(controlInputWrapper = { input ->
+        object : FilterInputStream(input) {
+            override fun close() {
+                super.close()
+                throw IOException("Injected cancellation cleanup failure")
+            }
+        }
+    }) { peer ->
+        assertEquals("COMPARISON ${digest(assertNotNull(peer.owner.comparison()).bytes)}", peer.events.readLine())
+        peer.commands.println("OBSERVE_CLOSE")
+        peer.owner.close()
+        val error = assertFailsWith<ExecutionException> { peer.result.get(5, TimeUnit.SECONDS) }
+        assertIs<IOException>(error.cause)
+        assertFalse(peer.events.ready())
+        assertTrue(peer.socket.isClosed)
+    }
+
+    @Test
     fun invalidSelectedPinsAndTimeoutsAreRejectedBeforeCreatingEndpoint() {
         val events = ByteArrayOutputStream()
         PrintStream(events).use { output ->

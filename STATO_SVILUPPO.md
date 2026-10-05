@@ -1,6 +1,14 @@
 # Stato sviluppo — 5 ottobre 2026
 
-## Sintesi corrente — collaudo negativo JVM ↔ iOS riuscito
+## Sintesi corrente — cancellazione interop prima della conferma preparata
+
+Nuovo incremento solo test: scenario opt-in `cancel`, XCTest `testLocalCancellationBeforeConfirmationClosesBothOwners`. Controller confronta i digest completi, invia soltanto `OBSERVE_CLOSE` e restituisce `ARMED CANCEL`; nessun `CONFIRM`. Apple cancella il proprietario corrente senza approvazione, richiede chiusura `.cancelled` unica/nessun `READY` o approvazione remota e inefficacia del vecchio ticket/start/cancel. JVM osserva EOF/reset tramite `readNext`, richiede stato `Closed.Io` e socket chiusa; frame ricevuto, timeout o altra eccezione falliscono. Evento `CLOSED BEFORE_CONFIRMATION` soltanto dopo cleanup riuscito, exit 0 esatto; Apple elimina il namespace prima di `CLOSED LOCAL`/`COMPLETE`. Deadline del protocollo invariata; attesa della fixture limitata a 10 s senza estenderla. Nessuna modifica produzione, wire, identità, SQLite o versioni/lock.
+
+**Verifiche locali:** Python bundled `-B .github/scripts/test-ios-bootstrap-interop.py`, 21 test riusciti (0,759 s); nuovi casi su ordine/digest, marker/exit/timeouts e isolamento dello scenario. `.\gradlew.bat :connectivity:jvmTest --console=plain`, JDK 17/cache utente espliciti, **57 riusciti/un multicast opt-in saltato**, dieci test fixture TLS/JCA reali inclusi. Prima esecuzione 24 s; finale 11 s dopo nuova regressione APPROVE. Quattro nuovi test per cancellazione, assenza di chiusura, APPROVE non scambiato per EOF e cleanup fallito senza marker. Nuovo Swift scritto/rivisto, **non compilato/eseguito su Windows**; richiede CI e successiva run manuale `cancel`. Nessun nuovo APK/hardware. `git diff --check` riuscito; nessun polling CI.
+
+**Prossimo incremento unico:** verificare la CI conclusa della nuova revisione; se verde, avviare una sola run `bootstrap_interop=true`, `bootstrap_scenario=cancel` e recuperare il link senza polling. Fase 0 chiusa; fase 1/collaudi fisici obbligatori aperti/rinviati. Evidenze `2a82041` pubblicate insieme a questo incremento.
+
+## Storico — collaudo negativo JVM ↔ iOS riuscito
 
 **CI `c9d1bb4` verificata il 5 ottobre:** [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37281270769) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37281270705) concluse `success`. Riepiloghi iOS: 17 test controller riusciti, 38 XCTest/zero fallimenti e `TEST BUILD SUCCEEDED` per il target interop. Entrambi gli XCTest interop ora **compilati in CI**, ma non eseguiti dalla run ordinaria.
 
