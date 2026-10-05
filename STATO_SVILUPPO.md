@@ -1,6 +1,16 @@
 # Stato sviluppo — 5 ottobre 2026
 
-## Sintesi corrente — CI rapida mirata e checkpoint completi
+## Sintesi corrente — corretto prerequisito runtime della CI iOS rapida
+
+CI `e93354f`: [Android/desktop 37375240880](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375240880) conclusa `success`; [iOS 37375241073](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375241073) fallita soltanto in `Compile opt-in bootstrap XCTest without running it`, exit 70: destinazione generica simulatore non disponibile, `iOS 18.4 is not installed`. Piano/framework e compilazione del target ordinario passati; interop non compilato in questa run, nessun XCTest eseguito nella modalità rapida. Nessuna evidenza di regressione del prodotto o problema di visibilità del repository.
+
+Regressione dell'ottimizzazione: preparazione runtime resa condizionale ai checkpoint, ma Xcode 16.3 su questo runner la richiede anche per risolvere la destinazione del build-for-testing interop. Ripristinato `prepare-ios-simulator.sh` **prima delle build Xcode anche in modalità rapida**, una sola volta; helper esistente scarica iOS 18.4 soltanto se assente. Selezione target, niente pacchetti/matrice completa sui push, test sul simulatore soltanto manuali e batching restano invariati. Nessuna nuova versione o modifica produzione/Swift/protocollo/identità/SQLite.
+
+**Verificato localmente:** Python bundled `-B .github/scripts/test-ci-plan.py`, **11 test riusciti**, inclusa regressione del contratto workflow: preparazione non condizionale, prima della compilazione, helper invocato una sola volta. `actionlint` 1.7.12 esistente: entrambi i workflow senza diagnostica; `git diff --check` riuscito. Nessuna build Kotlin/APK superflua; Xcode/macOS indisponibili qui, correzione **implementata/non ancora verificata in Actions**. Test controller 26 dell'incremento precedente non ripetuti perché invariati.
+
+**Un solo prossimo incremento:** verificare la CI rapida conclusa della correzione; se verde, checkpoint iOS `bootstrap_interop=true`, `bootstrap_scenario=all` per verificare test-without-building/batching. Nessun polling, link una volta e stop se pendente. Fase 0 chiusa; fase 1 e collaudi fisici obbligatori aperti/rinviati. Runtime installato non equivale a test eseguiti.
+
+## Storico — ottimizzazione CI rapida e checkpoint completi
 
 Su richiesta dell'utente ottimizzati soltanto workflow/orchestrazione di collaudo, senza produzione, schema, protocollo, identità o versioni/lock. `ci-plan.py` legge diff Git completo (push before/after, PR merge-base) e seleziona JVM/Android/iOS: documentazione senza job pesanti, source set specifici isolati, `jvmAndAndroid` per entrambi, sorgenti condivisi/build/lock o percorso/diff sconosciuto per tutti. Nessun limite API di 300 file; selezione conservativa con regressioni. Job automatici obsoleti dello stesso workflow/ref cancellati, checkpoint manuali non cancellati.
 

@@ -51,7 +51,8 @@ jobs:
       - name: Verify bootstrap interop controller
         run: python3 -B .github/scripts/test-ios-bootstrap-interop.py
       - name: Install matching simulator runtime
-        if: needs.plan.outputs.full == 'true'
+        # Xcode 16.3 also needs the matching platform to resolve build-for-testing destinations.
+        # The helper downloads only when absent; test execution still belongs to checkpoints.
         shell: bash
         run: |
           set -euo pipefail

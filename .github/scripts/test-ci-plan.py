@@ -12,6 +12,20 @@ ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
 
 
+class WorkflowContractTests(unittest.TestCase):
+    def test_build_only_keeps_runtime_preparation_unconditional_and_before_xcode(self):
+        # Configuration regression, not a substitute for running Xcode on macOS.
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/ios.yml").read_text(encoding="utf-8")
+        name = "      - name: Install matching simulator runtime\n"
+        start = workflow.index(name)
+        end = workflow.index("\n      - ", start + len(name))
+        step = workflow[start:end]
+        self.assertNotIn("\n        if:", step)
+        self.assertIn("prepare-ios-simulator.sh", step)
+        self.assertLess(start, workflow.index("      - name: Compile app and ordinary XCTest"))
+        self.assertEqual(workflow.count("bash .github/scripts/prepare-ios-simulator.sh"), 1)
+
+
 class PlanTests(unittest.TestCase):
     def test_documentation_has_no_heavy_jobs(self):
         result = ci.plan(["README.md", "docs/COLLAUDO.md", "AGENTS.md"])

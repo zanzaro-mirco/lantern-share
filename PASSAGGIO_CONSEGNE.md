@@ -8,6 +8,14 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+CI `e93354f`: [Android/desktop 37375240880](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375240880) `success`; [iOS 37375241073](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375241073) fallita nella compilazione interop, exit 70/destinazione generica indisponibile: iOS 18.4 non installato. Preparazione runtime era stata erroneamente limitata ai checkpoint; ripristinata incondizionata prima delle build Xcode. Helper preesistente scarica solo se assente, una volta per job iOS; non ripartire dal debug di Swift/prodotto. Target ordinario compilato, interop non compilato/test non eseguiti in questa run rapida.
+
+**Verificato locale:** 11 test piano/contratto workflow riusciti, nuova regressione su setup non condizionale/prima di Xcode/invocato una sola volta; actionlint 1.7.12 senza diagnostica, `git diff --check`. Nessun Kotlin/APK ricostruito; correzione **non ancora verificata in macOS/CI**. Nessuna modifica versione/lock/produzione/Swift; ottimizzazioni di selezione/matrice/pacchetti/batching mantenute, esecuzione Native/XCTest ancora riservata ai checkpoint.
+
+**Prossimo incremento unico:** leggere la CI rapida conclusa della correzione, poi checkpoint iOS `bootstrap_interop=true`, `bootstrap_scenario=all`; nessun polling o attesa. Fase 1/collaudi fisici obbligatori aperti/rinviati. Runtime necessario alla compilazione non va confuso con esecuzione dei test.
+
+## Storico — ottimizzazione CI rapida e checkpoint completi
+
 Su richiesta dell'utente accelerata la CI: nuovo `ci-plan.py`/test (diff completo Git, fallback conservativo; nessun limite 300 file), job automatici solo per target coinvolti, niente job pesanti per Markdown. JVM automatico Windows/test+classi; Android compile/test protocollo; iOS framework e compilazione app/tutti i target XCTest, senza runtime/test simulatore. Manuali `verify.yml`: matrice completa, Keychain Mac, APK/lint/pacchetti; `ios.yml`: tutti i test Native/XCTest. Checkpoint completi restano obbligatori prima di attestare traguardi o preparare pacchetti fisici. Non confondere step rinviati con test superati.
 
 Interop manuale `bootstrap_scenario=all` default workflow (CLI default success conservato), una preparazione/build-for-testing interop e tre test-without-building, `.xcresult` separati/controller/processi/namespace nuovi. Copia `.xctestrun` nella cartella prodotti, cambia solo l'ambiente controllo, cleanup copia su esito positivo/negativo; errore propagato e batch fermato senza attestare scenari successivi. DerivedData condiviso nella singola run; nessuna build unsigned app duplicata. Auto-concurrency cancella run automatiche obsolete, mai checkpoint manuali.
