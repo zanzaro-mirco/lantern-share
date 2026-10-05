@@ -1,6 +1,6 @@
 # Collaudo bootstrap JVM ↔ iOS (opt-in)
 
-4 ottobre 2026. Test support in `connectivity/src/jvmTest`, `.github/scripts` e `iosApp/InteropTests`, **non app, servizio o protocollo applicativo**. Lato JVM validato localmente con un peer JVM reale; controller verificato su Windows. Collegamento Apple scritto, ma non ancora compilato/eseguito su questo host.
+Aggiornamento 5 ottobre 2026. Test support in `connectivity/src/jvmTest`, `.github/scripts` e `iosApp/InteropTests`, **non app, servizio o protocollo applicativo**. Lato JVM validato localmente con un peer JVM reale; controller verificato su Windows. Percorso positivo JVM macOS ↔ iOS simulatore compilato/eseguito con successo in CI, non su hardware.
 
 ## Avvio e precondizioni
 
@@ -22,7 +22,7 @@ Su Windows usare `gradlew.bat`. Sostituire il segnaposto con il pin minuscolo di
 
 ## Verifiche effettive e limite
 
-Cinque test JVM con TLS 1.3/P-256/JCA reali: doppio `READY` prima di cleanup, codice errato/input oversize/non-ASCII, controllo assente, parametri invalidi e certificato diverso dal pin selezionato. CRLF Windows corretto dopo il primo test mirato fallito. Suite finale connettività: 52 riusciti, un multicast opt-in saltato. Avvio del task e rifiuto del pin invalido verificati (exit 1 atteso). CLI positiva con processo Apple, accessibilità del loopback dal simulatore e orchestrazione di pin/conferme **non ancora verificate**.
+Cinque test JVM con TLS 1.3/P-256/JCA reali: doppio `READY` prima di cleanup, codice errato/input oversize/non-ASCII, controllo assente, parametri invalidi e certificato diverso dal pin selezionato. CRLF Windows corretto dopo il primo test mirato fallito. Suite finale connettività: 52 riusciti, un multicast opt-in saltato. Avvio del task e rifiuto del pin invalido verificati (exit 1 atteso). Percorso positivo con processo Apple/loopback/selezioni/conferme verificato nella run opt-in riportata sotto; i casi negativi Apple/JVM restano da aggiungere.
 
 ## Controller e XCTest dedicati
 
@@ -44,4 +44,6 @@ Usare un simulatore usa-e-getta, non quello con dati personali: una terminazione
 
 `python3 -B .github/scripts/test-ios-bootstrap-interop.py`: 12 test del controller/launcher, con sostituti **solo nei test di orchestrazione** e sottoprocessi/TCP reali; ordine, pin/endpoint invalidi, confronto discordante/assente, `READY` prematuro, feature discordanti, exit fallito, output oversize/non-ASCII/extra, arresto del processo bloccato, token e limiti del server. Non sono test di crittografia o interoperabilità Apple.
 
-**Prossimo incremento unico:** eseguire una run manuale con `bootstrap_interop = true`, verificare compilazione ed effettivo successo del collegamento JVM ↔ iOS e correggere solo eventuali errori di quel percorso. La raggiungibilità del loopback del simulatore, espansione della variabile dello scheme e compatibilità reciproca dei provider OS rimangono da verificare con quella run. Non sostituire v0 e non dichiarare completati i collaudi fisici della fase 1.
+Aggiornamento 5 ottobre: [CI iOS ordinaria `a619f5e`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37231384877) riuscita: 38 XCTest ordinari/zero fallimenti, 12 test controller e nuovo target opt-in compilato (`TEST BUILD SUCCEEDED`). La successiva [run manuale con `bootstrap_interop = true`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37274723780), stesso commit, è **conclusa `success`**: XCTest interop passato in 62,312 s, `TEST SUCCEEDED` e messaggio del launcher `Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed`. Confermati pin selezionati prima di TLS, codice completo identico, prove accettate dai provider OS, doppia conferma, doppio `READY` e cleanup osservati. Riusciti anche 38 XCTest ordinari e 12 test controller. Verifica simulatore/JVM su macOS, non hardware/LAN/Android; nessun polling.
+
+**Prossimo incremento unico:** aggiungere il caso negativo Apple/JVM reale con codice completo discordante, rifiuto prima delle conferme, assenza di `APPROVE`/`READY` e chiusura/cleanup osservati. Non rifare il percorso positivo già verificato, non sostituire v0 e non dichiarare completati i collaudi fisici della fase 1.

@@ -1,4 +1,4 @@
-# Passaggio di consegne — 4 ottobre 2026
+# Passaggio di consegne — 5 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -10,9 +10,13 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 Scritto controller `.github/scripts/ios-bootstrap-interop.py` e XCTest dedicato `iosApp/InteropTests/BootstrapInteropTests.swift`, scheme `LanternBootstrapInterop`. Test di bootstrap isolato, pin espliciti prima di TLS, codice completo/due conferme, doppio `READY`, cleanup JVM osservato e namespace Apple eliminato. Nessuna modifica produzione/Kotlin/schema/wire/lock. Contratto e avvio macOS in `docs/COLLAUDO_BOOTSTRAP_INTEROP.md`.
 
-**Verificato localmente:** Python bundled `-B .github/scripts/test-ios-bootstrap-interop.py`, 12 test riusciti (controller con sostituti di test, sottoprocessi/TCP reali), revisione mirata e `git diff --check`. Nuovo Swift **non compilato/eseguito su Windows**, nessuna interoperabilità Apple/hardware dichiarata. Nessuna nuova build Kotlin/APK necessaria. CI `54e92f7` non consultata; ultima suite Apple effettivamente confermata resta 38 XCTest di `48dd53a`.
+**Verificato localmente:** Python bundled `-B .github/scripts/test-ios-bootstrap-interop.py`, 12 test riusciti (controller con sostituti di test, sottoprocessi/TCP reali). **CI `a619f5e` confermata il 5 ottobre:** [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37231384877) e [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37231384805) riuscite; 38 XCTest/zero fallimenti, 12 test controller e compilazione del nuovo target opt-in riusciti. Collegamento JVM/iOS non eseguito nella run ordinaria, nessuna prova hardware. Nessun nuovo test/build locale per sole modifiche Markdown.
 
-CI iOS selettiva ora compila il nuovo target e verifica il controller; non esegue questo collaudo a ogni push. **Prossimo incremento unico:** eseguire manualmente `Verify Lantern iOS` con `bootstrap_interop = true`, controllare compilazione e collegamento JVM/iOS, correggendo solo eventuali errori del percorso. Loopback simulatore, variabile nello scheme e compatibilità firme OS ancora da verificare. Polling vietato: non monitorare la run del push. Fase 1/collaudi fisici obbligatori aperti/rinviati.
+**Run manuale opt-in `37274723780` verificata riuscita:** [esito](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37274723780), commit `a619f5ec8c17c650905ab07d13a9523426e9553d`. XCTest interop passato in 62,312 s; `TEST SUCCEEDED` e messaggio finale del launcher attestano doppio `READY`, exit JVM 0, chiusura trasporto e cleanup namespace Apple. Stessa run: 38 XCTest ordinari/zero fallimenti, 12 test controller riusciti. Pin/loopback/variabile scheme/firme OS ora verificati **JVM macOS ↔ iOS simulatore**, non hardware o Android/Conscrypt. Non rifare il debug del percorso positivo.
+
+Nessuna correzione o nuova build necessaria per questa verifica; nessun polling. Aggiornamento dei tre documenti da pubblicare insieme al prossimo incremento di codice, evitando un push Markdown che avvierebbe una CI PoC ridondante.
+
+**Prossimo incremento unico:** test negativo interop JVM ↔ iOS con codice completo discordante, rifiuto senza conferme/`APPROVE`/`READY`, chiusura e cleanup osservati. Per ora i test negativi del controller usano sostituti di orchestrazione; non equivalgono a questo nuovo percorso su TLS reale Apple/JVM. Nessuna attivazione v1, trust o chat. Polling vietato; fase 1/collaudi fisici obbligatori aperti/rinviati.
 
 ## Storico — preparazione fixture JVM
 
