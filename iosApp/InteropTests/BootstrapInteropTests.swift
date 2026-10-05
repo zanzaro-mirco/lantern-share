@@ -9,6 +9,14 @@ import LanternUI
 /// Dedicated opt-in scheme. Uses actual OS keys/TLS and the existing Kotlin bootstrap owners.
 final class BootstrapInteropTests: XCTestCase {
     func testJVMAndIOSBootstrapWithExplicitComparisonAndObservedCleanup() throws {
+        try runBootstrap(expectMismatch: false)
+    }
+
+    func testDiscordantComparisonClosesWithoutApprovalOrReady() throws {
+        try runBootstrap(expectMismatch: true)
+    }
+
+    private func runBootstrap(expectMismatch: Bool) throws {
         let config = ProcessInfo.processInfo.environment["LANTERN_INTEROP_CONTROL"] ?? ""
         let parts = config.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0] == "127.0.0.1",
@@ -76,7 +84,7 @@ final class BootstrapInteropTests: XCTestCase {
         }
         wait(for: [tlsReady], timeout: 10)
         let comparisonAvailable = expectation(description: "iOS comparison available")
-        let appleReady = expectation(description: "iOS bootstrap ready")
+        let appleReady = expectMismatch ? nil : expectation(description: "iOS bootstrap ready")
         let appleClosed = expectation(description: "iOS observed JVM transport cleanup")
         var comparison: (IosHandshakeV1Comparison, String)?
         var confirmed = false
@@ -87,13 +95,17 @@ final class BootstrapInteropTests: XCTestCase {
                 connection: client, identity: identity, transport: transport,
                 selectedPeerID: selectedPin, selectedAtMillis: selectedAt, queue: queue,
                 onSnapshot: { snapshot in
+                    if expectMismatch {
+                        XCTAssertFalse(snapshot.remoteApproved)
+                        XCTAssertNotEqual(snapshot.phase.name, "READY")
+                    }
                     if snapshot.phase.name == "READY" {
                         XCTAssertTrue(confirmed) // No READY before both explicit test UI actions.
                         XCTAssertTrue(snapshot.remoteApproved)
                         XCTAssertEqual(snapshot.negotiatedFeatures, ["receipts", "text"])
                         readyCount += 1
                         XCTAssertEqual(readyCount, 1)
-                        if readyCount == 1 { appleReady.fulfill() }
+                        if readyCount == 1 { appleReady?.fulfill() }
                     }
                 }, onComparison: { ticket, code in
                     XCTAssertNil(comparison)
@@ -102,11 +114,11 @@ final class BootstrapInteropTests: XCTestCase {
                 }, onClosed: { failure in
                     closedCount += 1
                     XCTAssertEqual(closedCount, 1)
-                    XCTAssertEqual(readyCount, 1)
+                    XCTAssertEqual(readyCount, expectMismatch ? 0 : 1)
                     switch failure {
                     case .transport: break
                     case .bootstrap(let reason): XCTAssertEqual(reason.name, "TRANSPORT")
-                    default: XCTFail("Expected JVM transport closure after both READY")
+                    default: XCTFail("Expected JVM transport closure")
                     }
                     if closedCount == 1 { appleClosed.fulfill() }
                 }
@@ -116,6 +128,27 @@ final class BootstrapInteropTests: XCTestCase {
         wait(for: [comparisonAvailable], timeout: 10)
         let current = try queue.sync { try XCTUnwrap(comparison) }
         XCTAssertEqual(current.1.count, 64)
+        if expectMismatch {
+            // Preserve the actual full transcript digest, then deliberately alter one character.
+            let changed = (current.1.first == "0" ? "1" : "0") + String(current.1.dropFirst())
+            let rejection = try exchange("MISMATCH \(current.1):\(changed)", port: controlPort, token: token)
+            guard rejection == "REJECTED COMPARISON" else { throw TestError.comparison }
+            wait(for: [appleClosed], timeout: 5)
+            try queue.sync {
+                XCTAssertFalse(confirmed)
+                XCTAssertEqual(readyCount, 0)
+                guard closedCount == 1 else { throw TestError.notClosed }
+                owner?.confirm(current.0) // Closed attempt: retained UI cannot resurrect progress.
+                owner?.start()
+                owner?.cancel()
+                XCTAssertEqual(closedCount, 1)
+                XCTAssertEqual(readyCount, 0)
+            }
+            cleanup()
+            let complete = try exchange("CLOSED TRANSPORT", port: controlPort, token: token)
+            XCTAssertEqual(complete, "COMPLETE")
+            return
+        }
         // The controller compares the complete JVM digest and performs only the JVM UI action.
         let approval = try exchange("COMPARE \(current.1)", port: controlPort, token: token)
         guard approval == "CONFIRM \(current.1)" else { throw TestError.comparison }
@@ -124,7 +157,8 @@ final class BootstrapInteropTests: XCTestCase {
             confirmed = true
             owner?.confirm(current.0) // Only the original iOS-owned ticket, never one from the host.
         }
-        wait(for: [appleReady], timeout: 10)
+        let requiredReady = try XCTUnwrap(appleReady)
+        wait(for: [requiredReady], timeout: 10)
         guard queue.sync(execute: { readyCount == 1 }) else { throw TestError.notReady }
         let bothReady = try exchange("READY receipts,text", port: controlPort, token: token)
         XCTAssertEqual(bothReady, "READY receipts,text")

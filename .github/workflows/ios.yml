@@ -51,6 +51,11 @@ on:
         description: 'Run opt-in real JVM/iOS bootstrap interoperability on simulator'
         type: boolean
         default: false
+      bootstrap_scenario:
+        description: 'Opt-in bootstrap scenario'
+        type: choice
+        options: [success, mismatch]
+        default: success
 permissions:
   contents: read
 jobs:
@@ -95,9 +100,11 @@ jobs:
         run: xcodebuild -project iosApp/Lantern.xcodeproj -scheme LanternBootstrapInterop -configuration Debug -destination 'generic/platform=iOS Simulator' -onlyUsePackageVersionsFromResolvedFile CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build-for-testing
       - name: Test opt-in JVM and iOS bootstrap interoperability
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_interop }}
+        env:
+          BOOTSTRAP_SCENARIO: ${{ inputs.bootstrap_scenario }}
         run: |
           device_id=$(xcrun simctl create LanternBootstrapInterop com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-4)
-          python3 -B .github/scripts/ios-bootstrap-interop.py --device-id "$device_id"
+          python3 -B .github/scripts/ios-bootstrap-interop.py --device-id "$device_id" --scenario "$BOOTSTRAP_SCENARIO"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

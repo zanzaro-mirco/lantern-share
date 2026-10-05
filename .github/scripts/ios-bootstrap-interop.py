@@ -16,6 +16,10 @@ import uuid
 
 PIN = re.compile(r"[0-9a-f]{64}")
 MAX_LINE = 256
+SCENARIOS = {
+    "success": "testJVMAndIOSBootstrapWithExplicitComparisonAndObservedCleanup",
+    "mismatch": "testDiscordantComparisonClosesWithoutApprovalOrReady",
+}
 
 
 class FixtureProcess:
@@ -66,9 +70,9 @@ class FixtureProcess:
         self.process.stdin.write((command + "\n").encode("ascii"))
         self.process.stdin.flush()
 
-    def finish(self):
-        if self.process.wait(timeout=5) != 0:
-            raise RuntimeError("Fixture failed after cleanup acknowledgement")
+    def finish(self, expected_exit=0):
+        if self.process.wait(timeout=5) != expected_exit:
+            raise RuntimeError("Unexpected fixture exit after terminal event")
         self.reader.join(timeout=5)
         if self.reader.is_alive() or self.reader_failure is not None:
             raise RuntimeError("Fixture output did not finish cleanly")
@@ -107,8 +111,11 @@ class FixtureProcess:
 class Controller:
     """Serial rendezvous. Pins/codes come from test owners, not discovery or TLS TOFU."""
 
-    def __init__(self, launch):
+    def __init__(self, launch, scenario="success"):
+        if scenario not in SCENARIOS:
+            raise ValueError("Invalid interop scenario")
         self.launch = launch
+        self.scenario = scenario
         self.fixture = None
         self.phase = "SELECT"
         self.failure = None
@@ -129,8 +136,22 @@ class Controller:
                         or not parts[2].isascii() or not parts[2].isdigit()
                         or not 1 <= int(parts[2]) <= 65535 or not PIN.fullmatch(parts[3])):
                     raise ValueError("Invalid fixture endpoint")
-                self.phase = "COMPARE"
+                self.phase = "MISMATCH" if self.scenario == "mismatch" else "COMPARE"
                 return event
+            if command == "MISMATCH":
+                codes = argument.split(":")
+                if len(codes) != 2 or not all(PIN.fullmatch(code) for code in codes) or codes[0] == codes[1]:
+                    raise ValueError("Invalid negative comparison fixture")
+                original, altered = codes
+                if self.fixture.event(10) != "COMPARISON " + original:
+                    raise ValueError("Original comparison codes differ")
+                # Deliberately invalid test UI input. The JVM MUST reject before owner.confirm().
+                self.fixture.send("CONFIRM " + altered)
+                if self.fixture.event(10) != "REJECTED COMPARISON":
+                    raise ValueError("Fixture did not reject the comparison")
+                self.fixture.finish(expected_exit=1)  # Marker alone or an arbitrary crash is insufficient.
+                self.phase = "CLOSED"
+                return "REJECTED COMPARISON"
             if command == "COMPARE":
                 if not PIN.fullmatch(argument):
                     raise ValueError("Invalid comparison code")
@@ -192,6 +213,7 @@ class ControlRequest(socketserver.StreamRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device-id", required=True, help="Existing disposable simulator UDID")
+    parser.add_argument("--scenario", choices=SCENARIOS, default="success")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("The integration launcher requires macOS/Xcode")
@@ -203,7 +225,7 @@ def main():
     controller = Controller(lambda pin: FixtureProcess([
         "bash", "./gradlew", ":connectivity:runHandshakeV1InteropFixture",
         "-PinteropPeerPin=" + pin, "--no-daemon", "--quiet", "--console=plain",
-    ], root))
+    ], root), scenario=args.scenario)
     with ControlServer(controller) as server:
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
@@ -214,6 +236,7 @@ def main():
             "-configuration", "Debug", "-destination", "platform=iOS Simulator,id=" + args.device_id,
             "-resultBundlePath", "build/ios-bootstrap-interop-" + uuid.uuid4().hex + ".xcresult",
             "-onlyUsePackageVersionsFromResolvedFile", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-",
+            "-only-testing:LanternBootstrapInteropTests/BootstrapInteropTests/" + SCENARIOS[args.scenario],
             "LANTERN_INTEROP_CONTROL=" + endpoint, "test",
         ]
         child = None
@@ -226,7 +249,10 @@ def main():
                 raise RuntimeError("Interop XCTest failed")
             if controller.phase != "COMPLETE":
                 raise RuntimeError("Interop control/cleanup did not complete")
-            print("Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed")
+            if args.scenario == "mismatch":
+                print("Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed")
+            else:
+                print("Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed")
         finally:
             if child is not None and child.poll() is None:
                 try:

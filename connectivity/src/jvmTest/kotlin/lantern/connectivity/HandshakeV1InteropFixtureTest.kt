@@ -3,6 +3,8 @@ package lantern.connectivity
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.io.PrintStream
@@ -50,15 +52,43 @@ class HandshakeV1InteropFixtureTest {
             withFixture { peer ->
                 val ticket = assertNotNull(peer.owner.comparison())
                 assertEquals("COMPARISON ${digest(ticket.bytes)}", peer.events.readLine())
+                val waiting = assertIs<ProtocolHandshakeState.AwaitingConfirmation>(
+                    assertIs<HandshakeV1ConnectionState.Active>(peer.owner.state).handshake,
+                )
+                assertFalse(waiting.remoteApproved)
                 peer.commands.println(command)
                 val error = assertFailsWith<ExecutionException> { peer.result.get(5, TimeUnit.SECONDS) }
-                if (command.startsWith("CONFIRM 0")) assertIs<IllegalStateException>(error.cause)
-                else assertIs<IOException>(error.cause)
+                if (command.startsWith("CONFIRM 0")) {
+                    assertIs<IllegalStateException>(error.cause)
+                    assertEquals("REJECTED COMPARISON", peer.events.readLine())
+                } else assertIs<IOException>(error.cause)
                 assertFailsWith<IOException> { peer.owner.readNext() }
+                assertEquals(HandshakeV1ConnectionFailure.Io, assertIs<HandshakeV1ConnectionState.Closed>(peer.owner.state).reason)
                 assertTrue(peer.socket.isClosed)
                 assertFalse(peer.owner.confirm(ticket))
             }
         }
+    }
+
+    @Test
+    fun cleanupFailureCannotPublishExpectedRejectionMarker() = withFixture(controlInputWrapper = { input ->
+        object : FilterInputStream(input) {
+            override fun close() {
+                super.close()
+                throw IOException("Injected control-input cleanup failure")
+            }
+        }
+    }) { peer ->
+        val ticket = assertNotNull(peer.owner.comparison())
+        assertEquals("COMPARISON ${digest(ticket.bytes)}", peer.events.readLine())
+        peer.commands.println("CONFIRM ${"0".repeat(64)}")
+        val error = assertFailsWith<ExecutionException> { peer.result.get(5, TimeUnit.SECONDS) }
+        val rejection = assertIs<IllegalStateException>(error.cause)
+        assertTrue(rejection.suppressed.any { it is IOException })
+        // The writer has finished: no rejection attestation may remain in the event pipe.
+        assertFalse(peer.events.ready())
+        assertFailsWith<IOException> { peer.owner.readNext() }
+        assertTrue(peer.socket.isClosed)
     }
 
     @Test
@@ -106,6 +136,7 @@ class HandshakeV1InteropFixtureTest {
     private fun withFixture(
         controlTimeoutMillis: Long = 10_000,
         selectedPeerPin: String? = null,
+        controlInputWrapper: (InputStream) -> InputStream = { it },
         block: (Peer) -> Unit,
     ) {
         val identity = createDesktopIdentity().identity()
@@ -118,7 +149,7 @@ class HandshakeV1InteropFixtureTest {
                     PipedInputStream().use { eventInput ->
                         PrintStream(PipedOutputStream(eventInput), true, Charsets.UTF_8).use { output ->
                             val result = workers.submit<HandshakeV1InteropFixture.Result> {
-                                HandshakeV1InteropFixture.run(selectedPeerPin ?: identity.id, controlInput, output, controlTimeoutMillis)
+                                HandshakeV1InteropFixture.run(selectedPeerPin ?: identity.id, controlInputWrapper(controlInput), output, controlTimeoutMillis)
                             }
                             val events = eventInput.bufferedReader(Charsets.UTF_8)
                             // Bound the initial event wait; all following reads are after TLS/frame progress.

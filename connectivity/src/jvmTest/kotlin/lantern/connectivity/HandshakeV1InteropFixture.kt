@@ -47,6 +47,7 @@ object HandshakeV1InteropFixture {
         val control = Executors.newSingleThreadExecutor { task ->
             Thread(task, "lantern-interop-fixture-control").apply { isDaemon = true }
         }
+        var rejection: ComparisonRejected? = null
         try {
             input.use {
                 val loopback = InetAddress.getByName("127.0.0.1")
@@ -75,7 +76,9 @@ object HandshakeV1InteropFixture {
                                     throw error.cause ?: error
                                 } finally { pending.cancel(true) }
                             }
-                            check(command() == "CONFIRM $code") { "Explicit fixture comparison rejected" }
+                            if (command() != "CONFIRM $code") {
+                                throw ComparisonRejected() // No signing/APPROVE for discordant test UI.
+                            }
                             check(owner.confirm(comparison)) { "Fixture confirmation rejected" }
                             check(owner.readNext()) { "Fixture peer approval rejected" }
                             val active = owner.state as? HandshakeV1ConnectionState.Active
@@ -90,11 +93,20 @@ object HandshakeV1InteropFixture {
                     }
                 }
             }
+        } catch (error: ComparisonRejected) {
+            // Never classify a resource-cleanup failure as a successful negative test.
+            if (error.suppressed.isNotEmpty()) throw error
+            rejection = error
         } finally {
             control.shutdownNow()
             scheduler.shutdownNow()
         }
+        val rejected = checkNotNull(rejection)
+        event(output, "REJECTED COMPARISON") // Only after resource cleanup, not a TLS frame.
+        throw rejected
     }
+
+    private class ComparisonRejected : IllegalStateException("Explicit fixture comparison rejected")
 
     private fun event(output: PrintStream, text: String) {
         output.println(text)

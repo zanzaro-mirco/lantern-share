@@ -18,12 +18,13 @@ ENDPOINT = "LISTENING 127.0.0.1 12345 " + "c" * 64
 
 
 class FakeFixture:
-    def __init__(self, events=None, fail_exit=False):
+    def __init__(self, events=None, fail_exit=False, exit_code=0):
         self.events = list(events if events is not None else [ENDPOINT, "COMPARISON " + CODE, "READY receipts,text"])
         self.commands = []
         self.finished = False
         self.closed = False
         self.fail_exit = fail_exit
+        self.exit_code = exit_code
 
     def event(self, timeout):
         return self.events.pop(0)
@@ -31,8 +32,8 @@ class FakeFixture:
     def send(self, command):
         self.commands.append(command)
 
-    def finish(self):
-        if self.fail_exit:
+    def finish(self, expected_exit=0):
+        if self.fail_exit or self.exit_code != expected_exit:
             raise RuntimeError("Test exit failure")
         self.finished = True
 
@@ -121,6 +122,53 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(fixture.commands, [])
         self.assertTrue(fixture.closed)
 
+    def test_negative_scenario_requires_typed_rejection_exit_one_and_cleanup(self):
+        fixture = FakeFixture([ENDPOINT, "COMPARISON " + CODE, "REJECTED COMPARISON"], exit_code=1)
+        controller = interop.Controller(lambda pin: fixture, scenario="mismatch")
+        self.addCleanup(controller.close)
+        controller.exchange("SELECT", PIN)
+        changed = "0" + CODE[1:]
+        self.assertEqual(controller.exchange("MISMATCH", CODE + ":" + changed), "REJECTED COMPARISON")
+        self.assertEqual(fixture.commands, ["CONFIRM " + changed])
+        self.assertTrue(fixture.finished)
+        self.assertEqual(controller.phase, "CLOSED")
+        self.assertEqual(controller.exchange("CLOSED", "TRANSPORT"), "COMPLETE")
+
+    def test_negative_scenario_is_not_available_in_positive_controller(self):
+        controller, fixture, _ = self.make_controller()
+        controller.exchange("SELECT", PIN)
+        with self.assertRaises(ValueError):
+            controller.exchange("MISMATCH", CODE + ":" + "d" * 64)
+        self.assertEqual(fixture.commands, [])
+        self.assertTrue(fixture.closed)
+
+    def test_negative_scenario_rejects_same_codes_wrong_original_and_wrong_marker(self):
+        cases = [
+            (CODE + ":" + CODE, "COMPARISON " + CODE, "REJECTED COMPARISON"),
+            (CODE + ":" + "d" * 64, "COMPARISON " + "e" * 64, "REJECTED COMPARISON"),
+            (CODE + ":" + "d" * 64, "COMPARISON " + CODE, "READY receipts,text"),
+            (CODE + ":invalid", "COMPARISON " + CODE, "REJECTED COMPARISON"),
+        ]
+        for codes, comparison, terminal in cases:
+            fixture = FakeFixture([ENDPOINT, comparison, terminal], exit_code=1)
+            controller = interop.Controller(lambda pin: fixture, scenario="mismatch")
+            controller.exchange("SELECT", PIN)
+            with self.assertRaises(ValueError):
+                controller.exchange("MISMATCH", codes)
+            self.assertTrue(fixture.closed)
+            self.assertFalse(fixture.finished)
+            self.assertIsNotNone(controller.failure)
+
+    def test_rejection_marker_with_success_or_arbitrary_exit_is_not_negative_success(self):
+        for exit_code in [0, 2]:
+            fixture = FakeFixture([ENDPOINT, "COMPARISON " + CODE, "REJECTED COMPARISON"], exit_code=exit_code)
+            controller = interop.Controller(lambda pin: fixture, scenario="mismatch")
+            controller.exchange("SELECT", PIN)
+            with self.assertRaises(RuntimeError):
+                controller.exchange("MISMATCH", CODE + ":" + "d" * 64)
+            self.assertTrue(fixture.closed)
+            self.assertNotEqual(controller.phase, "CLOSED")
+
 
 class ProcessTests(unittest.TestCase):
     def launch(self, script):
@@ -154,6 +202,17 @@ class ProcessTests(unittest.TestCase):
         fixture.close()
         self.assertIsNotNone(fixture.process.poll())
         self.assertFalse(fixture.reader.is_alive())
+
+    def test_expected_exit_one_must_be_explicit_and_other_exits_still_fail(self):
+        fixture = self.launch("import sys; print('REJECTED COMPARISON'); sys.exit(1)")
+        self.assertEqual(fixture.event(5), "REJECTED COMPARISON")
+        with self.assertRaises(RuntimeError):
+            fixture.finish()
+        fixture.finish(expected_exit=1)
+        other = self.launch("import sys; print('REJECTED COMPARISON'); sys.exit(2)")
+        self.assertEqual(other.event(5), "REJECTED COMPARISON")
+        with self.assertRaises(RuntimeError):
+            other.finish(expected_exit=1)
 
 
 class ServerTests(unittest.TestCase):

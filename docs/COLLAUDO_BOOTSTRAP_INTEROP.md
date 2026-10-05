@@ -10,7 +10,7 @@ Il controller deve ottenere il pin pubblico dell'identità Apple di test e selez
 ./gradlew :connectivity:runHandshakeV1InteropFixture -PinteropPeerPin=PIN_APPLE_64_HEX --quiet --console=plain
 ```
 
-Su Windows usare `gradlew.bat`. Sostituire il segnaposto con il pin minuscolo di 64 caratteri effettivamente selezionato. Il controller deve tenere stdin aperto, leggere stdout senza bloccare il processo e limitarne la durata complessiva; non avviare questa fixture come servizio persistente. stderr/exit non zero indicano fallimento, mai successo parziale. Il formato sotto è controllo del test, **non wire v1**, e non viene utilizzato dall'app.
+Su Windows usare `gradlew.bat`. Sostituire il segnaposto con il pin minuscolo di 64 caratteri effettivamente selezionato. Il controller deve tenere stdin aperto, leggere stdout senza bloccare il processo e limitarne la durata complessiva; non avviare questa fixture come servizio persistente. Nel percorso positivo stderr/exit non zero indicano fallimento, mai successo parziale; il caso negativo sotto richiede invece un marker specifico ed exit 1 esatto. Il formato sotto è controllo del test, **non wire v1**, e non viene utilizzato dall'app.
 
 ## Controllo del test
 
@@ -22,7 +22,7 @@ Su Windows usare `gradlew.bat`. Sostituire il segnaposto con il pin minuscolo di
 
 ## Verifiche effettive e limite
 
-Cinque test JVM con TLS 1.3/P-256/JCA reali: doppio `READY` prima di cleanup, codice errato/input oversize/non-ASCII, controllo assente, parametri invalidi e certificato diverso dal pin selezionato. CRLF Windows corretto dopo il primo test mirato fallito. Suite finale connettività: 52 riusciti, un multicast opt-in saltato. Avvio del task e rifiuto del pin invalido verificati (exit 1 atteso). Percorso positivo con processo Apple/loopback/selezioni/conferme verificato nella run opt-in riportata sotto; i casi negativi Apple/JVM restano da aggiungere.
+Sei test JVM con TLS 1.3/P-256/JCA reali: doppio `READY` prima di cleanup, codice errato/input oversize/non-ASCII, controllo assente, parametri invalidi, certificato diverso dal pin selezionato e cleanup fallito senza falso marker di rifiuto. CRLF Windows corretto nel primo incremento. Suite corrente connettività: 53 riusciti, un multicast opt-in saltato. Avvio del task e rifiuto del pin invalido già verificati (exit 1 atteso). Percorso positivo con processo Apple/loopback/selezioni/conferme verificato nella run opt-in riportata sotto; nuovo caso negativo Apple/JVM scritto ma non ancora compilato/eseguito.
 
 ## Controller e XCTest dedicati
 
@@ -36,14 +36,26 @@ Lo XCTest crea un'identità OS in un namespace Keychain casuale e passa il pin p
 
 Il canale di controllo non cifrato è esclusivamente locale, con token UUID per run, riga ASCII massima 256 byte e ordine rigido. Non trasporta chiavi/prove/contenuti. I due collegamenti di controllo e bootstrap non sono intercambiabili. Un errore del controller impedisce riuso/conferme; timeout/process exit non zero/output inatteso falliscono il collaudo. I processi macOS sono gruppi separati; `--no-daemon` impedisce al JavaExec di sfuggire alla proprietà del launcher. Cleanup su errore termina anche i processi e chiude pipe/reader; Apple ripulisce soltanto il namespace creato dal test tramite `defer`. Lo XCTest non configurato fallisce, non viene saltato.
 
-Il target è distinto dalla suite ordinaria: la CI iOS selettiva **compila** anche questo XCTest, ma non avvia il collaudo JVM/iOS a ogni push. Per eseguirlo, avviare manualmente **Verify Lantern iOS → Run workflow → bootstrap_interop = true**. Il parametro vale solo per workflow_dispatch; le run ordinarie non eseguono l'interoperabilità. Risultati nativi nel relativo `.xcresult` dell'artefatto `ios-verification`. Nessun polling CI.
+Il target è distinto dalla suite ordinaria: la CI iOS selettiva **compila** gli XCTest opt-in, ma non avvia il collaudo JVM/iOS a ogni push. Per eseguirlo, avviare manualmente **Verify Lantern iOS → Run workflow → bootstrap_interop = true**, scegliendo `bootstrap_scenario = success` (default) oppure `mismatch`. Il parametro vale solo per workflow_dispatch; le run ordinarie non eseguono l'interoperabilità. Il launcher seleziona il solo XCTest pertinente, non salta test falliti. Risultati nativi nel relativo `.xcresult` dell'artefatto `ios-verification`. Nessun polling CI.
 
 Usare un simulatore usa-e-getta, non quello con dati personali: una terminazione forzata di xcodebuild/runner può impedire il `defer` nel processo Apple. In quel caso il cleanup Keychain non è attestato e il simulatore isolato va rimosso da chi lo ha creato; il launcher non cancella un device ricevuto dal chiamante. La run non è superata senza attestazione di cleanup e XCTest riuscito.
 
 ## Evidenze del controller e prossimo passo
 
-`python3 -B .github/scripts/test-ios-bootstrap-interop.py`: 12 test del controller/launcher, con sostituti **solo nei test di orchestrazione** e sottoprocessi/TCP reali; ordine, pin/endpoint invalidi, confronto discordante/assente, `READY` prematuro, feature discordanti, exit fallito, output oversize/non-ASCII/extra, arresto del processo bloccato, token e limiti del server. Non sono test di crittografia o interoperabilità Apple.
+`python3 -B .github/scripts/test-ios-bootstrap-interop.py`: ora **17 test** del controller/launcher, con sostituti **solo nei test di orchestrazione** e sottoprocessi/TCP reali; ordine, pin/endpoint invalidi, confronto discordante/assente, `READY` prematuro, feature discordanti, exit fallito, output oversize/non-ASCII/extra, arresto del processo bloccato, token e limiti del server. Nuove regressioni: negativo isolato dal positivo, codici originali/alterati validati, marker/exit richiesti congiuntamente, exit non zero esplicito su sottoprocesso reale. Non sono test di crittografia o interoperabilità Apple.
 
 Aggiornamento 5 ottobre: [CI iOS ordinaria `a619f5e`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37231384877) riuscita: 38 XCTest ordinari/zero fallimenti, 12 test controller e nuovo target opt-in compilato (`TEST BUILD SUCCEEDED`). La successiva [run manuale con `bootstrap_interop = true`](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37274723780), stesso commit, è **conclusa `success`**: XCTest interop passato in 62,312 s, `TEST SUCCEEDED` e messaggio del launcher `Bootstrap JVM/iOS: both READY and transport/namespace cleanup observed`. Confermati pin selezionati prima di TLS, codice completo identico, prove accettate dai provider OS, doppia conferma, doppio `READY` e cleanup osservati. Riusciti anche 38 XCTest ordinari e 12 test controller. Verifica simulatore/JVM su macOS, non hardware/LAN/Android; nessun polling.
 
-**Prossimo incremento unico:** aggiungere il caso negativo Apple/JVM reale con codice completo discordante, rifiuto prima delle conferme, assenza di `APPROVE`/`READY` e chiusura/cleanup osservati. Non rifare il percorso positivo già verificato, non sostituire v0 e non dichiarare completati i collaudi fisici della fase 1.
+## Caso negativo di confronto (implementato, Apple da verificare)
+
+```text
+python3 -B .github/scripts/ios-bootstrap-interop.py --device-id UDID_SIMULATORE --scenario mismatch
+```
+
+Lo XCTest `testDiscordantComparisonClosesWithoutApprovalOrReady` riusa preparazione TLS/Keychain del positivo, ma non conferma il ticket iOS. Il controller di scenario richiede `MISMATCH <codiceOriginale>:<codiceAlterato>` dopo `SELECT`: entrambi sono digest completi validi/diversi, e l'originale deve corrispondere esattamente a `COMPARISON` JVM. Solo nel test negativo invia `CONFIRM <codiceAlterato>` alla fixture: questa pubblica `REJECTED COMPARISON` e termina con errore **prima di chiamare il proprietario per firma/APPROVE**. Sono necessari sia marker sia exit 1 e reader terminato correttamente; qualsiasi `READY`, marker errato, timeout, exit 0/altro fallisce. Non si accetta un crash generico come prova del rifiuto.
+
+Apple richiede `remoteApproved=false` su ogni snapshot, nessun `READY` e chiusura trasporto una sola volta. Verifica che il vecchio ticket/start/cancel non riaprano l'istanza, ripulisce il namespace e attesta `CLOSED TRANSPORT`. Soltanto questo percorso completo permette `COMPLETE`/successo di xcodebuild/launcher. Il marker JVM viene pubblicato soltanto dopo cleanup di proprietario/socket/listener/input/executor; eccezioni di cleanup, incluse quelle soppresse da `use`, impediscono il marker. La fixture JVM mostra un fallimento Gradle intenzionale dovuto al comando invalido; il controller non ignora fallimenti arbitrari di compilazione, TLS o protocollo. Nessuna modifica alla gestione degli errori di produzione.
+
+JVM locale: 53 test riusciti/un multicast opt-in saltato, incluse le sei fixture con nuove asserzioni sul marker/rifiuto/chiusura I/O e regressione su cleanup fallito che impedisce il marker. Nuovo XCTest **scritto/rivisto, non compilato/eseguito su Windows**. Non usare il successo positivo precedente come evidenza del negativo.
+
+**Prossimo incremento unico:** verificare la CI conclusa della nuova revisione e avviare la run manuale `bootstrap_interop=true`, `bootstrap_scenario=mismatch`, poi correggere solo eventuali problemi del percorso. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.

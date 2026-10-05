@@ -1,6 +1,18 @@
 # Stato sviluppo — 5 ottobre 2026
 
-## Sintesi corrente — bootstrap JVM ↔ iOS verificato in simulatore
+## Sintesi corrente — caso negativo di confronto interop preparato
+
+Incremento circoscritto solo fixture/test: nuovo XCTest `testDiscordantComparisonClosesWithoutApprovalOrReady`, riuso della stessa preparazione TLS/Keychain e selezione pin del caso positivo. Codice completo originale passato al controller insieme alla variante di un carattere; il controller richiede prima che l'originale coincida col digest JVM, poi invia il comando volutamente invalido alla fixture. Richiesti evento `REJECTED COMPARISON` e **exit 1 esatto**, prima di ogni `owner.confirm`; un crash/timeout generico o `READY` non valgono come rifiuto atteso. Apple non conferma, richiede `remoteApproved=false` in ogni snapshot, nessun `READY`, chiusura per trasporto una sola volta, vecchi ticket inefficaci e cleanup prima di `COMPLETE`.
+
+Scenario launcher/CI opt-in `mismatch`, distinto da `success`, con selezione di un solo XCTest per run. Controllo negativo non disponibile nel controller positivo. Nessun parser/protocollo Swift, modifica produzione, wire v0, identità persistenti, schema o versioni/lock. Aggiunto soltanto un evento di controllo in jvmTest, non un frame TLS. Il fallimento della fixture JVM è intenzionale **solo con marker ed exit attesi**, mai un errore di build/crypto arbitrario ignorato.
+
+**Verifiche locali Windows:** Python bundled `-B .github/scripts/test-ios-bootstrap-interop.py`, **17 test riusciti** (cinque nuovi), compreso exit 1 esplicito di sottoprocesso reale e rifiuto di marker/exit incoerenti. `.\gradlew.bat :connectivity:jvmTest --console=plain`, JDK 17/cache utente espliciti: esecuzione finale riuscita in 18 s, **53 test riusciti, un multicast opt-in saltato**, sei fixture JVM reali incluse. Nuova regressione con errore iniettato nella chiusura dell'input: eccezione conservata/soppressa da `use`, nessun marker di rifiuto pubblicato, socket comunque chiusa. Il marker viene emesso solo dopo cleanup riuscito, non per un errore arbitrario. Prima esecuzione 48 s dopo avvio daemon, ripetizioni soltanto dopo nuove asserzioni/revisione cleanup/test correlato. `git diff --check` riuscito. Nessun APK/target Android ricostruito: produzione invariata.
+
+**Nuovo Swift scritto/rivisto, non compilato/eseguito su Windows.** Ultima prova Apple/JVM effettiva resta il caso positivo di `a619f5e`, run `37274723780` riuscita. La nuova CI deve compilare entrambi gli XCTest; il negativo resta da eseguire in run manuale con `bootstrap_interop=true`, `bootstrap_scenario=mismatch`. Polling vietato; CI del push non monitorata. Evidenze precedenti `1cad438` pubblicate insieme a questo incremento. Fase 0 chiusa; fase 1 e collaudi fisici obbligatori aperti/rinviati.
+
+**Un solo prossimo incremento:** verificare la CI conclusa della nuova revisione e avviare il collaudo manuale `mismatch`; correggere soltanto eventuali errori di questo percorso, senza attivare v1 nel servizio o concedere trust/chat.
+
+## Storico — bootstrap positivo JVM ↔ iOS verificato in simulatore
 
 Incremento solo infrastruttura di collaudo: controller Python standard library su TCP loopback, processo JVM posseduto con stdout/stdin limitati e gruppo separato macOS (`--no-daemon`), XCTest in target/scheme dedicato `LanternBootstrapInterop`. Pin selezionati prima di TLS, identità Apple isolata in Keychain e JVM effimera, codice completo confrontato, azioni UI distinte con ticket propri, doppio `READY` prima di `CLOSE`, exit JVM 0 e chiusura osservata da Apple prima di cleanup/`COMPLETE`. Nessuna modifica al servizio/produzione, wire, schema, identità persistenti o versioni/lock.
 
