@@ -13,6 +13,56 @@ L'appartenenza futura sarà legata al gruppo, non a SSID, IP o sessione LAN, cos
 - collegamento al processo di ammissione e alle conferme esplicite previste, senza promozione da mDNS o dal solo `READY`;
 - gestione dell'emittente iniziale, delle ammissioni delegate e del completamento recuperabile, prima di integrare trust e database.
 
-Nessuno di questi passaggi viene simulato in produzione o dichiarato implementato da questo incremento. Il confronto non include un contatore d'ammissione alla sessione: esclusione della cronologia anteriore e destinatari dei messaggi restano regole separate da implementare.
+Il formato e il controllo di firma isolati descritti sotto sono ora implementati. Non sono ancora implementati la prova di appartenenza dell'emittente, l'origine del gruppo, il processo di ammissione recuperabile o l'integrazione trust/database. Il confronto non include un contatore d'ammissione alla sessione: esclusione della cronologia anteriore e destinatari dei messaggi restano regole separate da implementare.
 
 Verifica: nove casi comuni per corrispondenza, sostituzioni dei tre campi, inversione dei ruoli, auto-ammissione, campi/contesto vuoti e confronto senza normalizzazione. Eseguiti con `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`; includendo le otto regressioni sessione, 17 test per target. Test unitari Android su JVM, non hardware; Native richiede checkpoint manuale. Nessuna migrazione SQLite, modifica wire, versione o lock.
+
+## Formato isolato v1
+
+`GroupAdmissionCodec` codifica quattro campi obbligatori, nell'ordine canonico `version`, `group`, `issuer`, `member`. Versione esattamente il numero JSON `1`: stringhe, spellings numerici alternativi e versioni sconosciute sono rifiutati. Nessun fallback al wire 0.
+
+Tutti e tre gli ID sono esattamente 64 caratteri esadecimali minuscoli. Il gruppo rappresenta un valore casuale da 256 bit, indipendente da rete e dispositivo; le identità mantengono il pin SHA-256 del DER del certificato. Si riusa la validazione sintattica esistente, non la semantica del certificato per il gruppo. Generazione casuale e verifica certificati non sono eseguite dal codec. Il modello di dominio rimane opaco; è il confine protocollo a imporre queste rappresentazioni.
+
+Payload unsigned: massimo 512 byte UTF-8, profondità JSON massima 1. Payload `SignedGroupAdmissionCodec`: massimo 1024 byte, profondità 2, due campi obbligatori `claim` e `signature`:
+
+```json
+{"claim":{"version":1,"group":"<64 hex>","issuer":"<64 hex>","member":"<64 hex>"},"signature":"<Base64 canonico>"}
+```
+
+L'esempio usa segnaposto, non è un payload valido. La versione appartiene alla dichiarazione annidata: un secondo campo `version` esterno è sconosciuto e rifiutato. Il serializer annidato è lo stesso di quello unsigned, non una seconda implementazione della validazione. Il limite del documento annidato è quello dell'envelope completo; il limite standalone di 512 byte non è un secondo limite sul whitespace interno all'envelope.
+
+Ordine/whitespace/escape JSON validi non cambiano la dichiarazione né i byte da firmare. Duplicati, anche con nomi escaped equivalenti, campi mancanti/sconosciuti, tipi errati e auto-ammissione sono rifiutati. Dimensione, UTF-8 rigoroso e profondità sono controllati prima della deserializzazione. Il test di profondità è deliberatamente **entro il limite di byte**, per non confonderlo con il rifiuto oversize; UTF-8 invalido richiede `CharacterCodingException`, secondo la [API Kotlin](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/decode-to-string.html), non un generico errore di runtime.
+
+La firma usa Base64 standard canonico, 4–256 caratteri, con padding/bit inutilizzati corretti. La regola sintattica è condivisa con APPROVE, la cui API/semantica rimane invariata. La sintassi accetta anche byte che non sono una firma DER/ECDSA valida: `SignedGroupAdmission` è un contenitore **non verificato**, non un'autorizzazione.
+
+## Byte canonici e vettore
+
+`GroupAdmissionCodec.signedBytes` concatena campi con prefisso `lunghezzaDecimaleUTF8:valore`, senza separatori aggiuntivi, in quest'ordine:
+
+1. `lantern-group-admission-1`;
+2. `1`;
+3. gruppo;
+4. emittente;
+5. destinatario.
+
+Il dominio distinto impedisce confusione con transcript, APPROVE o firma wire 0. I ruoli non vengono ordinati: invertirli cambia i byte. Si firmano questi byte ricostruiti, **non il JSON ricevuto**. Le firme ECDSA SHA-256 DER rimangono compito delle API OS, non di un algoritmo Kotlin nuovo.
+
+Vettore pubblico indipendente (.NET SHA-256 e JCA): gruppo `c` × 64, emittente `a` × 64, destinatario `b` × 64. JSON canonico unsigned: 240 byte. Byte da firmare: 232 byte, prefisso `25:lantern-group-admission-11:1`, seguito dai tre campi `64:<ID>`. SHA-256: `3e3fcddb32360c5166a63cdfc093b17ab6043a7acf51755bae7e7ce40cb43029`.
+
+Le prove P-256 JVM reali verificano round-trip dell'envelope e rifiuto con chiave, gruppo, emittente, destinatario, direzione, versione o dominio cambiati. Non provano che gli ID fixture corrispondano a certificati reali, né interoperabilità Apple del nuovo formato.
+
+## Controllo di firma, non appartenenza
+
+`GroupAdmissionSignatureVerification.verify` riceve contesto atteso, fingerprint del certificato del firmatario e callback OS legata **alla chiave di quello stesso certificato**. Il contesto e il pin devono essere stabiliti indipendentemente dal payload; copiare i campi ricevuti nei parametri non è una verifica d'identità o di gruppo.
+
+Prima di chiamare il verificatore controlla gruppo/emittente/destinatario e pin dell'emittente; poi passa i byte canonici e la firma. Firma invalida → `InvalidSignature`; errori inattesi dell'adattatore propagati, mai trasformati in successo. L'adattatore deve restituire false per DER/firme invalide riconosciute dal verificatore OS. I test comuni usano un sostituto solo per provare ordine/binding/errori; quelli JVM usano firme P-256 reali.
+
+`VerifiedSignature` significa esclusivamente corrispondenza e firma verificata sul certificato dichiarato dal contratto dell'adattatore. **Non prova che l'emittente sia membro autorizzato**, non fonda il gruppo, non attesta conferme, non rende recuperabile il commit, non autorizza messaggi e non scrive trust. Una credenziale persistente può legittimamente essere ripresentata al cambio rete; la firma da sola non è protezione anti-replay del processo interattivo.
+
+Prima dell'attivazione servirà una radice di gruppo verificabile e una catena di ammissioni delegate senza autorizzazioni circolari, oltre a conferme esplicite, completamento recuperabile e rispetto dei blocchi locali. Nessun certificato sconosciuto va accettato automaticamente in base al solo envelope o a `VerifiedSignature`.
+
+Il verificatore è sincrono e senza stato: non possiede socket, timer o tentativi e non rende immutabile l'autorizzazione del contesto. Il futuro proprietario deve mantenere il legame tra risultato, dichiarazione e tentativo corrente, e ricontrollare appartenenza/blocco/uscita dal gruppo prima del commit. Un risultato conservato non deve ripristinare una selezione cancellata o autorizzare un'altra dichiarazione. La gestione di questa concorrenza non è implementata dal codec.
+
+## Verifica attuale
+
+Nuovi test: 11 codec unsigned, 7 envelope, 5 verificatore comune, 3 JVM con SHA-256/P-256 reali. Suite protocollo con regressioni esistenti: **126 JVM, 119 unit Android**, zero errori/fallimenti/skipped. Native e integrazione Apple del nuovo codice non ancora eseguiti; test comuni inclusi nel checkpoint iOS manuale già esistente. Formato completamente isolato dal servizio PoC, schema SQLite e identità invariati.

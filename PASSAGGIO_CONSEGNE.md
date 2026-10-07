@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI precedente `36dccfb` verificata `success`:** [iOS 37681054399](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054399) e [Android/desktop 37681054347](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054347). Modalità rapida, non checkpoint Native/XCTest. Nessun polling; vecchio bootstrap interop già verificato nel checkpoint `37489690697`, non rilanciarlo senza regressione.
+
+**Implementato nel nuovo incremento:** `GroupAdmissionCodec` v1, envelope `SignedGroupAdmissionCodec`, byte canonici separati da wire 0/HELLO/APPROVE e `GroupAdmissionSignatureVerification`. Group/issuer/member 64 hex minuscoli; payload 512/1024 byte, JSON rigoroso/UTF-8/profondità/duplicati/versioni. Base64 condiviso con APPROVE, API/semantica conservate. Contesto e fingerprint del firmatario controllati prima del callback OS; firma invalida rifiutata, errori/cancellazione propagati. `VerifiedSignature` non è appartenenza né conferma utente/trust. Formato/vettore SHA-256 e limiti in `docs/AMMISSIONE_GRUPPO.md`. Nessun chiamante di rete/UI, database, wire 0, identità/versioni/lock invariati.
+
+**Verificato locale:** protocollo **126 JVM/119 unit Android**, zero fallimenti/errori/skipped, inclusi 26 nuovi test (23 comuni/3 JCA P-256); integrazioni bootstrap TLS pertinenti **20 riuscite** (16 connection/4 TLS). JDK 17/cache esistente: `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :connectivity:jvmTest --tests '*HandshakeV1ConnectionTest' --tests '*HandshakeV1TlsTest' --console=plain`, finale 9 s. `:protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes` riusciti in 4 s; metadata non equivalgono a esecuzione Native. SHA-256 vettore confermato .NET/JCA; `git diff --check`. Nessun APK/pacchetto/versione nuova, iOS/Native del nuovo formato non ancora verificati.
+
+**Prossimo incremento unico:** definire la radice del gruppo e la verifica delle ammissioni delegate ancorate a un membro già autorizzato, senza cicli/auto-autorizzazione; non collegare il solo risultato firma al trust. Prima dell'attivazione serviranno anche conferme/completamento recuperabile, formato di rete esplicito e collaudi. Fase 1/collaudi fisici obbligatori aperti/rinviati. Nuova CI dopo push da consultare alla richiesta successiva, nessun polling.
+
+## Storico — dichiarazione di ammissione
+
 **CI `010b1cb` verificata `success`:** [iOS 37678092202](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092202) e [Android/desktop 37678092228](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092228). Solo modalità rapida: nuovo dominio compilato, test Native/esecuzione XCTest non attestati da queste run. Nessun polling.
 
 **Nuovo incremento implementato:** `GroupAdmissionClaim` non firmata e risultato `GroupAdmissionBinding`: gruppo/emittente/destinatario non vuoti, ruoli distinti, confronto esatto col contesto indipendente. `MATCHED` non concede trust, non verifica firma/appartenenza e non protegge da replay. Contratto/limiti in `docs/AMMISSIONE_GRUPPO.md`; creazione del gruppo distinta dall'auto-ammissione. Nessuna rete/UI/persistenza, wire/schema/identità/versioni/lock invariati.

@@ -1,6 +1,18 @@
 # Stato sviluppo — 7 ottobre 2026
 
-## Sintesi corrente — dichiarazione di ammissione al gruppo
+## Sintesi corrente — formato e verifica di firma delle ammissioni isolati
+
+**CI `36dccfb` verificata `success`:** [iOS 37681054399](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054399) e [Android/desktop 37681054347](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054347). Modalità rapida: non Native/XCTest. Nessun polling. Resta valida la prova bootstrap JVM/iOS del checkpoint `37489690697`, non confonderla con il nuovo formato.
+
+**Implementato:** payload unsigned versionato `GroupAdmissionCodec`, envelope `SignedGroupAdmissionCodec`, byte canonici con dominio `lantern-group-admission-1` e verificatore comune di firma legato a gruppo/emittente/destinatario attesi e fingerprint del certificato del firmatario. Versione numerica 1, ID 64 hex minuscoli, limiti 512/1024 byte, JSON/UTF-8/depth rigorosi, rifiuto duplicati anche escaped. Validator Base64 condiviso con APPROVE senza cambiare API/regole esistenti. Callback OS sulle stesse chiavi del certificato indipendentemente verificato; invalidità → rifiuto, errori/cancellazione propagati. `VerifiedSignature` non prova appartenenza/emissione autorizzata, conferme o commit e non concede trust. Nessun nuovo chiamante di rete/UI/persistenza. Schema SQLite, wire 0, identità/versioni/lock invariati; decisione/vettore/limiti in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato su Windows/JDK 17/cache utente:** protocollo **126 JVM/119 unit Android**, zero fallimenti/errori/skipped; 23 nuovi comuni e 3 JVM con P-256 reale, SHA-256 indipendente .NET/JCA. Regressioni byte binding, dominio/direzione/versione, sintassi Base64 vs firma reale, context/cert mismatch prima del verificatore, errori/cancellazione, JSON ostile/oversize/profondità **entro il limite byte**, UTF-8 con eccezione specifica. Ultimo comando: `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :connectivity:jvmTest --tests '*HandshakeV1ConnectionTest' --tests '*HandshakeV1TlsTest' --console=plain`, 9 s, anche **20 integrazioni TLS bootstrap riuscite** (16 connection/4 TLS). Ripetizioni mirate soltanto dopo nuove modifiche/test pertinenti; nessun push intermedio.
+
+Metadata/app: `./gradlew -Pandroid=true :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, riuscito in 4 s; precedente compilazione app/codec completa 12 s, primo codec 27 s dopo daemon. Metadata comuni compilati **non significano esecuzione Native**. Test P-256 usano identità fixture esplicite, non certificati reali/Keychain o credenziali utente. Nuovo codice non ancora verificato iOS/Native/CI/hardware; nessun APK/pacchetto superfluo. `git diff --check`.
+
+**Prossimo incremento unico:** radice del gruppo e verifica delle ammissioni delegate ancorate a un membro già autorizzato, senza cicli/auto-autorizzazione. Nessuna integrazione trust dal solo risultato firma; conferme/completamento recuperabile e collaudi necessari prima dell'attivazione. Fase 0 chiusa; fase 1/collaudi fisici obbligatori aperti/rinviati. Nuova CI da leggere alla prossima richiesta, nessun polling.
+
+## Storico — dichiarazione di ammissione al gruppo
 
 **CI precedente `010b1cb` verificata `success`:** [iOS 37678092202](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092202) e [Android/desktop 37678092228](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092228). Modalità rapida: compilazione del nuovo dominio riuscita, non esecuzione Native/XCTest. Nessun polling o nuovo checkpoint ridondante.
 

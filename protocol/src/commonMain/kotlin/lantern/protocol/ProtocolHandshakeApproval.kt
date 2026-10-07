@@ -9,14 +9,8 @@ data class ProtocolHandshakeApproval(val sender: String, val recipient: String, 
     }
 
     companion object {
-        const val MAX_SIGNATURE_LENGTH = 256
-        // Canonical padded standard Base64, including zero unused bits in the final sextet.
-        // The OS verifier, not this syntax check, validates DER and the ECDSA signature.
-        private val signaturePattern = Regex(
-            "(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?",
-        )
+        const val MAX_SIGNATURE_LENGTH = ProtocolSignatureEncoding.MAX_LENGTH
 
-        fun isValidSignature(value: String): Boolean =
-            value.length in 4..MAX_SIGNATURE_LENGTH && value.matches(signaturePattern)
+        fun isValidSignature(value: String): Boolean = ProtocolSignatureEncoding.isValid(value)
     }
 }
