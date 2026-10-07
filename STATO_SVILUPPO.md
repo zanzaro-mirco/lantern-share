@@ -1,6 +1,24 @@
-# Stato sviluppo — 5 ottobre 2026
+# Stato sviluppo — 7 ottobre 2026
 
-## Sintesi corrente — corretto prerequisito runtime della CI iOS rapida
+## Sintesi corrente — checkpoint iOS riuscito e regola di selezione sessione
+
+**Checkpoint [37489690697](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37489690697), commit `7e8c6dd`, concluso e verificato `success`:** Native protocollo/persistenza riusciti, 38 XCTest ordinari/zero fallimenti, tre scenari interop riusciti. Attestazioni finali del launcher: doppio READY/cleanup; confronto discordante senza READY/cleanup; cancellazione locale senza READY/chiusura di entrambi e cleanup. Riuso dei binari tramite batching/test-without-building ora verificato in macOS/iOS simulatore, non Android/LAN/hardware. Nessun polling, nessun nuovo rilancio.
+
+**Implementato:** primo incremento del dominio gruppi/sessioni, `SessionCandidate`/`SessionSelection`/`SessionSelector`: crea quando non ci sono sessioni attive del gruppo, converge deterministicamente tra vuote, privilegia l'unica utilizzata, richiede scelta esplicita tra più utilizzate. Duplicati deduplicati, osservazioni contraddittorie rifiutate, altri gruppi esclusi. Contratto dello snapshot corrente/autenticato e limiti in `docs/SESSIONI.md`. Nessuna integrazione di rete/UI/persistenza, credenziale o autorizzazione implicita; wire 0, identità, SQLite, versioni/lock preservati.
+
+**Verificato localmente:** JDK 17/cache esistente, `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, riuscito in 23 s: **otto test per target, zero fallimenti/errori/skipped**. Android unit test eseguiti sulla JVM, non su dispositivo. Python `-B .github/scripts/test-ci-plan.py`: 11 riusciti. Actionlint 1.7.12 senza diagnostica finale (indentazione YAML corretta dopo prima segnalazione), `git diff --check`. Test dominio inclusi nei comandi dei job esistenti, Native solo checkpoint. Nessun APK/build completa superflua. Nuovo codice dominio **non ancora verificato in Actions/Native/hardware**.
+
+**Prossimo incremento unico:** modello condiviso della credenziale di appartenenza al gruppo e invarianti emittente/destinatario/gruppo, ancora isolato dal wire 0. Formato firmato, verifica crittografica e versionamento devono precedere qualsiasi collegamento a rete/trust/persistenza. Fase 0 chiusa; fase 1/collaudi fisici obbligatori restano aperti/rinviati.
+
+## Storico — CI rapida riuscita, checkpoint interop avviato
+
+**Verificato il 6 ottobre:** [iOS 37378153720](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37378153720) e [Android/desktop 37378153747](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37378153747) concluse `success`, commit `7e8c6dd61a98a60c3ae693f0afa3f0c4d7a72844`. iOS: setup runtime, framework e compilazione app/XCTest ordinari/interop riusciti. Native/XCTest/interop non eseguiti nella modalità rapida; il verde non attesta il checkpoint completo. Nessuna prova hardware.
+
+Avviato una sola volta `gh workflow run ios.yml --repo zanzaro-mirco/lantern-share --ref main -f bootstrap_interop=true -f bootstrap_scenario=all`: [checkpoint 37489690697](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37489690697), sullo stesso commit. **Esito non verificato**, nessun polling/attesa. Deve verificare Native/XCTest e batching dei tre scenari con compilazione interop unica e `test-without-building`. Nessuna modifica produzione o nuova build locale; sole evidenze documentali da pubblicare col prossimo incremento coerente.
+
+**Un solo prossimo incremento:** leggere il checkpoint concluso e correggere eventuali regressioni; se pendente riportare link/commit e fermarsi. Dopo successo riprendere una funzionalità circoscritta del piano, non aggiungere altri micro-scenari bootstrap senza necessità. Fase 0 chiusa; fase 1/collaudi fisici obbligatori aperti/rinviati.
+
+## Storico — corretto prerequisito runtime della CI iOS rapida
 
 CI `e93354f`: [Android/desktop 37375240880](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375240880) conclusa `success`; [iOS 37375241073](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375241073) fallita soltanto in `Compile opt-in bootstrap XCTest without running it`, exit 70: destinazione generica simulatore non disponibile, `iOS 18.4 is not installed`. Piano/framework e compilazione del target ordinario passati; interop non compilato in questa run, nessun XCTest eseguito nella modalità rapida. Nessuna evidenza di regressione del prodotto o problema di visibilità del repository.
 

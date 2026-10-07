@@ -63,7 +63,7 @@ jobs:
         run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 --console=plain
       - name: Checkpoint Native protocol and persistence tests
         if: needs.plan.outputs.full == 'true'
-        run: bash ./gradlew :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
+        run: bash ./gradlew :domain:iosSimulatorArm64Test :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
       - name: Generate Xcode project
         run: |
           git clone --depth 1 --branch 2.43.0 https://github.com/yonaskolb/XcodeGen.git "$RUNNER_TEMP/XcodeGen"

@@ -1,4 +1,4 @@
-# Passaggio di consegne — 5 ottobre 2026
+# Passaggio di consegne — 7 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,24 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Checkpoint iOS `37489690697`/`7e8c6dd` verificato `success`:** Native protocollo/persistenza riusciti, 38 XCTest ordinari/zero fallimenti; tre scenari interop riusciti e attestazioni finali di doppio READY, rifiuto discordante senza READY, cancellazione locale senza READY e cleanup. Nuovo batching/test-without-building ora verificato in simulatore JVM macOS ↔ Apple, non hardware. Nessun polling o rilancio dei casi riusciti.
+
+**Implementato:** regola condivisa `SessionSelector`/`SessionSelection` nel dominio, descritta in `docs/SESSIONI.md`. Nessuna sessione attiva → creazione nuova; vuote → convergenza deterministica; una utilizzata → selezione; più utilizzate → scelta esplicita. Gruppi separati, deduplicazione e conflitti rifiutati. Solo snapshot corrente/autenticato, nessun archivio; non concede trust e non attiva v1 nel servizio. Wire/schema/identità/versioni/lock invariati.
+
+**Verificato localmente:** JDK 17/cache utente, `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, 23 s, otto test/zero errori per ciascun target (Android unit test su JVM, non telefono). 11 test piano CI riusciti; actionlint senza diagnostica dopo correzione dell'indentazione YAML; `git diff --check`. Test dominio aggiunti ai comandi CI esistenti, Native solo checkpoint. Nessuna nuova build APK/interazione UI/hardware, nuovo dominio non ancora verificato in Native/Actions.
+
+**Prossimo incremento unico:** modello condiviso della credenziale di appartenenza al gruppo e dei suoi invarianti (emittente/destinatario/gruppo), isolato dal wire 0; prima di collegarlo a rete/persistenza serviranno formato firmato/versionamento e verifica crittografica espliciti. Nessuna promozione da READY o mDNS. Fase 1/collaudi fisici obbligatori restano aperti/rinviati.
+
+## Storico — avvio del checkpoint completo
+
+**CI rapida `7e8c6dd` verificata riuscita:** [iOS 37378153720](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37378153720) e [Android/desktop 37378153747](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37378153747), SHA `7e8c6dd61a98a60c3ae693f0afa3f0c4d7a72844`. Setup runtime, framework e compilazione app/entrambi i target XCTest riusciti; Native/XCTest/interop non eseguiti, come previsto in modalità rapida. Correzione del prerequisito ora verificata in Actions, non su hardware.
+
+Avviato una sola volta il checkpoint `gh workflow run ios.yml --repo zanzaro-mirco/lantern-share --ref main -f bootstrap_interop=true -f bootstrap_scenario=all`: [37489690697](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37489690697), sullo stesso commit. **Esito non ancora verificato**: deve eseguire Native/XCTest ordinari e i tre scenari con la nuova orchestrazione `test-without-building`. Nessun polling, nessuna nuova build locale o modifica prodotto. Evidenze documentali locali da raggruppare nel prossimo push coerente.
+
+**Prossimo incremento unico:** leggere l'esito concluso di `37489690697`, correggendo soltanto eventuali regressioni; se pendente, link/commit e stop. Dopo checkpoint riuscito riprendere una funzionalità circoscritta del piano, senza ulteriori micro-incrementi di soli test bootstrap. Fase 1/collaudi fisici obbligatori restano aperti/rinviati.
+
+## Storico — correzione prerequisito runtime
 
 CI `e93354f`: [Android/desktop 37375240880](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375240880) `success`; [iOS 37375241073](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37375241073) fallita nella compilazione interop, exit 70/destinazione generica indisponibile: iOS 18.4 non installato. Preparazione runtime era stata erroneamente limitata ai checkpoint; ripristinata incondizionata prima delle build Xcode. Helper preesistente scarica solo se assente, una volta per job iOS; non ripartire dal debug di Swift/prodotto. Target ordinario compilato, interop non compilato/test non eseguiti in questa run rapida.
 

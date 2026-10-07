@@ -39,7 +39,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: JVM tests and desktop application
         shell: bash
-        run: bash ./gradlew :protocol:jvmTest :connectivity:jvmTest :desktopApp:classes --console=plain
+        run: bash ./gradlew :domain:jvmTest :protocol:jvmTest :connectivity:jvmTest :desktopApp:classes --console=plain
       - name: Package checkpoint desktop application
         if: needs.plan.outputs.full == 'true'
         shell: bash
@@ -97,8 +97,8 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Android compilation and protocol tests
-        run: bash ./gradlew -Pandroid=true :androidApp:compileDebugKotlin :protocol:testDebugUnitTest --console=plain
+      - name: Android compilation and shared tests
+        run: bash ./gradlew -Pandroid=true :androidApp:compileDebugKotlin :domain:testDebugUnitTest :protocol:testDebugUnitTest --console=plain
       - name: Checkpoint APK and lint
         if: needs.plan.outputs.full == 'true'
         run: bash ./gradlew -Pandroid=true :androidApp:assembleDebug :androidApp:lintDebug --console=plain
