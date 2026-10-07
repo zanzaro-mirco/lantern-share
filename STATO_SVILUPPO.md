@@ -1,6 +1,16 @@
 # Stato sviluppo — 7 ottobre 2026
 
-## Sintesi corrente — checkpoint iOS riuscito e regola di selezione sessione
+## Sintesi corrente — dichiarazione di ammissione al gruppo
+
+**CI precedente `010b1cb` verificata `success`:** [iOS 37678092202](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092202) e [Android/desktop 37678092228](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092228). Modalità rapida: compilazione del nuovo dominio riuscita, non esecuzione Native/XCTest. Nessun polling o nuovo checkpoint ridondante.
+
+**Implementato:** dichiarazione non firmata `GroupAdmissionClaim` nel dominio e confronto `bindingTo` con gruppo/emittente/destinatario attesi. ID opachi non vuoti, emittente e destinatario distinti, confronto esatto/direzionale con risultato tipizzato. `MATCHED` non significa credenziale verificata né autorizzazione: firma, appartenenza dell'emittente, conferme e gestione replay restano da implementare. Fondazione gruppo distinta dall'auto-ammissione; appartenenza non legata alla sessione LAN. Contratto in `docs/AMMISSIONE_GRUPPO.md`. Nessuna integrazione rete/trust/UI/SQLite, wire 0 e identità/versioni/lock invariati.
+
+**Verificato localmente:** JDK 17/cache utente, `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, riuscito in 6 s. **17 test per target**: nove nuovi ammissione e otto sessione, zero fallimenti/errori/skipped. Android unit test sulla JVM, non telefono; nuovo codice non ancora verificato in Native/CI. `git diff --check`; nessuna build completa/APK o modifica workflow superflua.
+
+**Prossimo incremento unico:** formato canonico versionato della dichiarazione nel protocollo, limiti e vettori condivisi di firma, isolato dal wire 0. Firma/appartenenza dell'emittente, origine gruppo e completamento recuperabile precedono qualsiasi integrazione trust/database. Fase 0 chiusa, fase 1/collaudi fisici obbligatori aperti/rinviati.
+
+## Storico — checkpoint iOS riuscito e regola di selezione sessione
 
 **Checkpoint [37489690697](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37489690697), commit `7e8c6dd`, concluso e verificato `success`:** Native protocollo/persistenza riusciti, 38 XCTest ordinari/zero fallimenti, tre scenari interop riusciti. Attestazioni finali del launcher: doppio READY/cleanup; confronto discordante senza READY/cleanup; cancellazione locale senza READY/chiusura di entrambi e cleanup. Riuso dei binari tramite batching/test-without-building ora verificato in macOS/iOS simulatore, non Android/LAN/hardware. Nessun polling, nessun nuovo rilancio.
 

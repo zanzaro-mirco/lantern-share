@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `010b1cb` verificata `success`:** [iOS 37678092202](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092202) e [Android/desktop 37678092228](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37678092228). Solo modalità rapida: nuovo dominio compilato, test Native/esecuzione XCTest non attestati da queste run. Nessun polling.
+
+**Nuovo incremento implementato:** `GroupAdmissionClaim` non firmata e risultato `GroupAdmissionBinding`: gruppo/emittente/destinatario non vuoti, ruoli distinti, confronto esatto col contesto indipendente. `MATCHED` non concede trust, non verifica firma/appartenenza e non protegge da replay. Contratto/limiti in `docs/AMMISSIONE_GRUPPO.md`; creazione del gruppo distinta dall'auto-ammissione. Nessuna rete/UI/persistenza, wire/schema/identità/versioni/lock invariati.
+
+**Verifica locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, riuscito in 6 s: 17 test per target (nove ammissione, otto sessione), zero fallimenti. Android unit test su JVM, non telefono; nuovo codice non ancora verificato Native/CI. `git diff --check`; nessuna build completa o APK superfluo.
+
+**Prossimo incremento unico:** formato canonico versionato della dichiarazione nel modulo protocollo, con limiti e vettori condivisi di firma; ancora isolato dal wire 0. Verifica firma/appartenenza, origine del gruppo e completamento recuperabile devono precedere trust o persistenza. Fase 1/collaudi fisici obbligatori aperti/rinviati.
+
+## Storico — selezione sessione e checkpoint riuscito
+
 **Checkpoint iOS `37489690697`/`7e8c6dd` verificato `success`:** Native protocollo/persistenza riusciti, 38 XCTest ordinari/zero fallimenti; tre scenari interop riusciti e attestazioni finali di doppio READY, rifiuto discordante senza READY, cancellazione locale senza READY e cleanup. Nuovo batching/test-without-building ora verificato in simulatore JVM macOS ↔ Apple, non hardware. Nessun polling o rilancio dei casi riusciti.
 
 **Implementato:** regola condivisa `SessionSelector`/`SessionSelection` nel dominio, descritta in `docs/SESSIONI.md`. Nessuna sessione attiva → creazione nuova; vuote → convergenza deterministica; una utilizzata → selezione; più utilizzate → scelta esplicita. Gruppi separati, deduplicazione e conflitti rifiutati. Solo snapshot corrente/autenticato, nessun archivio; non concede trust e non attiva v1 nel servizio. Wire/schema/identità/versioni/lock invariati.
