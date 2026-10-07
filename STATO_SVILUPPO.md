@@ -1,6 +1,18 @@
 # Stato sviluppo — 7 ottobre 2026
 
-## Sintesi corrente — formato e verifica di firma delle ammissioni isolati
+## Sintesi corrente — radice e verifica della catena delegate isolate
+
+**CI `38cb623` verificata `success`:** [iOS 37688968222](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968222) e [Android/desktop 37688968193](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968193). Modalità rapida, non esecuzione Native/XCTest; una sola lettura, nessun polling.
+
+**Implementato:** `GroupTrustAnchor` di dominio e `GroupAdmissionChainVerification` condivisa. Un percorso ordinato dal fondatore al destinatario atteso verifica gruppo, continuità, identità non ripetute e tutte le firme canoniche. Radice/target devono provenire da contesto indipendente, non dal peer; callback OS deve risolvere il certificato con il pin atteso e verificarne la firma. Limite 32 dichiarazioni prima di copia/firme; snapshot difensivo, nessuna appartenenza parziale, errori/cancellazione propagati. `VerifiedChain` non concede trust, non sostituisce conferme o commit. Fondatore senza privilegi amministrativi/necessità di essere online. Contratto e limiti in `docs/AMMISSIONE_GRUPPO.md`. Nessun chiamante attivo, wire 0/SQLite/identità/versioni/lock invariati.
+
+**Verificato locale:** `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest :protocol:jvmTest :protocol:testDebugUnitTest --console=plain`, JDK 17/cache esistente, 11 s: **20 dominio per target, 137 protocollo JVM/128 unit Android**, zero fallimenti/errori/skipped. Nuovi: tre dominio, nove comuni catena, due P-256 JVM reali con chiavi effimere/ID fixture (non certificati/Keychain). Regressioni cicli/disconnessioni/riordino/gruppo/target, limite esatto/oltre, callback che modifica lista, firma/chiave mancante o errata, sostituzioni firmate, errori/cancellazione. Android unit su JVM, non hardware.
+
+`./gradlew -Pandroid=true :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain` riuscito in 6 s. Metadata comuni non equivalgono a esecuzione Native. `git diff --check`. Nessun nuovo APK, collaudo fisico o test Native/Apple della catena; fase 1/collaudi obbligatori aperti/rinviati, fase 0 chiusa.
+
+**Prossimo incremento unico:** formato versionato della prova completa (radice + percorso limitato), isolato dal servizio; non adottare automaticamente la radice trasmessa. Fondazione/adozione legate alle conferme del bootstrap e completamento recuperabile restano necessari prima di attivare trust/database. Nuova CI dopo push da leggere alla prossima richiesta, nessun polling.
+
+## Storico — formato e verifica di firma delle ammissioni isolati
 
 **CI `36dccfb` verificata `success`:** [iOS 37681054399](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054399) e [Android/desktop 37681054347](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054347). Modalità rapida: non Native/XCTest. Nessun polling. Resta valida la prova bootstrap JVM/iOS del checkpoint `37489690697`, non confonderla con il nuovo formato.
 

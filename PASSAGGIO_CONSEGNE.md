@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `38cb623` verificata `success`:** [iOS 37688968222](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968222) e [Android/desktop 37688968193](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968193), modalità rapida/non Native-XCTest. Nessun polling.
+
+**Nuovo incremento:** `GroupTrustAnchor` e `GroupAdmissionChainVerification`, isolati da servizio/rete/UI/SQLite. Percorso ordinato fondatore → membri → destinatario atteso, stesso gruppo/continuità/nessuna identità ripetuta, tutte le firme canoniche obbligatorie; limite 32 prima di copia/firme, copia difensiva, nessun risultato parziale. Radice e target indipendenti dalla prova; callback OS deve risolvere certificato/pin/chiave esatti. `VerifiedChain` non è trust o conferma, radice ricevuta non viene adottata. Nessun admin/obbligo fondatore online; invariati wire 0/schema/identità/versioni/lock. Contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest :protocol:jvmTest :protocol:testDebugUnitTest --console=plain`, 11 s/JDK 17/cache esistente: **20 dominio per target, 137 protocollo JVM/128 unit Android**, zero errori/fallimenti/skipped; tre nuovi dominio/nove comuni/due JVM P-256 reali con ID fixture, non certificati. Metadata/app: `:protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes`, 6 s riusciti; metadata non Native. `git diff --check`; nessun APK/test hardware, nuova catena non ancora eseguita Apple/Native/CI.
+
+**Prossimo incremento unico:** formato versionato della prova completa (radice + percorso limitato), ancora isolato, senza adozione automatica della radice del peer. Fondazione/adozione confermata tramite bootstrap e completamento recuperabile necessari prima di trust/persistenza. Fase 1/collaudi obbligatori aperti/rinviati. Nuova CI dopo push da consultare alla richiesta successiva, nessun polling.
+
+## Storico — formato e verifica firma
+
 **CI precedente `36dccfb` verificata `success`:** [iOS 37681054399](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054399) e [Android/desktop 37681054347](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37681054347). Modalità rapida, non checkpoint Native/XCTest. Nessun polling; vecchio bootstrap interop già verificato nel checkpoint `37489690697`, non rilanciarlo senza regressione.
 
 **Implementato nel nuovo incremento:** `GroupAdmissionCodec` v1, envelope `SignedGroupAdmissionCodec`, byte canonici separati da wire 0/HELLO/APPROVE e `GroupAdmissionSignatureVerification`. Group/issuer/member 64 hex minuscoli; payload 512/1024 byte, JSON rigoroso/UTF-8/profondità/duplicati/versioni. Base64 condiviso con APPROVE, API/semantica conservate. Contesto e fingerprint del firmatario controllati prima del callback OS; firma invalida rifiutata, errori/cancellazione propagati. `VerifiedSignature` non è appartenenza né conferma utente/trust. Formato/vettore SHA-256 e limiti in `docs/AMMISSIONE_GRUPPO.md`. Nessun chiamante di rete/UI, database, wire 0, identità/versioni/lock invariati.
