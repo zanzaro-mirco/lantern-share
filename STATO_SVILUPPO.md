@@ -1,6 +1,16 @@
 # Stato sviluppo — 8 ottobre 2026
 
-## Sintesi corrente — codec e framing delle conferme gruppo isolati
+## Sintesi corrente — bridge conferme gruppo isolato
+
+**CI `ca81d2b` verificata `success`:** [iOS 37770692900](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37770692900), [Android/desktop 37770692893](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37770692893). Modalità rapida/non esecuzione Native-XCTest. Nessun polling.
+
+**Implementato:** `GroupAdmissionConfirmationBridge` possiede decoder/tentativo e ticket OS/sign/write. Verifica catena prima del confronto/ingresso, identità locale TLS e pin selezionato; codifica/accodamento non fanno avanzare `sent`. Frammenti/attestazioni al core, EOF pulito revoca anche confermato, troncamento/frame errato distinti; chiusura definitiva, rilascio ticket e primo motivo conservato. Callback stranieri/tardivi inefficaci, stato/budget deadline dopo verifiche, errori/cancellazione propagati; `@Throws` sulle entry fallibili. Ancora senza trasporto OS/timer/UI/resolver certificati o trust/database. Wire 0/identità/SQLite/versioni/lock invariati; contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, prima 15 s; revisione finale con due regressioni e annotazioni confine Apple, ripetizione pertinente 14 s. **200 JVM/187 unit Android**, zero fallimenti/errori/skipped; 12 nuovi comuni. Test P-256 con due core esteso a due bridge/frame frammentati/callback reali di firma JCA e clock monotono; ID/nonce fixture, non TLS/certificati/OS trasporto. Metadata/app compilati, unit Android su JVM e metadata non Native. Nessun APK/build completa o nuovo hardware/Apple; `git diff --check`.
+
+**Prossimo passo unico:** dopo lettura CI rapida conclusa, un checkpoint manuale iOS `bootstrap_interop=false` per test comuni Native e XCTest ordinari delle fondamenta gruppo prima di collegare gli adattatori OS. Non rilanciare i tre bootstrap interop già verificati, non fare polling. Nuova CI dopo push non ancora verificata. Fondazione/adozione radice, resolver certificati, rete/timer/UI e commit recuperabile restano aperti. Fase 0 chiusa; fase 1/collaudi obbligatori aperti/rinviati.
+
+## Storico — codec e framing delle conferme gruppo isolati
 
 **CI `ea6517b` verificata `success`:** [iOS 37767550848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550848), [Android/desktop 37767550794](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550794). Modalità rapida/non Native-XCTest. Nessun polling.
 

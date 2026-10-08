@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `ca81d2b` verificata `success`:** [iOS 37770692900](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37770692900), [Android/desktop 37770692893](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37770692893). Modalità rapida/non Native-XCTest, nessun polling.
+
+**Nuovo incremento:** `GroupAdmissionConfirmationBridge` possiede tentativo/decoder, ticket di confronto/sign/write e buffer difensivi. Prova prima di ingresso/UI, identità locale TLS e pin peer, codifica non equivale a write. EOF revoca anche confermato, troncamento/frame errato distinti; primo motivo/rilascio ticket/decoder chiuso, callback stranieri/tardivi inefficaci, deadline e cancellazione dopo verifiche. Errori rilanciati e `@Throws` sulle entry fallibili, export/esecuzione Native ancora non attestati. Nessun chiamante OS/rete/UI/trust/persistenza, wire 0/schema/identità/versioni/lock invariati; contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, finale 14 s dopo revisione pertinente (prima 15 s): **200 JVM/187 unit Android**, zero errori/fallimenti/skipped, 12 nuovi comuni. Test P-256 esteso a due bridge/frame frammentati/OS JCA, nonce e ID fixture/non TLS/certificati. Metadata/app compilati; unit Android su JVM, metadata non Native. Nessun APK/hardware/Apple; `git diff --check`.
+
+**Prossimo passo unico:** leggere l'esito concluso della nuova CI rapida, poi una sola run manuale `ios.yml` con `bootstrap_interop=false`: checkpoint Native/XCTest ordinari, senza ripetere i tre bootstrap interop riusciti e senza polling. Prima dell'integrazione OS del gruppo servono tale checkpoint e, successivamente, fondazione/adozione radice/resolver certificati/rete-timer-UI/commit recuperabile. Fase 1/collaudi obbligatori aperti/rinviati; nuova CI da consultare alla prossima richiesta.
+
+## Storico — codec e framing gruppo
+
 **CI `ea6517b` verificata `success`:** [iOS 37767550848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550848), [Android/desktop 37767550794](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550794). Modalità rapida/non Native-XCTest; nessun polling.
 
 **Nuovo incremento:** codec/DTO/framing dedicati `GROUP_CONFIRM`, version 1/1024 byte/depth 1, campi e ID/Base64 rigorosi/duplicati escaped rifiutati. Decoder seriale incrementale con uint32/4 byte, lunghezza validata prima di allocazione, chunk 1028, EOF/errore/cancel chiusura definitiva e diagnostica senza contenuti peer. Encoder `Send` non attesta write. Solo primitiva interna lunghezza estratta per bootstrap + gruppo, vecchie API/limiti/diagnostica preservati; wire 0/SQLite/identità/versioni/lock invariati. Nessun chiamante attivo; contratto in `docs/AMMISSIONE_GRUPPO.md`.

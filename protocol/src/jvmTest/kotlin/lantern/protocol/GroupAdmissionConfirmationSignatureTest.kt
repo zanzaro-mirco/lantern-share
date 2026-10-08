@@ -29,10 +29,10 @@ class GroupAdmissionConfirmationSignatureTest {
     private val context = context()
 
     @Test
-    fun twoAttemptOwnersVerifyRealProofAndConfirmationsBeforeWriteCompletion() {
+    fun twoBridgesVerifyRealProofAndFragmentedConfirmationsBeforeWriteCompletion() {
         val selectedAt = System.nanoTime() / 1_000_000
-        fun owner(local: String, peer: String, peerKey: KeyPair) = GroupAdmissionConfirmationAttempt(
-            context, local, peer, peer, selectedAt, { System.nanoTime() / 1_000_000 },
+        fun owner(local: String, peer: String, peerKey: KeyPair) = GroupAdmissionConfirmationBridge(
+            context, local, local, peer, peer, selectedAt, { System.nanoTime() / 1_000_000 },
             { signer, bytes, encoded ->
                 signer == issuer && verifySignature(issuerKey, bytes, encoded)
             },
@@ -46,28 +46,19 @@ class GroupAdmissionConfirmationSignatureTest {
         val memberSign = assertNotNull(joining.confirm(assertNotNull(joining.comparison())))
         val issuerSend = assertNotNull(issuing.signed(issuerSign, sign(issuerKey, issuerSign.bytes)))
         val memberSend = assertNotNull(joining.signed(memberSign, sign(memberKey, memberSign.bytes)))
-        fun decoded(send: GroupAdmissionConfirmationOperation.Send): GroupAdmissionConfirmation {
-            val encoded = GroupAdmissionConfirmationFrameDecoder.encode(send)
-            val decoder = GroupAdmissionConfirmationFrameDecoder()
-            assertTrue(decoder.accept(encoded.copyOfRange(0, 3)).isEmpty())
-            val result = decoder.accept(encoded.copyOfRange(3, encoded.size)).single()
-            decoder.finish()
-            return result
-        }
-        val fromIssuer = decoded(issuerSend)
-        val fromMember = decoded(memberSend)
-        assertTrue(joining.receive(fromIssuer.sender, fromIssuer.recipient, fromIssuer.signature))
-        assertTrue(issuing.receive(fromMember.sender, fromMember.recipient, fromMember.signature))
-        assertEquals(GroupAdmissionConfirmationState.Sending(true), issuing.state)
-        assertEquals(GroupAdmissionConfirmationState.Sending(true), joining.state)
+        assertTrue(joining.accept(issuerSend.bytes.copyOfRange(0, 3)))
+        assertTrue(joining.accept(issuerSend.bytes.copyOfRange(3, issuerSend.bytes.size)))
+        assertTrue(issuing.accept(memberSend.bytes))
+        assertEquals(GroupAdmissionBridgeState.Active(GroupAdmissionConfirmationState.Sending(true)), issuing.state())
+        assertEquals(GroupAdmissionBridgeState.Active(GroupAdmissionConfirmationState.Sending(true)), joining.state())
         assertTrue(issuing.sent(issuerSend))
         assertTrue(joining.sent(memberSend))
-        assertEquals(GroupAdmissionConfirmationState.Confirmed, issuing.state)
-        assertEquals(GroupAdmissionConfirmationState.Confirmed, joining.state)
+        assertEquals(GroupAdmissionBridgeState.Active(GroupAdmissionConfirmationState.Confirmed), issuing.state())
+        assertEquals(GroupAdmissionBridgeState.Active(GroupAdmissionConfirmationState.Confirmed), joining.state())
         issuing.cancel()
-        joining.transportClosed()
-        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.Cancelled), issuing.state)
-        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.TransportClosed), joining.state)
+        joining.finish()
+        assertEquals(GroupAdmissionBridgeState.Closed(GroupAdmissionBridgeFailure.Attempt(GroupAdmissionConfirmationFailure.Cancelled)), issuing.state())
+        assertEquals(GroupAdmissionBridgeState.Closed(GroupAdmissionBridgeFailure.Attempt(GroupAdmissionConfirmationFailure.TransportClosed)), joining.state())
     }
 
     @Test
