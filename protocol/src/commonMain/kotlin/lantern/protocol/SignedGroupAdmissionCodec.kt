@@ -39,7 +39,7 @@ object SignedGroupAdmissionCodec {
         decodeBoundedProtocolJson(bytes, MAX_BYTES, maxDepth = 2),
     )
 
-    private object AdmissionSerializer : KSerializer<SignedGroupAdmission> {
+    internal object AdmissionSerializer : KSerializer<SignedGroupAdmission> {
         override val descriptor = buildClassSerialDescriptor("lantern.protocol.SignedGroupAdmissionV1") {
             element("claim", GroupAdmissionCodec.ClaimSerializer.descriptor)
             element<JsonPrimitive>("signature")

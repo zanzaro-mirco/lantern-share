@@ -1,4 +1,4 @@
-# Passaggio di consegne — 7 ottobre 2026
+# Passaggio di consegne — 8 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,16 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**CI `83b8198` verificata `success`:** [iOS 37691830115](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830115), [Android/desktop 37691830203](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830203). Solo modalità rapida/non Native-XCTest, nessun polling.
+
+**Implementato:** formato isolato `GroupAdmissionProofCodec` v1: radice dichiarata + percorso di ammissioni, 32768 byte/32 elementi/depth 4. Conteggio streaming prima di deserializzare elemento 33; stessi serializer/validazioni ammissioni. Contenitore con copie difensive. Overload `GroupAdmissionChainVerification.verify(proof, expectedAnchor, expectedMemberId, callback)` rifiuta radice discordante prima delle firme e non adotta quella ricevuta. Nessuna integrazione rete/UI/trust/SQLite, identità/wire 0/schema/versioni/lock invariati. Contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 7 s: **149 JVM/139 unit Android**, zero fallimenti/errori/skipped; 11 nuovi comuni/un JVM P-256 completo, metadata/app riusciti. Primo run fallito per tre vettori/assert test errati, corretti senza indebolire parser/sicurezza. Android unit su JVM, metadata non Native; nuovo formato non eseguito Apple/hardware, niente APK. `git diff --check`.
+
+**Prossimo incremento unico:** binding di prova/radice al tentativo bootstrap e conferme correnti, prima di promuovere trust; preservare wire 0/SQLite. Fondazione/adozione confermata, scambio nel servizio, resolver certificati e commit recuperabile restano aperti. Fase 1/collaudi obbligatori aperti/rinviati. Nuova CI da consultare alla prossima richiesta, nessun polling.
+
+## Storico — radice e catena delegate
 
 **CI `38cb623` verificata `success`:** [iOS 37688968222](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968222) e [Android/desktop 37688968193](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968193), modalità rapida/non Native-XCTest. Nessun polling.
 

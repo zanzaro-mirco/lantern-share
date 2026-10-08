@@ -1,6 +1,18 @@
-# Stato sviluppo — 7 ottobre 2026
+# Stato sviluppo — 8 ottobre 2026
 
-## Sintesi corrente — radice e verifica della catena delegate isolate
+## Sintesi corrente — formato della prova completa isolato
+
+**CI `83b8198` verificata `success`:** [iOS 37691830115](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830115) e [Android/desktop 37691830203](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830203). Modalità rapida/non esecuzione Native-XCTest. Una lettura, nessun polling.
+
+**Implementato:** `GroupAdmissionProof`/`GroupAdmissionProofCodec` v1 con radice dichiarata e percorso, ID 64 hex, versione numerica esatta 1, massimo 32768 byte/32 elementi/profondità 4. Parser streaming rifiuta l'elemento 33 prima di decodificarlo; serializer delle singole ammissioni riusato senza cambiare regole/API. Copie difensive del percorso. Nuovo overload del verificatore confronta prima la radice ricevuta con quella locale indipendente (`AnchorMismatch`), poi controlla catena/firme. Decodifica non verifica appartenenza e non adotta trust. Nessun certificato/chiave inclusi; resolver OS non integrato. Wire attivo/schema/identità/versioni/lock invariati, nessun chiamante rete/UI/SQLite.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 7 s: **149 test JVM/139 unit Android**, zero fallimenti/errori/skipped, app compilate e metadata comuni riusciti. Nuovi 11 comuni + un round-trip completo con P-256 JVM reale/ID fixture. Coperti campi mancanti/sconosciuti/duplicati escaped, versione/tipi/ID/firma, limite byte e conteggio esatti/oltre, UTF-8/profondità, snapshot, sostituzione radice prima di crypto, chiave mancante, isolamento dal formato singolo. Primo test run 46 s dopo daemon: tre vettori/assert di test errati corretti (Base64 canonico valido usato come invalido, sostituzione versione annidata involontaria e depth guard atteso come errore parser); nessun controllo produzione indebolito. Ripetizione dopo correzioni riuscita. `git diff --check`.
+
+**Limiti:** test Android su JVM, non telefono; metadata non Native. Nuovo formato non ancora eseguito Native/Apple/hardware. Nessun APK/checkpoint superfluo; fase 0 chiusa e fase 1/collaudi obbligatori aperti/rinviati. Fondazione/adozione della radice, scambio attivo e commit recuperabile non implementati.
+
+**Prossimo incremento unico:** legare prova/radice al tentativo bootstrap e alle conferme correnti prima di qualunque promozione a trust, ancora senza modificare wire 0 o SQLite. Nuova CI dopo push da leggere alla richiesta successiva, nessun polling.
+
+## Storico — radice e verifica della catena delegate isolate
 
 **CI `38cb623` verificata `success`:** [iOS 37688968222](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968222) e [Android/desktop 37688968193](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37688968193). Modalità rapida, non esecuzione Native/XCTest; una sola lettura, nessun polling.
 

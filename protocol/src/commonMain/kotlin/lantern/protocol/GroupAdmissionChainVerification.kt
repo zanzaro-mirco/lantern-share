@@ -6,6 +6,7 @@ import lantern.domain.GroupTrustAnchor
 sealed interface GroupAdmissionChainResult {
     data object VerifiedChain : GroupAdmissionChainResult
     data object InvalidLength : GroupAdmissionChainResult
+    data object AnchorMismatch : GroupAdmissionChainResult
     data object GroupMismatch : GroupAdmissionChainResult
     data object BrokenChain : GroupAdmissionChainResult
     data object RepeatedIdentity : GroupAdmissionChainResult
@@ -21,6 +22,18 @@ sealed interface GroupAdmissionChainResult {
 object GroupAdmissionChainVerification {
     // Bounds CPU/signature work, not the number of members in a group. No wire format yet.
     const val MAX_ADMISSIONS = 32
+
+    /** Compares the received anchor with local context before checking any supplied signature. */
+    fun verify(
+        proof: GroupAdmissionProof,
+        expectedAnchor: GroupTrustAnchor,
+        expectedMemberId: String,
+        verifySignature: (issuerId: String, bytes: ByteArray, signature: String) -> Boolean,
+    ): GroupAdmissionChainResult {
+        validateContext(expectedAnchor, expectedMemberId)
+        if (proof.anchor != expectedAnchor) return GroupAdmissionChainResult.AnchorMismatch
+        return verify(expectedAnchor, expectedMemberId, proof.admissions, verifySignature)
+    }
 
     /**
      * The anchor and expected member are independently established context, not received fields.
@@ -39,10 +52,7 @@ object GroupAdmissionChainVerification {
         admissions: List<SignedGroupAdmission>,
         verifySignature: (issuerId: String, bytes: ByteArray, signature: String) -> Boolean,
     ): GroupAdmissionChainResult {
-        require(
-            Wire.isFingerprint(anchor.groupId) && Wire.isFingerprint(anchor.founderId) &&
-                Wire.isFingerprint(expectedMemberId),
-        ) { "Invalid chain context identifier encoding" }
+        validateContext(anchor, expectedMemberId)
         if (admissions.isEmpty() || admissions.size > MAX_ADMISSIONS) {
             return GroupAdmissionChainResult.InvalidLength
         }
@@ -69,5 +79,12 @@ object GroupAdmissionChainVerification {
             }
         }
         return GroupAdmissionChainResult.VerifiedChain
+    }
+
+    private fun validateContext(anchor: GroupTrustAnchor, expectedMemberId: String) {
+        require(
+            Wire.isFingerprint(anchor.groupId) && Wire.isFingerprint(anchor.founderId) &&
+                Wire.isFingerprint(expectedMemberId),
+        ) { "Invalid chain context identifier encoding" }
     }
 }

@@ -22,6 +22,25 @@ class GroupAdmissionChainSignatureTest {
     private val keys = mapOf(founder to founderKey, delegate to delegateKey)
 
     @Test
+    fun completeProofRoundTripRequiresTheIndependentAnchorAndBothRealSignatures() {
+        val received = GroupAdmissionProofCodec.decode(
+            GroupAdmissionProofCodec.encode(GroupAdmissionProof(anchor, proof())),
+        )
+        fun check(root: GroupTrustAnchor, resolver: Map<String, KeyPair>) =
+            GroupAdmissionChainVerification.verify(received, root, member) { issuer, bytes, signature ->
+                val key = resolver[issuer]
+                key != null && Signature.getInstance("SHA256withECDSA").run {
+                    initVerify(key.public)
+                    update(bytes)
+                    verify(Base64.getDecoder().decode(signature))
+                }
+            }
+        assertEquals(GroupAdmissionChainResult.VerifiedChain, check(anchor, keys))
+        assertEquals(GroupAdmissionChainResult.AnchorMismatch, check(GroupTrustAnchor(group, member), keys))
+        assertEquals(GroupAdmissionChainResult.InvalidSignature(1), check(anchor, keys - delegate))
+    }
+
+    @Test
     fun delegatedProofSurvivesCodecRoundTripButFailsWithEitherWrongIssuerKey() {
         val proof = proof().map { SignedGroupAdmissionCodec.decode(SignedGroupAdmissionCodec.encode(it)) }
         assertEquals(GroupAdmissionChainResult.VerifiedChain, verify(proof, keys))
