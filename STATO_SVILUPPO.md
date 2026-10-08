@@ -1,6 +1,16 @@
 # Stato sviluppo — 8 ottobre 2026
 
-## Sintesi corrente — formato della prova completa isolato
+## Sintesi corrente — binding crittografico delle conferme di gruppo isolato
+
+**CI `41bafb5` verificata `success`:** [iOS 37750462960](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462960) e [Android/desktop 37750462980](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462980). Modalità rapida, non Native/XCTest. Nessun polling.
+
+**Implementato:** contesto immutabile `GroupAdmissionConfirmationContext`: confronto canonico con dominio distinto, ruoli emittente/membro, transcript bootstrap completo (nonce/capability) e prova normalizzata completa; radice attesa indipendente e ruoli finali controllati. Byte di firma direzionali separati da APPROVE bootstrap e credenziale persistente. `GroupAdmissionConfirmationVerification` verifica ruolo/pin TLS/Base64 prima del callback OS; invalidità rifiutata, errori/cancellazione propagati. `VerifiedRemoteConfirmation` è una sola attestazione remota, non conferma locale/catena/trust/tentativo corrente. Nessun chiamante attivo; wire 0, SQLite, identità/versioni/lock preservati. Contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, JDK 17/cache esistente, 9 s: **158 JVM/146 unit Android**, zero errori/fallimenti/skipped. Nuovi sette comuni/due P-256 JVM reali con chiavi effimere/ID fixture. Entrambe le direzioni, chiave/dominio errati, nonce/radice/prova/capability alterati, JSON equivalente, buffer indipendenti, ruoli/pin e propagazione errori/cancellazione. Metadata comuni/app compilati; unit Android su JVM, metadata non Native. Nessun nuovo test hardware/Apple/TLS dell'ammissione; `git diff --check`.
+
+**Limiti/prossimo incremento unico:** proprietario comune del tentativo di conferma gruppo con ticket legati a questo contesto, due conferme, esito scrittura e invalidazione per cancellazione/timeout/blocco/uscita anche dopo callback. Il binding stateless appena implementato non sostituisce tale ciclo di vita. Fondazione/adozione radice, scambio attivo, resolver certificati e completamento recuperabile restano aperti prima del trust/database. Fase 0 chiusa; fase 1/collaudi obbligatori aperti/rinviati. Nessun APK/checkpoint superfluo. Nuova CI da leggere alla richiesta successiva, nessun polling.
+
+## Storico — formato della prova completa isolato
 
 **CI `83b8198` verificata `success`:** [iOS 37691830115](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830115) e [Android/desktop 37691830203](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830203). Modalità rapida/non esecuzione Native-XCTest. Una lettura, nessun polling.
 

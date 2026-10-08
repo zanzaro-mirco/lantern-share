@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `41bafb5` verificata `success`:** [iOS 37750462960](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462960), [Android/desktop 37750462980](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462980). Modalità rapida/non Native-XCTest; nessun polling.
+
+**Nuovo incremento:** `GroupAdmissionConfirmationContext` e `GroupAdmissionConfirmationVerification`. Byte canonici di confronto/firma legano ruoli, transcript bootstrap completo e prova normalizzata, con domini distinti da vecchio APPROVE e credenziale. Radice indipendente/ruoli finali/compatibilità controllati; pin/direzione prima della verifica OS, errori/cancellazione propagati. Componenti immutabili/stateless: non verificano l'intera catena, non dimostrano conferma locale o tentativo corrente, non concedono trust. Nessun chiamante attivo; wire 0/schema/identità/versioni/lock invariati. Contratto/limiti in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 9 s: **158 JVM/146 unit Android**, zero errori/fallimenti/skipped; sette comuni/due P-256 reali nuovi. Test unit Android su JVM, metadata/app compilati, non Native/TLS/certificati reali/hardware. Nessun APK. `git diff --check`.
+
+**Prossimo incremento unico:** proprietario condiviso del tentativo di conferma gruppo: ticket contesto corrente, due conferme, esito write e invalidazione per cancel/timeout/blocco/uscita anche dopo callback. Non promuovere dal solo `VerifiedRemoteConfirmation` o dal vecchio bootstrap `READY`. Fondazione/adozione radice, resolver certificati, scambio attivo e commit recuperabile restano necessari. Fase 1/collaudi obbligatori aperti/rinviati; nuova CI da leggere alla richiesta successiva, nessun polling.
+
+## Storico — formato prova completa
+
 **CI `83b8198` verificata `success`:** [iOS 37691830115](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830115), [Android/desktop 37691830203](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37691830203). Solo modalità rapida/non Native-XCTest, nessun polling.
 
 **Implementato:** formato isolato `GroupAdmissionProofCodec` v1: radice dichiarata + percorso di ammissioni, 32768 byte/32 elementi/depth 4. Conteggio streaming prima di deserializzare elemento 33; stessi serializer/validazioni ammissioni. Contenitore con copie difensive. Overload `GroupAdmissionChainVerification.verify(proof, expectedAnchor, expectedMemberId, callback)` rifiuta radice discordante prima delle firme e non adotta quella ricevuta. Nessuna integrazione rete/UI/trust/SQLite, identità/wire 0/schema/versioni/lock invariati. Contratto in `docs/AMMISSIONE_GRUPPO.md`.

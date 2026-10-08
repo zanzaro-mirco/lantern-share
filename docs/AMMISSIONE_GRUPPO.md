@@ -98,3 +98,27 @@ Limiti: **32768 byte UTF-8 totali**, profondità massima **4** (envelope → arr
 Nessuna firma aggiuntiva sull'envelope: le ammissioni firmano già versione/gruppo/emittente/destinatario; la radice deve coincidere con quella locale e ordine/continuità/destinatario sono verificati. Il contenitore non è una dichiarazione di fondazione. Una prova vuota non può autorizzare il fondatore. Prima della fondazione/adozione di una nuova radice servirà il collegamento esplicito alle conferme del bootstrap; non si può inferirlo dalla ricezione di un JSON valido o dal solo `VerifiedChain`.
 
 Nuove verifiche: 11 test comuni del formato/prova e una integrazione JVM P-256 del round-trip completo, firma di entrambi gli emittenti e radice alternativa. Il caso da 32 elementi controlla il limite sintattico, non dichiara verificata una catena con identità ripetute. Nessuna integrazione nel wire attivo, SQLite o UI; nessun test fisico/Native del nuovo formato.
+
+## Binding crittografico delle conferme — 8 ottobre 2026
+
+Le firme `ProtocolHandshakeApproval` esistenti coprono il transcript bootstrap, **non la prova di gruppo**. Il loro `READY` non consente quindi l'adozione della radice né l'ammissione. Non si modifica APPROVE per assegnargli implicitamente un significato diverso.
+
+`GroupAdmissionConfirmationContext` congela i byte di un contesto separato. Riceve le offerte bootstrap compatibili, con identità TLS verificate e nonce OS freschi, la radice attesa indipendente e la prova. Richiede radice corrispondente e ruoli uguali all'ultima ammissione: emittente attuale → nuovo membro. Il costruttore **non verifica la catena o le firme**; un contesto costruito non è una credenziale. La verifica dell'intera catena resta obbligatoria prima di proseguire, senza adottare automaticamente la radice proposta dal peer.
+
+Byte di confronto canonici: prefissi `lunghezzaDecimaleUTF8:valore`, concatenati in ordine:
+
+1. `lantern-group-admission-confirm-1`;
+2. identità dell'emittente;
+3. identità del nuovo membro;
+4. transcript bootstrap completo, prodotto da `ProtocolHandshakeTranscript.bytes`;
+5. JSON canonico della prova completa, prodotto da `GroupAdmissionProofCodec.encode`.
+
+Le viste `comparisonBytes()` sono copie difensive. Il futuro adattatore calcolerà SHA-256 OS per mostrare il codice completo su entrambi i dispositivi. Ordine/whitespace/escape del JSON ricevuto non lo cambiano; firma, radice, ordine del percorso, nonce o capability diversi invece lo cambiano. Due firme ECDSA diverse sulla stessa dichiarazione producono intenzionalmente due contesti diversi: entrambi devono confrontare **la stessa prova completa**, non soltanto una dichiarazione equivalente.
+
+`approvalBytes(senderIdentity)` aggiunge un dominio e una direzione distinti, ancora con lunghezze UTF-8: `lantern-group-admission-confirm-approve-1`, mittente, destinatario, byte di confronto completi. Sono i byte per la futura firma OS dopo conferma esplicita di questo confronto. Non sono il JSON o la firma della credenziale persistente e non possono sostituire APPROVE bootstrap o wire 0. Nessun nuovo frame di rete viene attivato in questo incremento.
+
+`GroupAdmissionConfirmationVerification.verifyRemote` controlla ruoli/destinatario e fingerprint del peer TLS prima del callback OS sullo stesso certificato; controlla Base64 canonico e verifica la firma direzionale. Firma invalida → rifiuto; errori inattesi/cancellazione propagati. `VerifiedRemoteConfirmation` significa **una sola attestazione crittografica remota**, non due conferme, catena valida, tentativo corrente o trust persistente. Non dimostra che l'utente remoto abbia premuto un pulsante: l'emissione della firma deve essere governata dal proprietario remoto e dalla sua conferma esplicita.
+
+Limite aperto: questi componenti sono immutabili/stateless e non possiedono ticket, connessione, timer o transazione. Non invalidano da soli un risultato vecchio. Il prossimo incremento dovrà governare ticket di confronto/sign/write della prova corrente, due conferme, esito reale della scrittura e invalidazione per cancellazione/timeout/blocco/uscita, ricontrollando lo stato anche dopo i callback. Fondazione/adozione della radice, resolver certificati e commit recuperabile restano non implementati. Nessuna integrazione nel servizio/UI/database.
+
+Verifica locale: sette nuovi casi comuni di binding/ordine/errori e due JVM P-256 reali. **158 protocollo JVM/146 unit Android**, zero errori/fallimenti/skipped; metadata comuni e compilazione Android/desktop riusciti. Coperti entrambe le direzioni, chiave errata, firme bootstrap/ammissione non riutilizzabili, nonce/gruppo/fondatore/firma della prova sostituiti, capability, normalizzazione JSON, buffer, ruoli/ancora incompatibili e cancellazione propagata dal verificatore. Non sono test di cancellazione di un proprietario, TLS/certificati reali, Native o hardware. Nessuna versione/lock/migrazione modificata.
