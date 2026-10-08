@@ -7,6 +7,8 @@ import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 
@@ -25,6 +27,38 @@ class GroupAdmissionConfirmationSignatureTest {
     private val admission = SignedGroupAdmission(claim, sign(issuerKey, GroupAdmissionCodec.signedBytes(claim)))
     private val anchor = GroupTrustAnchor(group, issuer)
     private val context = context()
+
+    @Test
+    fun twoAttemptOwnersVerifyRealProofAndConfirmationsBeforeWriteCompletion() {
+        val selectedAt = System.nanoTime() / 1_000_000
+        fun owner(local: String, peer: String, peerKey: KeyPair) = GroupAdmissionConfirmationAttempt(
+            context, local, peer, peer, selectedAt, { System.nanoTime() / 1_000_000 },
+            { signer, bytes, encoded ->
+                signer == issuer && verifySignature(issuerKey, bytes, encoded)
+            },
+            { bytes, encoded -> verifySignature(peerKey, bytes, encoded) },
+        )
+        val issuing = owner(issuer, member, memberKey)
+        val joining = owner(member, issuer, issuerKey)
+        assertTrue(issuing.prepare())
+        assertTrue(joining.prepare())
+        val issuerSign = assertNotNull(issuing.confirm(assertNotNull(issuing.comparison())))
+        val memberSign = assertNotNull(joining.confirm(assertNotNull(joining.comparison())))
+        val issuerSend = assertNotNull(issuing.signed(issuerSign, sign(issuerKey, issuerSign.bytes)))
+        val memberSend = assertNotNull(joining.signed(memberSign, sign(memberKey, memberSign.bytes)))
+        assertTrue(joining.receive(issuerSend.sender, issuerSend.recipient, issuerSend.signature))
+        assertTrue(issuing.receive(memberSend.sender, memberSend.recipient, memberSend.signature))
+        assertEquals(GroupAdmissionConfirmationState.Sending(true), issuing.state)
+        assertEquals(GroupAdmissionConfirmationState.Sending(true), joining.state)
+        assertTrue(issuing.sent(issuerSend))
+        assertTrue(joining.sent(memberSend))
+        assertEquals(GroupAdmissionConfirmationState.Confirmed, issuing.state)
+        assertEquals(GroupAdmissionConfirmationState.Confirmed, joining.state)
+        issuing.cancel()
+        joining.transportClosed()
+        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.Cancelled), issuing.state)
+        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.TransportClosed), joining.state)
+    }
 
     @Test
     fun bothDirectionsRequireTheirOwnKeyAndCannotReuseBootstrapOrMembershipSignatures() {
@@ -83,6 +117,13 @@ class GroupAdmissionConfirmationSignatureTest {
             sign()
         },
     )
+
+    private fun verifySignature(key: KeyPair, bytes: ByteArray, signature: String) =
+        Signature.getInstance("SHA256withECDSA").run {
+            initVerify(key.public)
+            update(bytes)
+            verify(Base64.getDecoder().decode(signature))
+        }
 
     private fun keyPair() = KeyPairGenerator.getInstance("EC").run {
         initialize(ECGenParameterSpec("secp256r1"))

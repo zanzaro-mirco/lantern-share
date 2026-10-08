@@ -1,6 +1,16 @@
 # Stato sviluppo — 8 ottobre 2026
 
-## Sintesi corrente — binding crittografico delle conferme di gruppo isolato
+## Sintesi corrente — tentativo di conferma gruppo isolato
+
+**CI `095488d` verificata `success`:** [iOS 37753300916](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300916) e [Android/desktop 37753300930](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300930). Modalità rapida/non Native-XCTest; nessun polling.
+
+**Implementato:** `GroupAdmissionConfirmationAttempt` condiviso. Prova completa verificata prima del confronto; ticket opachi di confronto/sign/write legati al solo tentativo, due conferme e scrittura locale realmente completata prima di `Confirmed`. Pin/ruoli, duplicati e rientranza controllati; deadline monotona 120 s dalla selezione, arretramento/overflow/guasto espliciti. Cancel/blocco/uscita/EOF invalidano anche `Confirmed` e vecchi callback; verifica dello stato dopo OS callback, errori/cancellazione rilanciati. Stato confermato revocabile, non trust/transazione. Integrazione con rete/UI/timer/resolver certificati ancora assente. Wire 0/SQLite/identità/versioni/lock invariati. Contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 18 s riusciti. Due regressioni finali aggiunte su prova rotta prima di crypto e guasto/overflow clock: ripetuti solo `:protocol:jvmTest :protocol:testDebugUnitTest`, 6 s. Finale **172 JVM/159 unit Android**, zero fallimenti/errori/skipped; 13 nuovi comuni/un JVM con due tentativi e P-256 reale, chiavi effimere/ID fixture/non certificati. Metadata comuni/app compilati; unit Android su JVM, non telefono, metadata non Native. `git diff --check`; nessun APK/build completa superflua o nuovo hardware/Apple.
+
+**Prossimo incremento unico:** codec dedicato e framing limitato delle conferme gruppo, distinto da APPROVE bootstrap, ancora isolato dal wire attivo. Fondazione/adozione radice, adattatori connessione/UI/timer, resolver certificati e completamento recuperabile devono precedere trust/SQLite. Prima dell'integrazione servirà checkpoint Native, non attestato dalla CI rapida. Fase 0 chiusa; fase 1/collaudi obbligatori aperti/rinviati. Nuova CI da leggere alla prossima richiesta, nessun polling.
+
+## Storico — binding crittografico delle conferme di gruppo isolato
 
 **CI `41bafb5` verificata `success`:** [iOS 37750462960](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462960) e [Android/desktop 37750462980](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462980). Modalità rapida, non Native/XCTest. Nessun polling.
 

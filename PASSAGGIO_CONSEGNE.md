@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `095488d` verificata `success`:** [iOS 37753300916](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300916), [Android/desktop 37753300930](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300930). Modalità rapida/non Native-XCTest; nessun polling.
+
+**Implementato:** `GroupAdmissionConfirmationAttempt`: verifica catena prima del ticket confronto, ticket opachi per sign/write, due conferme e write completata prima di `Confirmed`. Deadline 120 s dalla selezione originale; guasto/arretramento/overflow clock, pin/ruoli, ingressi anticipati/duplicati/rientranza controllati. Cancel/blocco/uscita/EOF revocano anche confermato, prima chiusura conservata, vecchi ticket inefficaci; stato ricontrollato dopo verifier OS, errori/cancellazione propagati. Il core non gestisce connessione/timer/UI/trust/SQLite né adotta la radice. Contratto in `docs/AMMISSIONE_GRUPPO.md`; invariati wire 0/identità/schema/versioni/lock.
+
+**Verificato locale:** comando `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, JDK 17/cache esistente, 18 s; dopo due regressioni finali solo `:protocol:jvmTest :protocol:testDebugUnitTest`, 6 s: **172 JVM/159 unit Android**, zero errori/fallimenti/skipped. 13 nuovi comuni/un JVM con due core/P-256 reale/ID fixture (non TLS/certificati). Metadata/app compilati; unit Android su JVM, metadata non Native. Nessun APK/hardware/Apple; `git diff --check`.
+
+**Prossimo incremento unico:** codec dedicato/framing limitato delle conferme gruppo, distinto da APPROVE bootstrap e isolato dal servizio attivo. Fondazione/adozione radice, adattatori connessione/UI/timer, resolver certificati e commit recuperabile restano necessari prima di trust/persistenza; checkpoint Native necessario prima dell'integrazione. Fase 1/collaudi obbligatori aperti/rinviati; nuova CI da leggere alla richiesta successiva, nessun polling.
+
+## Storico — binding delle conferme
+
 **CI `41bafb5` verificata `success`:** [iOS 37750462960](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462960), [Android/desktop 37750462980](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37750462980). Modalità rapida/non Native-XCTest; nessun polling.
 
 **Nuovo incremento:** `GroupAdmissionConfirmationContext` e `GroupAdmissionConfirmationVerification`. Byte canonici di confronto/firma legano ruoli, transcript bootstrap completo e prova normalizzata, con domini distinti da vecchio APPROVE e credenziale. Radice indipendente/ruoli finali/compatibilità controllati; pin/direzione prima della verifica OS, errori/cancellazione propagati. Componenti immutabili/stateless: non verificano l'intera catena, non dimostrano conferma locale o tentativo corrente, non concedono trust. Nessun chiamante attivo; wire 0/schema/identità/versioni/lock invariati. Contratto/limiti in `docs/AMMISSIONE_GRUPPO.md`.

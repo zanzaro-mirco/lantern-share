@@ -15,6 +15,8 @@ class GroupAdmissionConfirmationContext(
 ) {
     val issuerIdentity: String = issuer.identity
     val memberIdentity: String = member.identity
+    internal val admissionProof = proof
+    internal val anchor = expectedAnchor
     private val comparisonContent: ByteArray
 
     init {
