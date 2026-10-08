@@ -6,14 +6,15 @@ object ProtocolHandshakeFraming {
 
     fun header(payloadBytes: Int): ByteArray {
         require(payloadBytes in 1..ProtocolHandshakeFrameCodec.MAX_BYTES) { "Invalid v1 bootstrap length" }
-        return ByteArray(HEADER_BYTES) { index -> (payloadBytes ushr (8 * (HEADER_BYTES - index - 1))).toByte() }
+        return BoundedFrameLength.header(payloadBytes, ProtocolHandshakeFrameCodec.MAX_BYTES)
     }
 
     fun payloadBytes(header: ByteArray): Int {
         require(header.size == HEADER_BYTES) { "Invalid v1 bootstrap header" }
-        var length = 0L
-        for (byte in header) length = (length shl 8) or (byte.toLong() and 0xff)
-        require(length in 1..ProtocolHandshakeFrameCodec.MAX_BYTES.toLong()) { "Invalid v1 bootstrap length" }
-        return length.toInt()
+        return try {
+            BoundedFrameLength.payloadBytes(header, ProtocolHandshakeFrameCodec.MAX_BYTES)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid v1 bootstrap length")
+        }
     }
 }

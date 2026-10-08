@@ -8,6 +8,16 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `ea6517b` verificata `success`:** [iOS 37767550848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550848), [Android/desktop 37767550794](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550794). Modalità rapida/non Native-XCTest; nessun polling.
+
+**Nuovo incremento:** codec/DTO/framing dedicati `GROUP_CONFIRM`, version 1/1024 byte/depth 1, campi e ID/Base64 rigorosi/duplicati escaped rifiutati. Decoder seriale incrementale con uint32/4 byte, lunghezza validata prima di allocazione, chunk 1028, EOF/errore/cancel chiusura definitiva e diagnostica senza contenuti peer. Encoder `Send` non attesta write. Solo primitiva interna lunghezza estratta per bootstrap + gruppo, vecchie API/limiti/diagnostica preservati; wire 0/SQLite/identità/versioni/lock invariati. Nessun chiamante attivo; contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 10 s, **188 JVM/175 unit Android**, zero errori/fallimenti/skipped, 16 nuovi comuni. Test P-256 con due tentativi ora passa dal framing frammentato/codec. Regressioni bootstrap TLS pertinenti: `./gradlew :connectivity:jvmTest --tests '*HandshakeV1ConnectionTest' --tests '*HandshakeV1TlsTest' --console=plain`, 5 s/20 riuscite. Metadata/app compilati; unit Android su JVM, non Native/hardware, nuova ammissione non testata TLS/Apple. `git diff --check`; nessun APK.
+
+**Prossimo incremento unico:** bridge callback decoder/tentativo/ticket sign/write, invalidazione su EOF/errori, `sent` soltanto dopo completamento write. Preservare isolamento dal servizio attivo. Fondazione/adozione radice, timer/rete/UI/resolver certificati e commit recuperabile aperti; checkpoint Native obbligatorio prima dell'integrazione. Fase 1/collaudi obbligatori aperti/rinviati. Nuova CI da leggere alla prossima richiesta, nessun polling.
+
+## Storico — tentativo di conferma gruppo
+
 **CI `095488d` verificata `success`:** [iOS 37753300916](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300916), [Android/desktop 37753300930](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300930). Modalità rapida/non Native-XCTest; nessun polling.
 
 **Implementato:** `GroupAdmissionConfirmationAttempt`: verifica catena prima del ticket confronto, ticket opachi per sign/write, due conferme e write completata prima di `Confirmed`. Deadline 120 s dalla selezione originale; guasto/arretramento/overflow clock, pin/ruoli, ingressi anticipati/duplicati/rientranza controllati. Cancel/blocco/uscita/EOF revocano anche confermato, prima chiusura conservata, vecchi ticket inefficaci; stato ricontrollato dopo verifier OS, errori/cancellazione propagati. Il core non gestisce connessione/timer/UI/trust/SQLite né adotta la radice. Contratto in `docs/AMMISSIONE_GRUPPO.md`; invariati wire 0/identità/schema/versioni/lock.

@@ -46,8 +46,18 @@ class GroupAdmissionConfirmationSignatureTest {
         val memberSign = assertNotNull(joining.confirm(assertNotNull(joining.comparison())))
         val issuerSend = assertNotNull(issuing.signed(issuerSign, sign(issuerKey, issuerSign.bytes)))
         val memberSend = assertNotNull(joining.signed(memberSign, sign(memberKey, memberSign.bytes)))
-        assertTrue(joining.receive(issuerSend.sender, issuerSend.recipient, issuerSend.signature))
-        assertTrue(issuing.receive(memberSend.sender, memberSend.recipient, memberSend.signature))
+        fun decoded(send: GroupAdmissionConfirmationOperation.Send): GroupAdmissionConfirmation {
+            val encoded = GroupAdmissionConfirmationFrameDecoder.encode(send)
+            val decoder = GroupAdmissionConfirmationFrameDecoder()
+            assertTrue(decoder.accept(encoded.copyOfRange(0, 3)).isEmpty())
+            val result = decoder.accept(encoded.copyOfRange(3, encoded.size)).single()
+            decoder.finish()
+            return result
+        }
+        val fromIssuer = decoded(issuerSend)
+        val fromMember = decoded(memberSend)
+        assertTrue(joining.receive(fromIssuer.sender, fromIssuer.recipient, fromIssuer.signature))
+        assertTrue(issuing.receive(fromMember.sender, fromMember.recipient, fromMember.signature))
         assertEquals(GroupAdmissionConfirmationState.Sending(true), issuing.state)
         assertEquals(GroupAdmissionConfirmationState.Sending(true), joining.state)
         assertTrue(issuing.sent(issuerSend))

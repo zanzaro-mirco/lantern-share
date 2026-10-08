@@ -1,6 +1,16 @@
 # Stato sviluppo — 8 ottobre 2026
 
-## Sintesi corrente — tentativo di conferma gruppo isolato
+## Sintesi corrente — codec e framing delle conferme gruppo isolati
+
+**CI `ea6517b` verificata `success`:** [iOS 37767550848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550848), [Android/desktop 37767550794](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37767550794). Modalità rapida/non Native-XCTest. Nessun polling.
+
+**Implementato:** `GroupAdmissionConfirmationCodec`, DTO e decoder incrementale dedicato. JSON version 1/type `GROUP_CONFIRM`, cinque campi obbligatori, ID/Base64 rigorosi, duplicati escaped rifiutati, 1024 byte/depth 1. Framing uint32 big endian/4 byte, limite prima di allocazione e chunk 1028; frammenti/frame multipli/EOF, chiusura definitiva e diagnostica sanitizzata senza contenuti peer. Encoder del ticket `Send` non equivale a `sent`. Primitiva interna di lunghezza condivisa con bootstrap preservandone API/limiti/diagnostica; nessun refactoring wire 0 o decoder precedente. Tipo nuovo rifiutato da bootstrap/wire 0 e viceversa. Nessun chiamante rete/UI/persistenza, identità/SQLite/versioni/lock invariati.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :protocol:compileCommonMainKotlinMetadata :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 10 s: **188 JVM/175 unit Android**, zero errori/fallimenti/skipped; 16 nuovi comuni (otto codec/otto decoder). Round-trip di conferme P-256 reali nel test con due tentativi, non TLS del nuovo gruppo. Metadata/app compilati; unit Android su JVM, metadata non Native. Per la primitiva bootstrap condivisa: `./gradlew :connectivity:jvmTest --tests '*HandshakeV1ConnectionTest' --tests '*HandshakeV1TlsTest' --console=plain`, 5 s riusciti; **20 integrazioni bootstrap** (16 connection/4 TLS), non nuova ammissione. `git diff --check`. Nessun APK/nuovo collaudo fisico o Native/Apple.
+
+**Prossimo incremento unico:** bridge callback tra decoder, tentativo e ticket OS/sign/write, con invalidazione su EOF/errori e senza chiamare `sent` all'accodamento. Ancora isolato dal servizio attivo; timer/rete/UI/resolver certificati, fondazione/adozione radice e commit recuperabile restano aperti. Checkpoint Native obbligatorio prima dell'integrazione; fase 0 chiusa e fase 1/collaudi obbligatori aperti/rinviati. Nuova CI da leggere alla richiesta successiva, nessun polling.
+
+## Storico — tentativo di conferma gruppo isolato
 
 **CI `095488d` verificata `success`:** [iOS 37753300916](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300916) e [Android/desktop 37753300930](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37753300930). Modalità rapida/non Native-XCTest; nessun polling.
 
