@@ -8,6 +8,18 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**CI `5a9a8d4` riuscita:** [iOS 37922343508](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37922343508), [Android/desktop 37922343488](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37922343488). Esiti conclusi letti con SHA completo, nessun polling; modalità rapida/non Native-XCTest.
+
+**Nuovo incremento:** `GroupAdmissionConnection`, interno `jvmAndAndroidMain`, possiede socket mutual TLS 1.3 e bridge gruppo. Pin/identità TLS/ruoli, snapshot certificati 32 + endpoint reali prevalenti, prova prima di confronto/input, firma/I/O fuori dal lock, write+flush realmente riusciti prima di `sent`. Buffer 1028/deadline originale, EOF troncato/malformed sanitizzati, clean EOF/cancel/blocco/uscita/timeout revocano anche confermato e chiudono il socket. Cleanup unico con guasti visibili, scheduler condiviso mai arrestato. Nessun chiamante del servizio/UI/trust/SQLite, invariati wire 0/identità/schema/versioni/lock. Contratto in `docs/AMMISSIONE_GRUPPO.md`.
+
+**Verificato locale:** `./gradlew -Pandroid=true :connectivity:jvmTest --tests '*GroupAdmissionConnectionTest' --tests '*GroupAdmissionCertificateVerifierTest' --tests '*HandshakeV1ConnectionTest' --tests '*HandshakeV1TlsTest' :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 8 s, poi sola stessa selezione `:connectivity:jvmTest` dopo ultimi tre test/fixture, 10 s. **51 test JVM (24 nuovi connessione/7 certificati/20 bootstrap)**, zero errori/fallimenti/skipped; Android/desktop compilati. TLS/certificati/pin/JCA/offerte reali in loopback Windows, UI/guasti/clock simulati nei test; non Android fisico/Mac/Apple/mDNS. `git diff --check`. Nessun APK/build completa. Errori iniziali nelle fixture corretti, sicurezza non modificata.
+
+**Prossimo incremento unico:** handover bootstrap → gruppo sullo stesso canale, offerte fresche congelate e un solo owner/timer per socket. Nessun live `HandshakeV1Connection` può condividere il socket con l'attuale `adopt`; questa precondizione è documentata ma il passaggio non è implementato. Fondazione/adozione radice/scambio prova-certificati/commit recuperabile/Apple aperti, non promuovere dal solo `Confirmed`. Fase 1/collaudi fisici obbligatori aperti/rinviati. Nuova CI da consultare alla richiesta successiva senza polling.
+
+**Esito finale aggiornato:** `cleanupFailure` volatile conserva il guasto di cleanup anche se è il timer a eseguirlo. Dopo modifica produzione, stesso comando test/Android/desktop 13 s riuscito; dopo nuova regressione timer, sola selezione dei quattro test 11 s: **52 JVM riusciti (25 connessione/7 certificati/20 bootstrap)**, zero errori/fallimenti/skipped. Questo è il conteggio finale. Planner CI sulle modifiche: JVM/Android sì, iOS no, full=false; workflow invariati.
+
+## Storico — verificatore certificati
+
 **Checkpoint `6e892e4` riuscito:** [37776667526](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37776667526), letto una sola volta da concluso. Dominio/protocollo/persistenza `iosSimulatorArm64Test` eseguiti/BUILD SUCCESSFUL; framework/app compilati, 38 XCTest zero fallimenti. Interop bootstrap solo compilato, non ripetuto. Non hardware, nessun polling.
 
 **Nuovo incremento:** callback interno `GroupAdmissionCertificateVerifier` in connectivity `jvmAndAndroidMain`: pin SHA-256 DER indipendente/esatto, validità, parametri completi P-256, autofirma e ECDSA/SHA-256, Base64 canonico/limitato. Resolver mancante/certificati/firme invalidi rifiutati; guasti inattesi/cancellazione propagati, nessuna cache. Ancora isolato da rete/UI/trust/database; schema/wire 0/identità/versioni/lock invariati.
