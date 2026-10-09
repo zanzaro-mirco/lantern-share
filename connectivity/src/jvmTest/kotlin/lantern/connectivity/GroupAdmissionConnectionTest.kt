@@ -4,6 +4,7 @@ import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 import lantern.protocol.GroupAdmissionBridgeFailure
 import lantern.protocol.GroupAdmissionBridgeState
+import lantern.protocol.GroupAdmissionCertificate
 import lantern.protocol.GroupAdmissionChainResult
 import lantern.protocol.GroupAdmissionCodec
 import lantern.protocol.GroupAdmissionComparison
@@ -12,6 +13,9 @@ import lantern.protocol.GroupAdmissionConfirmationContext
 import lantern.protocol.GroupAdmissionConfirmationFailure
 import lantern.protocol.GroupAdmissionConfirmationFrameDecoder
 import lantern.protocol.GroupAdmissionConfirmationState
+import lantern.protocol.GroupAdmissionEvidence
+import lantern.protocol.GroupAdmissionEvidenceCodec
+import lantern.protocol.GroupAdmissionEvidenceFraming
 import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
@@ -25,10 +29,12 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.security.cert.X509Certificate
+import java.util.Base64
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HandshakeCompletedListener
 import javax.net.ssl.SSLServerSocket
@@ -45,6 +51,635 @@ import kotlin.test.assertTrue
 
 /** Real TLS/certificates/JCA. Test-only explicit UI clicks, injected clocks and I/O failures. */
 class GroupAdmissionConnectionTest {
+    @Test
+    fun evidenceCrossesTlsAndQueuedConfirmationSurvivesExactReads() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { issuer ->
+            fixture.bootstrapServer().use { member ->
+                assertTrue(issuer.start())
+                assertTrue(member.start())
+                assertTrue(issuer.readNext())
+                assertTrue(member.readNext())
+                val obsolete = assertNotNull(member.comparison())
+                assertNotNull(issuer.sendEvidenceAndTransfer(fixture.anchor, decodedEvidence(fixture))).use { left ->
+                    assertTrue(left.prepare())
+                    val leftCode = assertNotNull(left.comparison())
+                    // Sent BEFORE the peer reads evidence: both phases may share buffered TLS input.
+                    assertTrue(left.confirm(leftCode))
+                    assertNotNull(member.receiveEvidenceAndTransfer(fixture.anchor)).use { right ->
+                        assertTrue(right.prepare())
+                        val rightCode = assertNotNull(right.comparison())
+                        assertEquals(digest(leftCode.bytes), digest(rightCode.bytes))
+                        assertEquals(active(GroupAdmissionConfirmationState.AwaitingConfirmation(false)), right.state)
+                        assertTrue(right.readChunk())
+                        assertEquals(active(GroupAdmissionConfirmationState.AwaitingConfirmation(true)), right.state)
+                        assertFalse(member.confirm(obsolete))
+                        assertNull(member.receiveEvidenceAndTransfer(fixture.anchor))
+                        member.close()
+                        assertFalse(fixture.serverSocket.isClosed)
+                        assertTrue(right.confirm(rightCode))
+                        assertTrue(left.readChunk())
+                        assertConfirmed(left)
+                        assertConfirmed(right)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun transmittedEvidenceCannotAdoptAReceivedRoot() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { issuer ->
+            fixture.bootstrapServer().use { member ->
+                assertTrue(issuer.start()); assertTrue(member.start())
+                assertTrue(issuer.readNext()); assertTrue(member.readNext())
+                assertNotNull(issuer.sendEvidenceAndTransfer(fixture.anchor, decodedEvidence(fixture))).use {
+                    val independent = GroupTrustAnchor(fixture.anchor.groupId, fixture.member.id)
+                    assertFailsWith<IllegalArgumentException> { member.receiveEvidenceAndTransfer(independent) }
+                    assertTrue(fixture.serverSocket.isClosed)
+                    assertTrue(member.state is HandshakeV1ConnectionState.Closed)
+                    assertNull(member.comparison())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun transmittedAlteredSignatureFailsBeforeComparison() = withFixture(exchangeOffers = false) { fixture ->
+        val path = fixture.proof.admissions
+        val altered = GroupAdmissionProof(fixture.anchor, listOf(path.first(),
+            SignedGroupAdmission(path.last().claim, fixture.founder.sign(byteArrayOf(1)))))
+        fixture.bootstrapClient().use { issuer ->
+            fixture.bootstrapServer().use { member ->
+                assertTrue(issuer.start()); assertTrue(member.start())
+                assertTrue(issuer.readNext()); assertTrue(member.readNext())
+                assertNotNull(issuer.sendEvidenceAndTransfer(fixture.anchor, decodedEvidence(fixture, altered))).use { left ->
+                    assertNotNull(member.receiveEvidenceAndTransfer(fixture.anchor)).use { right ->
+                        for (owner in listOf(left, right)) {
+                            assertFalse(owner.prepare())
+                            assertNull(owner.comparison())
+                            assertClosed(owner, GroupAdmissionConfirmationFailure.InvalidProof(GroupAdmissionChainResult.InvalidSignature(1)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun hostileEvidenceHeaderClosesBootstrapWithoutAllocationOrHandover() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { issuer ->
+            fixture.bootstrapServer().use { member ->
+                assertTrue(issuer.start()); assertTrue(member.start())
+                assertTrue(issuer.readNext()); assertTrue(member.readNext())
+                // Test-only malicious peer writes a length above the dedicated evidence bound.
+                fixture.clientSocket.outputStream.write(byteArrayOf(0, 4, 0, 1))
+                fixture.clientSocket.outputStream.flush()
+                val error = assertFailsWith<InvalidGroupEvidenceFrameException> {
+                    member.receiveEvidenceAndTransfer(fixture.anchor)
+                }
+                assertNull(error.cause)
+                assertEquals(HandshakeV1ConnectionState.Closed(HandshakeV1ConnectionFailure.InvalidFrame), member.state)
+                assertTrue(fixture.serverSocket.isClosed)
+            }
+        }
+    }
+
+    @Test
+    fun malformedAndTruncatedEvidenceNeverReleaseOwnership() {
+        for (truncate in listOf(false, true)) withFixture(exchangeOffers = false) { fixture ->
+            fixture.bootstrapClient().use { issuer ->
+                fixture.bootstrapServer().use { member ->
+                    assertTrue(issuer.start())
+                    assertTrue(member.start())
+                    assertTrue(issuer.readNext())
+                    assertTrue(member.readNext())
+                    val payload = if (truncate) byteArrayOf('{'.code.toByte()) else "{\"secret\":true}".encodeToByteArray()
+                    fixture.clientSocket.outputStream.write(GroupAdmissionEvidenceFraming.header(if (truncate) 20 else payload.size) + payload)
+                    fixture.clientSocket.outputStream.flush()
+                    if (truncate) issuer.close()
+                    val error = assertFailsWith<IOException> { member.receiveEvidenceAndTransfer(fixture.anchor) }
+                    if (!truncate) {
+                        assertTrue(error is InvalidGroupEvidenceFrameException)
+                        assertNull(error.cause)
+                        assertFalse(error.message.orEmpty().contains("secret"))
+                    }
+                    assertTrue(member.state is HandshakeV1ConnectionState.Closed)
+                    assertTrue(fixture.serverSocket.isClosed)
+                    assertNull(member.comparison())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun memberCannotSendEvidenceAndBadReceivedDerCannotReachHandover() {
+        withFixture(exchangeOffers = false) { fixture ->
+            fixture.bootstrapClient().use { issuer ->
+                fixture.bootstrapServer().use { member ->
+                    assertTrue(issuer.start())
+                    assertTrue(member.start())
+                    assertTrue(issuer.readNext())
+                    assertTrue(member.readNext())
+                    assertFailsWith<IllegalArgumentException> { member.sendEvidenceAndTransfer(fixture.anchor, decodedEvidence(fixture)) }
+                    assertTrue(fixture.serverSocket.isClosed)
+                }
+            }
+        }
+        withFixture(exchangeOffers = false) { fixture ->
+            fixture.bootstrapClient().use { issuer ->
+                fixture.bootstrapServer().use { member ->
+                    assertTrue(issuer.start())
+                    assertTrue(member.start())
+                    assertTrue(issuer.readNext())
+                    assertTrue(member.readNext())
+                    val evidence = GroupAdmissionEvidence(fixture.proof, decodedEvidence(fixture).certificates.map {
+                        GroupAdmissionCertificate(it.identity, "AA==")
+                    })
+                    fixture.clientSocket.outputStream.write(GroupAdmissionEvidenceFraming.encode(evidence))
+                    fixture.clientSocket.outputStream.flush()
+                    assertFailsWith<InvalidGroupAdmissionCertificateException> { member.receiveEvidenceAndTransfer(fixture.anchor) }
+                    assertTrue(member.state is HandshakeV1ConnectionState.Closed)
+                    assertTrue(fixture.serverSocket.isClosed)
+                    assertNull(member.comparison())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun cancellationAndOriginalDeadlineAbortEvidenceReadAndQueuedBootstrapConfirmation() {
+        for (expire in listOf(false, true)) withFixture(exchangeOffers = false) { fixture ->
+            val entered = CountDownLatch(1)
+            var track = false
+            val now = java.util.concurrent.atomic.AtomicLong(1000)
+            val tasks = mutableListOf<Runnable>()
+            val scheduling = object : ScheduledExecutorService by fixture.scheduler {
+                override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> {
+                    tasks.add(command)
+                    return fixture.scheduler.schedule(command, delay, unit)
+                }
+            }
+            val wrapped = WrappedSocket(fixture.serverSocket, input = object : FilterInputStream(fixture.serverSocket.inputStream) {
+                override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                    if (track) entered.countDown()
+                    return super.read(bytes, offset, length)
+                }
+            })
+            fixture.bootstrapClient().use { issuer ->
+                fixture.bootstrapServer(wrapped, selectedAt = 1000, now = now::get, deadlineScheduler = scheduling).use { member ->
+                    assertTrue(issuer.start()); assertTrue(member.start())
+                    assertTrue(issuer.readNext()); assertTrue(member.readNext())
+                    val obsolete = assertNotNull(member.comparison())
+                    track = true
+                    val workers = Executors.newFixedThreadPool(2)
+                    try {
+                        val receiving = workers.submit<Boolean> {
+                            assertFailsWith<IOException> { member.receiveEvidenceAndTransfer(fixture.anchor) }
+                            true
+                        }
+                        assertTrue(entered.await(5, TimeUnit.SECONDS))
+                        assertNull(member.comparison())
+                        assertNull(member.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates))
+                        val confirming = workers.submit<Boolean> { member.confirm(obsolete) }
+                        if (expire) {
+                            now.set(121000)
+                            tasks.single().run()
+                            assertEquals(HandshakeV1ConnectionState.Closed(HandshakeV1ConnectionFailure.Handshake(
+                                lantern.protocol.ProtocolHandshakeFailure.Expired)), member.state)
+                        } else member.close()
+                        assertTrue(receiving.get(5, TimeUnit.SECONDS))
+                        assertFalse(confirming.get(5, TimeUnit.SECONDS))
+                        assertTrue(fixture.serverSocket.isClosed)
+                    } finally {
+                        member.close()
+                        workers.shutdownNow()
+                        assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun decodedEvidenceStillNeedsIndependentRootAndBothTlsBoundConfirmations() = withFixture(exchangeOffers = false) { fixture ->
+        // Codec/OS integration only: evidence is a local parameter, not yet exchanged by a transport owner.
+        val evidence = decodedEvidence(fixture)
+        val certificates = GroupAdmissionEvidenceCertificates.decode(evidence)
+        fixture.bootstrapClient().use { bootstrapLeft ->
+            fixture.bootstrapServer().use { bootstrapRight ->
+                assertTrue(bootstrapLeft.start())
+                assertTrue(bootstrapRight.start())
+                assertTrue(bootstrapLeft.readNext())
+                assertTrue(bootstrapRight.readNext())
+                assertNotNull(bootstrapLeft.transferToGroup(fixture.anchor, evidence.proof, certificates)).use { left ->
+                    assertNotNull(bootstrapRight.transferToGroup(fixture.anchor, evidence.proof, certificates)).use { right ->
+                        assertTrue(left.prepare())
+                        assertTrue(right.prepare())
+                        assertEquals(active(GroupAdmissionConfirmationState.AwaitingConfirmation(false)), left.state)
+                        assertEquals(active(GroupAdmissionConfirmationState.AwaitingConfirmation(false)), right.state)
+                        val leftCode = assertNotNull(left.comparison())
+                        val rightCode = assertNotNull(right.comparison())
+                        assertEquals(digest(leftCode.bytes), digest(rightCode.bytes))
+                        assertTrue(left.confirm(leftCode))
+                        assertTrue(right.readChunk())
+                        assertEquals(active(GroupAdmissionConfirmationState.AwaitingConfirmation(true)), right.state)
+                        assertTrue(right.confirm(rightCode))
+                        assertTrue(left.readChunk())
+                        assertConfirmed(left)
+                        assertConfirmed(right)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun decodedValidCertificatesCannotAuthorizeAnAlteredProof() = withFixture(exchangeOffers = false) { fixture ->
+        val path = fixture.proof.admissions
+        val altered = GroupAdmissionProof(fixture.anchor, listOf(path.first(),
+            SignedGroupAdmission(path.last().claim, fixture.founder.sign(byteArrayOf(1)))))
+        val evidence = decodedEvidence(fixture, altered)
+        val certificates = GroupAdmissionEvidenceCertificates.decode(evidence)
+        fixture.bootstrapClient().use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                assertNotNull(bootstrap.transferToGroup(fixture.anchor, evidence.proof, certificates)).use { owner ->
+                    assertFalse(owner.prepare())
+                    assertNull(owner.comparison())
+                    assertClosed(owner, GroupAdmissionConfirmationFailure.InvalidProof(GroupAdmissionChainResult.InvalidSignature(1)))
+                    assertTrue(fixture.clientSocket.isClosed)
+                    assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+                }
+            }
+        }
+    }
+
+    private fun decodedEvidence(fixture: Fixture, proof: GroupAdmissionProof = fixture.proof): GroupAdmissionEvidence {
+        val supplied = GroupAdmissionEvidence(proof, listOf(fixture.founder, fixture.issuer).map {
+            GroupAdmissionCertificate(it.id, Base64.getEncoder().encodeToString(it.certificate.encoded))
+        })
+        return GroupAdmissionEvidenceCodec.decode(GroupAdmissionEvidenceCodec.encode(supplied))
+    }
+
+    @Test
+    fun bootstrapHandsTheSameTlsSocketToGroupAndOldOwnerCannotAbortIt() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { bootstrapLeft ->
+            fixture.bootstrapServer().use { bootstrapRight ->
+                assertNull(bootstrapLeft.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates))
+                assertTrue(bootstrapLeft.start())
+                assertTrue(bootstrapRight.start())
+                assertTrue(bootstrapLeft.readNext())
+                assertTrue(bootstrapRight.readNext())
+                val obsolete = assertNotNull(bootstrapLeft.comparison())
+                assertNotNull(bootstrapLeft.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { left ->
+                    assertNotNull(bootstrapRight.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { right ->
+                        assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrapLeft.state)
+                        assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrapRight.state)
+                        bootstrapLeft.close()
+                        bootstrapRight.close()
+                        assertFalse(bootstrapLeft.start())
+                        assertFalse(bootstrapLeft.readNext())
+                        assertFalse(bootstrapLeft.confirm(obsolete))
+                        assertNull(bootstrapLeft.comparison())
+                        assertNull(bootstrapLeft.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates))
+                        assertFalse(fixture.clientSocket.isClosed)
+                        assertTrue(left.prepare())
+                        assertTrue(right.prepare())
+                        val leftCode = assertNotNull(left.comparison())
+                        val rightCode = assertNotNull(right.comparison())
+                        assertEquals(digest(leftCode.bytes), digest(rightCode.bytes))
+                        assertTrue(left.confirm(leftCode))
+                        assertTrue(right.readChunk())
+                        assertTrue(right.confirm(rightCode))
+                        assertTrue(left.readChunk())
+                        assertConfirmed(left)
+                        assertConfirmed(right)
+                    }
+                }
+            }
+        }
+        assertTrue(fixture.clientSocket.isClosed)
+        assertTrue(fixture.serverSocket.isClosed)
+        assertFalse(fixture.scheduler.isShutdown)
+    }
+
+    @Test
+    fun handoverRejectsOldApproveAndInvalidIndependentAnchor() {
+        withFixture(exchangeOffers = false) { fixture ->
+            fixture.bootstrapClient().use { left ->
+                fixture.bootstrapServer().use { right ->
+                    assertTrue(left.start())
+                    assertTrue(right.start())
+                    assertTrue(left.readNext())
+                    assertTrue(right.readNext())
+                    assertTrue(left.confirm(assertNotNull(left.comparison())))
+                    assertNull(left.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates))
+                    assertTrue(right.readNext())
+                    assertNull(right.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates))
+                    assertFalse(fixture.clientSocket.isClosed)
+                }
+            }
+        }
+        withFixture(exchangeOffers = false) { fixture ->
+            fixture.bootstrapClient().use { left ->
+                fixture.bootstrapServer().use { right ->
+                    assertTrue(left.start())
+                    assertTrue(right.start())
+                    assertTrue(left.readNext())
+                    assertFailsWith<IllegalArgumentException> {
+                        left.transferToGroup(GroupTrustAnchor(randomNonce(), fixture.founder.id), fixture.proof, fixture.certificates)
+                    }
+                    assertTrue(fixture.clientSocket.isClosed)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun blockedBootstrapReadMakesHandoverNonblockingWithoutStealingSocket() = withFixture(exchangeOffers = false) { fixture ->
+        val entered = CountDownLatch(1)
+        var trackRead = false
+        val socket = WrappedSocket(fixture.clientSocket, input = object : FilterInputStream(fixture.clientSocket.inputStream) {
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                if (trackRead) entered.countDown()
+                return super.read(bytes, offset, length)
+            }
+        })
+        fixture.bootstrapClient(socket).use { owner ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(owner.start())
+                assertTrue(peer.start())
+                assertTrue(owner.readNext())
+                assertNotNull(owner.comparison())
+                trackRead = true
+                val reader = Executors.newFixedThreadPool(2)
+                try {
+                    val pending = reader.submit<Boolean> { owner.readNext() }
+                    assertTrue(entered.await(5, TimeUnit.SECONDS))
+                    val transferring = reader.submit<GroupAdmissionConnection?> {
+                        owner.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)
+                    }
+                    assertNull(transferring.get(1, TimeUnit.SECONDS))
+                    assertFalse(fixture.clientSocket.isClosed)
+                    owner.close()
+                    assertFailsWith<java.util.concurrent.ExecutionException> { pending.get(5, TimeUnit.SECONDS) }
+                    assertTrue(fixture.clientSocket.isClosed)
+                } finally {
+                    owner.close()
+                    reader.shutdownNow()
+                    assertTrue(reader.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun simultaneousHandoverHasExactlyOneReceivingOwner() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                val workers = Executors.newFixedThreadPool(2)
+                val start = CountDownLatch(1)
+                try {
+                    val transfers = (1..2).map {
+                        workers.submit<GroupAdmissionConnection?> {
+                            check(start.await(5, TimeUnit.SECONDS))
+                            bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)
+                        }
+                    }
+                    start.countDown()
+                    val owners = transfers.mapNotNull { it.get(5, TimeUnit.SECONDS) }
+                    assertEquals(1, owners.size)
+                    owners.single().use { owner ->
+                        bootstrap.close()
+                        assertFalse(fixture.clientSocket.isClosed)
+                        assertTrue(owner.prepare())
+                        assertNotNull(owner.comparison())
+                    }
+                    assertTrue(fixture.clientSocket.isClosed)
+                } finally {
+                    start.countDown()
+                    workers.shutdownNow()
+                    assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun queuedOldApproveCannotBecomeGroupConfirmationAfterHandover() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                assertTrue(peer.readNext())
+                assertTrue(peer.confirm(assertNotNull(peer.comparison())))
+                assertNotNull(bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { group ->
+                    assertTrue(group.prepare())
+                    // Bootstrap writes header/body separately; a TLS read may contain only the header.
+                    assertFailsWith<InvalidGroupAdmissionFrameException> { repeat(4) { group.readChunk() } }
+                    assertEquals(GroupAdmissionBridgeState.Closed(GroupAdmissionBridgeFailure.InvalidFrame), group.state)
+                    assertTrue(fixture.clientSocket.isClosed)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun groupFrameQueuedWithHelloSurvivesExactBootstrapReadAndHandover() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { bootstrap ->
+            assertTrue(bootstrap.start())
+            val peerStream = HandshakeV1FrameStream(fixture.serverSocket.inputStream, fixture.serverSocket.outputStream)
+            val local = (peerStream.read() as ProtocolHandshakeFrame.Hello).participant
+            val context = GroupAdmissionConfirmationContext(local, fixture.memberOffer, fixture.anchor, fixture.proof)
+            val hello = lantern.protocol.ProtocolHandshakeFrameCodec.encode(ProtocolHandshakeFrame.Hello(fixture.memberOffer))
+            val confirmation = remoteFrame(fixture, context)
+            fixture.serverSocket.outputStream.apply { write(framed(hello) + confirmation); flush() }
+            assertTrue(bootstrap.readNext())
+            assertNotNull(bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { group ->
+                assertTrue(group.prepare())
+                val comparison = assertNotNull(group.comparison())
+                assertEquals(digest(context.comparisonBytes()), digest(comparison.bytes))
+                assertTrue(group.readChunk())
+                assertEquals(active(GroupAdmissionConfirmationState.AwaitingConfirmation(true)), group.state)
+                assertTrue(group.confirm(comparison))
+                assertConfirmed(group)
+            }
+        }
+    }
+
+    @Test
+    fun handoverDoesNotResetDeadlineAndOldTimerCannotCloseNewOwner() = withFixture(exchangeOffers = false) { fixture ->
+        val selectedAt = monotonicMillis() - 119_000
+        fixture.bootstrapClient(selectedAt = selectedAt).use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                assertNotNull(bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { group ->
+                    assertTrue(group.prepare())
+                    val expired = CountDownLatch(1)
+                    fixture.scheduler.schedule({ expired.countDown() }, 1300, TimeUnit.MILLISECONDS)
+                    assertTrue(expired.await(5, TimeUnit.SECONDS))
+                    assertTrue(fixture.clientSocket.isClosed)
+                    assertClosed(group, GroupAdmissionConfirmationFailure.Expired)
+                    assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+                    assertFalse(fixture.scheduler.isShutdown)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun receivingOwnerInitializationFailureStillClosesReleasedSocket() = withFixture(exchangeOffers = false) { fixture ->
+        fixture.bootstrapClient().use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                assertFailsWith<IllegalArgumentException> {
+                    bootstrap.transferToGroup(fixture.anchor, fixture.proof, mapOf("alias" to fixture.founder.certificate))
+                }
+                assertTrue(fixture.clientSocket.isClosed)
+                assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+                assertNull(bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates))
+                bootstrap.close()
+                assertFalse(fixture.scheduler.isShutdown)
+            }
+        }
+    }
+
+    @Test
+    fun alreadyQueuedOldDeadlineCallbackCannotTouchReceivingSocket() = withFixture(exchangeOffers = false) { fixture ->
+        val tasks = mutableListOf<Runnable>()
+        val scheduling = object : ScheduledExecutorService by fixture.scheduler {
+            override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> {
+                tasks.add(command)
+                return fixture.scheduler.schedule(command, delay, unit)
+            }
+        }
+        fixture.bootstrapClient(deadlineScheduler = scheduling).use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                val obsoleteTimer = tasks.single()
+                assertNotNull(bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { group ->
+                    assertEquals(2, tasks.size)
+                    // Simulate an old callback already queued when cancel(false) ran.
+                    obsoleteTimer.run()
+                    assertEquals(2, tasks.size)
+                    assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+                    assertFalse(fixture.clientSocket.isClosed)
+                    assertTrue(group.prepare())
+                    assertNotNull(group.comparison())
+                }
+            }
+        }
+    }
+
+    @Test
+    fun receivingDeadlineSchedulerFailureClosesSocketAndPropagatesExactError() = withFixture(exchangeOffers = false) { fixture ->
+        val failure = RejectedExecutionException("Test-only receiving deadline failure")
+        var scheduled = false
+        val scheduling = object : ScheduledExecutorService by fixture.scheduler {
+            override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> {
+                if (scheduled) throw failure
+                scheduled = true
+                return fixture.scheduler.schedule(command, delay, unit)
+            }
+        }
+        fixture.bootstrapClient(deadlineScheduler = scheduling).use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                assertSame(failure, assertFailsWith<RejectedExecutionException> {
+                    bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)
+                })
+                assertTrue(fixture.clientSocket.isClosed)
+                assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+                assertFalse(fixture.scheduler.isShutdown)
+            }
+        }
+    }
+
+    @Test
+    fun receivingStreamFailureAbortsOnceAndOldCloseCannotRetryCleanup() = withFixture(exchangeOffers = false) { fixture ->
+        val failure = IOException("Test-only receiving stream failure")
+        var inputs = 0
+        var closes = 0
+        val socket = object : WrappedSocket(fixture.clientSocket) {
+            override fun getInputStream(): InputStream {
+                if (++inputs == 2) throw failure
+                return super.getInputStream()
+            }
+            override fun close() {
+                closes++
+                super.close()
+            }
+        }
+        fixture.bootstrapClient(socket).use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                assertSame(failure, assertFailsWith<IOException> {
+                    bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)
+                })
+                bootstrap.close()
+                assertEquals(1, closes)
+                assertTrue(fixture.clientSocket.isClosed)
+                assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+            }
+        }
+        assertEquals(1, closes)
+    }
+
+    @Test
+    fun expiryBetweenOfferSnapshotAndAdoptionClosesReceivingOwner() = withFixture(exchangeOffers = false) { fixture ->
+        var now = 1000L
+        var observations: ArrayDeque<Long>? = null
+        fixture.bootstrapClient(selectedAt = 1000, now = { observations?.removeFirstOrNull() ?: now }).use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                observations = ArrayDeque(listOf(120_997L, 120_998L, 121_000L))
+                now = 121_000
+                assertNotNull(bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)).use { group ->
+                    assertTrue(fixture.clientSocket.isClosed)
+                    assertClosed(group, GroupAdmissionConfirmationFailure.Expired)
+                    assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun backwardsClockDuringAdoptionCannotReviveOriginalBudget() = withFixture(exchangeOffers = false) { fixture ->
+        var now = 1000L
+        var observations: ArrayDeque<Long>? = null
+        fixture.bootstrapClient(selectedAt = 1000, now = { observations?.removeFirstOrNull() ?: now }).use { bootstrap ->
+            fixture.bootstrapServer().use { peer ->
+                assertTrue(bootstrap.start())
+                assertTrue(peer.start())
+                assertTrue(bootstrap.readNext())
+                observations = ArrayDeque(listOf(2000L, 2001L, 1999L))
+                now = 1999
+                assertFailsWith<IllegalArgumentException> {
+                    bootstrap.transferToGroup(fixture.anchor, fixture.proof, fixture.certificates)
+                }
+                assertTrue(fixture.clientSocket.isClosed)
+                assertEquals(HandshakeV1ConnectionState.ReleasedToGroup, bootstrap.state)
+            }
+        }
+    }
     @Test
     fun delegatedProofAndBothExplicitConfirmationsAreRequired() = withFixture { fixture ->
         fixture.clientOwner().use { left ->
@@ -598,6 +1233,7 @@ class GroupAdmissionConnectionTest {
     private inner class Fixture(
         val clientSocket: SSLSocket, val serverSocket: SSLSocket, val peers: Peers,
         val selectedAt: Long, val scheduler: ScheduledExecutorService,
+        exchangeOffers: Boolean,
     ) {
         val founder get() = peers.founder
         val issuer get() = peers.issuer
@@ -611,6 +1247,10 @@ class GroupAdmissionConnectionTest {
         val context: GroupAdmissionConfirmationContext
 
         init {
+            context = if (exchangeOffers) exchangeContext() else GroupAdmissionConfirmationContext(issuerOffer, memberOffer, anchor, proof)
+        }
+
+        private fun exchangeContext(): GroupAdmissionConfirmationContext {
             // Offers really cross the pinned TLS connection. No live bootstrap owner/timer handover.
             val client = HandshakeV1FrameStream(clientSocket.inputStream, clientSocket.outputStream)
             val server = HandshakeV1FrameStream(serverSocket.inputStream, serverSocket.outputStream)
@@ -627,8 +1267,17 @@ class GroupAdmissionConnectionTest {
                 assertEquals(capabilities.supportedFeatures, received.capabilities.supportedFeatures)
                 assertEquals(capabilities.requiredFeatures, received.capabilities.requiredFeatures)
             }
-            context = GroupAdmissionConfirmationContext(receivedIssuer, receivedMember, anchor, proof)
+            return GroupAdmissionConfirmationContext(receivedIssuer, receivedMember, anchor, proof)
         }
+
+        fun bootstrapClient(socket: SSLSocket = clientSocket, selectedAt: Long = this.selectedAt,
+            now: () -> Long = ::monotonicMillis,
+            deadlineScheduler: ScheduledExecutorService = scheduler) = HandshakeV1Connection.adopt(socket, issuer, capabilities,
+                member.id, selectedAt, deadlineScheduler, now)
+        fun bootstrapServer(socket: SSLSocket = serverSocket, selectedAt: Long = this.selectedAt,
+            now: () -> Long = ::monotonicMillis,
+            deadlineScheduler: ScheduledExecutorService = scheduler) = HandshakeV1Connection.adopt(socket, member, capabilities,
+            issuer.id, selectedAt, deadlineScheduler, now)
 
         fun clientOwner(socket: SSLSocket = clientSocket, certificates: Map<String, X509Certificate> = this.certificates,
             selectedAt: Long = this.selectedAt, now: () -> Long = ::monotonicMillis) =
@@ -637,7 +1286,7 @@ class GroupAdmissionConnectionTest {
             GroupAdmissionConnection.adopt(serverSocket, member, context, certificates, issuer.id, selectedAt, scheduler)
     }
 
-    private fun withFixture(peers: Peers = Peers(), block: (Fixture) -> Unit) {
+    private fun withFixture(peers: Peers = Peers(), exchangeOffers: Boolean = true, block: (Fixture) -> Unit) {
         val selectedAt = monotonicMillis()
         val loopback = InetAddress.getLoopbackAddress()
         val scheduler = Executors.newSingleThreadScheduledExecutor()
@@ -666,7 +1315,7 @@ class GroupAdmissionConnectionTest {
                     client.enabledProtocols = arrayOf("TLSv1.3")
                     client.startHandshake()
                     accepting.get(5, TimeUnit.SECONDS).use { server ->
-                        block(Fixture(client, server, peers, selectedAt, scheduler))
+                        block(Fixture(client, server, peers, selectedAt, scheduler, exchangeOffers))
                     }
                 }
             } finally {

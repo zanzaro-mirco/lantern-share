@@ -8,8 +8,12 @@ import java.nio.charset.CharacterCodingException
 import lantern.protocol.ProtocolHandshakeFrame
 import lantern.protocol.ProtocolHandshakeFrameCodec
 import lantern.protocol.ProtocolHandshakeFraming
+import lantern.protocol.GroupAdmissionEvidence
+import lantern.protocol.GroupAdmissionEvidenceFrameDecoder
+import lantern.protocol.GroupAdmissionEvidenceFraming
 
 internal class InvalidHandshakeV1FrameException : IOException("Invalid v1 bootstrap frame")
+internal class InvalidGroupEvidenceFrameException : IOException("Invalid group evidence frame")
 
 /** Bootstrap-only uint32 big-endian framing; no changes to the active v0 FrameStream. */
 internal class HandshakeV1FrameStream(private val input: InputStream, private val output: OutputStream) {
@@ -38,6 +42,32 @@ internal class HandshakeV1FrameStream(private val input: InputStream, private va
         val bytes = ProtocolHandshakeFrameCodec.encode(frame)
         output.write(ProtocolHandshakeFraming.header(bytes.size))
         output.write(bytes)
+        output.flush()
+    }
+
+    /** Exact reads leave the next phase's bytes on the same transport, including coalesced records. */
+    fun readEvidence(beforeRead: () -> Unit): GroupAdmissionEvidence {
+        val decoder = GroupAdmissionEvidenceFrameDecoder()
+        val buffer = ByteArray(GroupAdmissionEvidenceFrameDecoder.MAX_CHUNK_BYTES)
+        try {
+            while (true) {
+                beforeRead()
+                val count = input.read(buffer, 0, decoder.nextReadBytes)
+                if (count < 0) throw EOFException("Truncated group evidence stream")
+                if (count == 0) throw IOException("Group evidence stream made no progress")
+                val result = decoder.accept(buffer.copyOf(count))
+                check(result.consumedBytes == count) { "Evidence read crossed a frame boundary" }
+                result.evidence?.let { return it }
+            }
+        } catch (_: IllegalArgumentException) {
+            throw InvalidGroupEvidenceFrameException()
+        } finally {
+            decoder.close()
+        }
+    }
+
+    fun writeEvidence(evidence: GroupAdmissionEvidence) {
+        output.write(GroupAdmissionEvidenceFraming.encode(evidence))
         output.flush()
     }
 

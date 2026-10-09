@@ -39,6 +39,21 @@ class ProtocolHandshakeComparison internal constructor(bytes: ByteArray) {
     val bytes: ByteArray get() = content.copyOf()
 }
 
+/** TLS-bound compatible offers only; not approval, membership, or permission to reuse a socket. */
+class ProtocolHandshakeOffers internal constructor(
+    local: ProtocolHandshakeParticipant,
+    remote: ProtocolHandshakeParticipant,
+    /** Monotonic watermark; a receiving owner must not accept an earlier clock observation. */
+    val observedAtMillis: Long,
+) {
+    private val localContent = ProtocolHandshakeParticipant(local.identity, local.nonce, local.capabilities)
+    private val remoteContent = ProtocolHandshakeParticipant(remote.identity, remote.nonce, remote.capabilities)
+    val local: ProtocolHandshakeParticipant
+        get() = ProtocolHandshakeParticipant(localContent.identity, localContent.nonce, localContent.capabilities)
+    val remote: ProtocolHandshakeParticipant
+        get() = ProtocolHandshakeParticipant(remoteContent.identity, remoteContent.nonce, remoteContent.capabilities)
+}
+
 /**
  * Isolated v1 bootstrap on one already authenticated TLS connection, not a service or trust store.
  * The owner must serialize ALL calls on its connection queue, send [localHello] before receiving
@@ -95,6 +110,16 @@ class ProtocolHandshakeAttempt(
     fun comparison(): ProtocolHandshakeComparison? {
         if (!isActive()) return null
         return comparison
+    }
+
+    /**
+     * The connection owner may switch to group confirmation BEFORE either bootstrap approval.
+     * It must exclude in-flight I/O, invalidate this attempt and transfer ownership atomically.
+     * A retained snapshot never proves that the original attempt is still alive.
+     */
+    fun offersForGroupAdmission(): ProtocolHandshakeOffers? {
+        if (!isActive() || verifying || current != ProtocolHandshakeState.AwaitingConfirmation(false)) return null
+        return ProtocolHandshakeOffers(local, checkNotNull(remote), lastObservedMillis)
     }
 
     fun receive(frame: ProtocolHandshakeFrame): Boolean {

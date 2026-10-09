@@ -20,6 +20,49 @@ class ProtocolHandshakeAttemptTest {
     private class Clock(var now: Long = 1000)
 
     @Test
+    fun groupOffersRequireCompatibleHelloAndNoBootstrapApproval() {
+        val attempt = attempt(local = participant("a", "1", setOf("text", "receipts")))
+        assertNull(attempt.offersForGroupAdmission())
+        assertTrue(attempt.receive(ProtocolHandshakeFrame.Hello(remote)))
+        val offers = assertNotNull(attempt.offersForGroupAdmission())
+        assertEquals(local.identity, offers.local.identity)
+        assertEquals(local.nonce, offers.local.nonce)
+        assertEquals(remote.identity, offers.remote.identity)
+        assertEquals(remote.nonce, offers.remote.nonce)
+        mutate(offers.local.capabilities.supportedFeatures)
+        assertEquals(setOf("text", "receipts"), offers.local.capabilities.supportedFeatures)
+        assertEquals(setOf("text", "receipts"), assertNotNull(attempt.offersForGroupAdmission()).local.capabilities.supportedFeatures)
+        assertNotNull(attempt.confirm(assertNotNull(attempt.comparison())))
+        assertNull(attempt.offersForGroupAdmission())
+        attempt.cancel()
+        assertNull(attempt.offersForGroupAdmission())
+        // Snapshots are data, not a live authorization; they survive cancellation without reviving it.
+        assertEquals(remote.nonce, offers.remote.nonce)
+    }
+
+    @Test
+    fun remoteApprovalAndExpiryPreventGroupOfferExport() {
+        val approved = attempt()
+        assertTrue(approved.receive(ProtocolHandshakeFrame.Hello(remote)))
+        assertTrue(approved.receive(approval))
+        assertNull(approved.offersForGroupAdmission())
+        val signing = assertNotNull(approved.confirm(assertNotNull(approved.comparison())))
+        val sending = assertNotNull(approved.signed(signing, signature))
+        assertTrue(approved.sent(sending))
+        assertEquals(ready(), approved.state)
+        assertNull(approved.offersForGroupAdmission())
+        val wrongPin = attempt(tls = "c".repeat(64))
+        assertNull(wrongPin.offersForGroupAdmission())
+        assertClosed(wrongPin, ProtocolHandshakeFailure.IdentityMismatch)
+        val clock = Clock()
+        val expired = attempt(clock = clock)
+        assertTrue(expired.receive(ProtocolHandshakeFrame.Hello(remote)))
+        clock.now += ProtocolHandshakeAttempt.TIMEOUT_MILLIS
+        assertNull(expired.offersForGroupAdmission())
+        assertClosed(expired, ProtocolHandshakeFailure.Expired)
+    }
+
+    @Test
     fun remainingReadBudgetUsesSelectionDeadlineAndInvalidatesOnExpiry() {
         val clock = Clock()
         val attempt = attempt(clock = clock)

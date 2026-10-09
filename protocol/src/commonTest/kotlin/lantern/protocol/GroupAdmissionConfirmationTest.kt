@@ -25,6 +25,45 @@ class GroupAdmissionConfirmationTest {
     private val context = GroupAdmissionConfirmationContext(issuerOffer, memberOffer, anchor, proof)
 
     @Test
+    fun bootstrapOfferOrderDoesNotChangeAdmissionRolesOrComparison() {
+        for (offers in listOf(ProtocolHandshakeOffers(issuerOffer, memberOffer, 1000),
+            ProtocolHandshakeOffers(memberOffer, issuerOffer, 1000))) {
+            val derived = GroupAdmissionConfirmationContext.fromBootstrapOffers(offers, anchor, proof)
+            assertEquals(issuer, derived.issuerIdentity)
+            assertEquals(member, derived.memberIdentity)
+            assertContentEquals(context.comparisonBytes(), derived.comparisonBytes())
+            assertContentEquals(context.approvalBytes(issuer), derived.approvalBytes(issuer))
+            assertContentEquals(context.approvalBytes(member), derived.approvalBytes(member))
+        }
+    }
+
+    @Test
+    fun bootstrapContextRejectsNonEndpointRolesAndSubstitutedIndependentRoot() {
+        val offers = ProtocolHandshakeOffers(issuerOffer, memberOffer, 1000)
+        assertFailsWith<IllegalArgumentException> {
+            GroupAdmissionConfirmationContext.fromBootstrapOffers(offers, GroupTrustAnchor(other, issuer), proof)
+        }
+        for (claim in listOf(GroupAdmissionClaim(group, other, member),
+            GroupAdmissionClaim(group, issuer, other))) {
+            assertFailsWith<IllegalArgumentException> {
+                GroupAdmissionConfirmationContext.fromBootstrapOffers(offers, anchor,
+                    GroupAdmissionProof(anchor, listOf(SignedGroupAdmission(claim, admission.signature))))
+            }
+        }
+    }
+
+    @Test
+    fun bootstrapContextRetainsOriginalNonceAndCapabilitiesDespiteMutatedViews() {
+        val offers = ProtocolHandshakeOffers(issuerOffer, memberOffer, 1000)
+        val exposed = offers.local
+        if (exposed.capabilities.supportedFeatures is MutableSet<String>) exposed.capabilities.supportedFeatures.clear()
+        if (exposed.capabilities.requiredFeatures is MutableSet<String>) exposed.capabilities.requiredFeatures.clear()
+        val derived = GroupAdmissionConfirmationContext.fromBootstrapOffers(offers, anchor, proof)
+        assertContentEquals(context.comparisonBytes(), derived.comparisonBytes())
+        assertEquals(1000, offers.observedAtMillis)
+    }
+
+    @Test
     fun comparisonBindsCanonicalProofAndCompleteBootstrapWithSeparateDomain() {
         val fields = listOf("lantern-group-admission-confirm-1", issuer, member,
             ProtocolHandshakeTranscript.bytes(issuerOffer, memberOffer).decodeToString(),

@@ -55,4 +55,24 @@ class GroupAdmissionConfirmationContext(
     private fun fields(values: List<String>) = values.joinToString("") {
         "${it.encodeToByteArray().size}:$it"
     }.encodeToByteArray()
+
+    companion object {
+        /**
+         * Derives roles from frozen TLS-bound offers, never from a replacement participant/nonce.
+         * The connection owner must still check liveness, transfer the socket and preserve its clock.
+         * The independent anchor is mandatory; this does not verify the proof or adopt its root.
+         */
+        fun fromBootstrapOffers(
+            offers: ProtocolHandshakeOffers,
+            expectedAnchor: GroupTrustAnchor,
+            proof: GroupAdmissionProof,
+        ): GroupAdmissionConfirmationContext {
+            val local = offers.local
+            val remote = offers.remote
+            val issuerId = proof.admissions.last().claim.issuerId
+            val issuer = if (local.identity == issuerId) local else remote
+            val member = if (local.identity == issuerId) remote else local
+            return GroupAdmissionConfirmationContext(issuer, member, expectedAnchor, proof)
+        }
+    }
 }

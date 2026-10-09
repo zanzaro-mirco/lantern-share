@@ -46,7 +46,7 @@ object GroupAdmissionProofCodec {
         ProofSerializer, decodeBoundedProtocolJson(bytes, MAX_BYTES, maxDepth = 4),
     )
 
-    private object ProofSerializer : KSerializer<GroupAdmissionProof> {
+    internal object ProofSerializer : KSerializer<GroupAdmissionProof> {
         override val descriptor = buildClassSerialDescriptor("lantern.protocol.GroupAdmissionProofV1") {
             element<JsonPrimitive>("version")
             element("anchor", AnchorSerializer.descriptor)
