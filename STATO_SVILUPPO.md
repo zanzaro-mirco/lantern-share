@@ -1,6 +1,24 @@
-# Stato sviluppo — 8 ottobre 2026
+# Stato sviluppo — 9 ottobre 2026
 
-## Sintesi corrente — bridge conferme gruppo isolato
+## Sintesi corrente — verificatore certificati gruppo JVM/Android
+
+**Checkpoint `6e892e4` verificato riuscito:** [37776667526](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37776667526). Lettura unica della run conclusa e dei risultati pertinenti: `:domain:iosSimulatorArm64Test :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test` eseguiti/BUILD SUCCESSFUL; framework e app compilati; **38 XCTest, zero fallimenti**. Bootstrap interop compilato ma intenzionalmente non rieseguito. Evidenza Native/simulatore, non hardware; nessun polling.
+
+**Implementato:** `GroupAdmissionCertificateVerifier`, interno a connectivity `jvmAndAndroidMain`, callback JCA per la prova isolata. Risolve il certificato per pin atteso, verifica SHA-256 DER esatto, validità temporale, parametri completi P-256, autofirma e firma ECDSA/SHA-256. Base64 canonico/limitato; certificato sconosciuto/invalido o firma errata rifiutati; guasti inattesi e cancellazione propagati. Nessuna cache che nasconda cambi del resolver. Non adotta radici, non scrive trust e non ha chiamanti nel servizio attivo; wire 0, SQLite, identità/versioni/lock invariati.
+
+**Verificato locale:** JDK 17/cache esistente, `./gradlew -Pandroid=true :connectivity:jvmTest --tests '*GroupAdmissionCertificateVerifierTest' :androidApp:compileDebugKotlin :desktopApp:classes --console=plain`, 29 s, **sette test JVM riusciti**, zero errori/fallimenti/skipped. Catena delegata con certificati e pin reali, certificato mancante/sostituito anche stessa chiave, validità, curva errata/autofirma errata, firme/byte alterati, errori/cancellazione, pin malformato e resolver non cachato. Android/desktop compilati; non esecuzione del nuovo adattatore su Android/Apple/hardware, non TLS del gruppo. `git diff --check`; nessun APK/build completa.
+
+**Prossimo incremento unico:** proprietario di connessione JVM isolato per le conferme gruppo, usando bridge e questo callback, pin TLS selezionati, write realmente completata, deadline e chiusura del socket. Test TLS loopback pertinenti; nessuna attivazione nel servizio PoC o commit trust. Fondazione/adozione radice, fornitura certificati Apple e commit recuperabile ancora aperti. Fase 0 chiusa; fase 1/collaudi fisici obbligatori aperti/rinviati. CI dopo il nuovo push non ancora attestata, nessun polling.
+
+## Storico — checkpoint Native/iOS avviato
+
+**CI rapida `6e892e4` verificata `success`:** [iOS 37774624159](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37774624159), [Android/desktop 37774624217](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37774624217). Una sola lettura degli esiti conclusi, nessun polling; verde rapido non attesta esecuzione Native/XCTest.
+
+Verificato `main` remoto uguale al commit locale `6e892e42191e203233374865c048a03805b5cb6d`. Avviato una sola volta `gh workflow run ios.yml --repo zanzaro-mirco/lantern-share --ref main -f bootstrap_interop=false`: [checkpoint 37776667526](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37776667526). Link restituito dal dispatch, **esito non ancora verificato**. Deve eseguire i test comuni Native di dominio/protocollo/persistenza e XCTest ordinari; non ripete i tre scenari bootstrap interop già verificati. Nessun monitoraggio/attesa/polling, nuova build locale o modifica prodotto.
+
+**Prossimo passo unico:** leggere l'esito concluso di `37776667526`; se ancora pendente, link/commit e stop, senza rilancio. In caso di errore correggere soltanto la regressione pertinente; dopo successo riprendere l'integrazione OS circoscritta del gruppo. Nessuna attivazione trust, fondazione/adozione radice/resolver certificati/commit recuperabile restano aperti. Fase 0 chiusa; fase 1/collaudi fisici obbligatori aperti/rinviati. Evidenze documentali locali da includere nel prossimo push coerente, senza un push di sole note ora.
+
+## Storico — bridge conferme gruppo isolato
 
 **CI `ca81d2b` verificata `success`:** [iOS 37770692900](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37770692900), [Android/desktop 37770692893](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37770692893). Modalità rapida/non esecuzione Native-XCTest. Nessun polling.
 
