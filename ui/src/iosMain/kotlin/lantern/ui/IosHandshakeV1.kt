@@ -10,11 +10,12 @@ import lantern.protocol.ProtocolHandshakeComparison
 import lantern.protocol.ProtocolHandshakeFailure
 import lantern.protocol.ProtocolHandshakeFrameDecoder
 import lantern.protocol.ProtocolHandshakeParticipant
+import lantern.protocol.ProtocolHandshakeOffers
 import lantern.protocol.ProtocolHandshakeState
 
 enum class IosHandshakeV1Phase {
     AWAITING_START, SENDING_HELLO, AWAITING_HELLO, AWAITING_CONFIRMATION,
-    SIGNING_APPROVAL, SENDING_APPROVAL, AWAITING_REMOTE_APPROVAL, READY, CLOSED,
+    SIGNING_APPROVAL, SENDING_APPROVAL, AWAITING_REMOTE_APPROVAL, READY, CLOSED, RELEASED_TO_GROUP,
 }
 
 enum class IosHandshakeV1Failure {
@@ -43,6 +44,13 @@ class IosHandshakeV1Write internal constructor(internal val ticket: ProtocolHand
     val bytes: ByteArray get() = ticket.bytes
 }
 
+/** Opaque frozen offers for the receiving Kotlin context, never a socket or membership ticket. */
+class IosHandshakeV1Offers internal constructor(internal val offers: ProtocolHandshakeOffers) {
+    val localIdentity: String get() = offers.local.identity
+    val remoteIdentity: String get() = offers.remote.identity
+    val observedAtMillis: Long get() = offers.observedAtMillis
+}
+
 /**
  * Swift-facing facade only. Kotlin owns all bootstrap rules; not wired into PairingChannel.
  * The future native owner supplies OS nonce, verified mutual-TLS pins, selection clock and a
@@ -57,6 +65,7 @@ class IosHandshakeV1 private constructor(private val bridge: ProtocolHandshakeBr
     fun snapshot(): IosHandshakeV1Snapshot = when (val state = bridge.state()) {
         ProtocolHandshakeBridgeState.AwaitingStart -> view(IosHandshakeV1Phase.AWAITING_START)
         ProtocolHandshakeBridgeState.SendingHello -> view(IosHandshakeV1Phase.SENDING_HELLO)
+        ProtocolHandshakeBridgeState.ReleasedToGroup -> view(IosHandshakeV1Phase.RELEASED_TO_GROUP)
         is ProtocolHandshakeBridgeState.Closed -> IosHandshakeV1Snapshot(
             IosHandshakeV1Phase.CLOSED, failure(state.reason), false, emptyList(),
         )
@@ -75,6 +84,12 @@ class IosHandshakeV1 private constructor(private val bridge: ProtocolHandshakeBr
 
     @Throws(Exception::class)
     fun remainingMillis(): Long? = bridge.remainingMillis()
+    @Throws(Exception::class)
+    fun nextReadBytes(): Int? = bridge.nextReadBytes()
+    @Throws(Exception::class)
+    fun offersForGroupAdmission(): IosHandshakeV1Offers? = bridge.offersForGroupAdmission()?.let(::IosHandshakeV1Offers)
+    @Throws(Exception::class)
+    fun releaseForGroupAdmission(): IosHandshakeV1Offers? = bridge.releaseForGroupAdmission()?.let(::IosHandshakeV1Offers)
     @Throws(Exception::class)
     fun start(): IosHandshakeV1Write? = bridge.start()?.let(::IosHandshakeV1Write)
     @Throws(Exception::class)

@@ -13,6 +13,17 @@ class ProtocolHandshakeFrameDecoder {
     private var payloadUsed = 0
     private var closed = false
 
+    val isAtFrameBoundary: Boolean get() {
+        check(!closed) { "V1 bootstrap decoder is closed" }
+        return headerUsed == 0 && payload == null
+    }
+
+    /** Exact header/payload remainder: callback owners can stop before the next phase's bytes. */
+    val nextReadBytes: Int get() {
+        check(!closed) { "V1 bootstrap decoder is closed" }
+        return payload?.let { it.size - payloadUsed } ?: (header.size - headerUsed)
+    }
+
     @Throws(Exception::class)
     fun accept(chunk: ByteArray): List<ProtocolHandshakeFrame> = guarded {
         require(chunk.size <= MAX_CHUNK_BYTES) { "V1 bootstrap chunk is too large" }

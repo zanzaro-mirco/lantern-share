@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 import Security
@@ -10,13 +11,507 @@ import LanternUI
 final class HandshakeV1ChannelTests: XCTestCase {
     private let queue = DispatchQueue(label: "dev.lantern.tests.bootstrap-v1")
     private var channels: [HandshakeV1Channel] = []
+    private var groupChannels: [GroupAdmissionChannel] = []
     private var scriptedPeers: [ScriptedPeer] = []
     private var connections: [NWConnection] = []
     private var listeners: [NWListener] = []
     private var namespaces: [String] = []
 
+    func testEvidenceExchangeHandsOverActualTLSRequiresBothConfirmationsAndSurvivesOldDeinit() throws {
+        let pair = try readyPair()
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let group = String(repeating: "c", count: 64)
+        let leftConfirmed = expectation(description: "issuer group confirmed")
+        let rightConfirmed = expectation(description: "member group confirmed")
+        let oldReleased = expectation(description: "both old owners destroyed without closing TLS")
+        try queue.sync {
+            weak var left: HandshakeV1Channel?
+            weak var right: HandshakeV1Channel?
+            weak var leftGroup: GroupAdmissionChannel?
+            weak var rightGroup: GroupAdmissionChannel?
+            var leftTicket: (IosGroupAdmissionComparison, String)?
+            var rightTicket: (IosGroupAdmissionComparison, String)?
+            var explicitlyConfirmed = false
+            var leftDone = false
+            var rightDone = false
+            var transfers = 0
+            func confirmBoth() {
+                guard !explicitlyConfirmed, let leftTicket, let rightTicket else { return }
+                XCTAssertEqual(leftTicket.1, rightTicket.1)
+                XCTAssertEqual(leftTicket.1.count, 64)
+                explicitlyConfirmed = true // Test-only explicit comparison of the two full codes.
+                leftGroup?.confirm(leftTicket.0)
+                rightGroup?.confirm(rightTicket.0)
+            }
+            func oldDestroyed() {
+                transfers += 1
+                if transfers == 2 {
+                    self.queue.async {
+                        XCTAssertNil(left)
+                        XCTAssertNil(right)
+                        oldReleased.fulfill()
+                    }
+                }
+            }
+            let leftCallbacks = GroupAdmissionChannelCallbacks(onSnapshot: { snapshot in
+                if snapshot.phase == .confirmed, !leftDone {
+                    XCTAssertTrue(explicitlyConfirmed)
+                    leftDone = true
+                    leftConfirmed.fulfill()
+                }
+            }, onComparison: { ticket, code in leftTicket = (ticket, code); confirmBoth() }, onClosed: { failure in
+                if case .confirmation(let reason) = failure, reason.name == "CANCELLED" || reason.name == "TRANSPORT" {} else {
+                    XCTFail("Unexpected group failure")
+                }
+            })
+            let rightCallbacks = GroupAdmissionChannelCallbacks(onSnapshot: { snapshot in
+                if snapshot.phase == .confirmed, !rightDone {
+                    XCTAssertTrue(explicitlyConfirmed)
+                    rightDone = true
+                    rightConfirmed.fulfill()
+                }
+            }, onComparison: { ticket, code in rightTicket = (ticket, code); confirmBoth() }, onClosed: { failure in
+                if case .confirmation(let reason) = failure, reason.name == "CANCELLED" || reason.name == "TRANSPORT" {} else {
+                    XCTFail("Unexpected group failure")
+                }
+            })
+            left = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(left?.sendEvidenceAndTransfer(expectedGroup: group, expectedFounder: pair.clientIdentity.id,
+                    evidence: evidence, callbacks: leftCallbacks, onTransferred: { next in
+                        left?.cancel() // Must be inert even before the receiving owner starts.
+                        left?.start()
+                        self.channels.removeAll { $0 === left }
+                        leftGroup = next
+                        self.groupChannels.append(next)
+                        next.start()
+                        oldDestroyed()
+                    }) ?? false)
+                XCTAssertFalse(left?.sendEvidenceAndTransfer(expectedGroup: group, expectedFounder: pair.clientIdentity.id,
+                    evidence: evidence, callbacks: leftCallbacks, onTransferred: { _ in XCTFail("Double transfer") }) ?? false)
+            }), onComparison: { _, _ in XCTFail("Bootstrap APPROVE must remain unavailable") },
+            onClosed: { _ in XCTFail("Old owner must not close after cession") })
+            right = try adopt(pair, client: false, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(right?.receiveEvidenceAndTransfer(expectedGroup: group, expectedFounder: pair.clientIdentity.id,
+                    callbacks: rightCallbacks, onTransferred: { next in
+                        right?.cancel()
+                        right?.start()
+                        self.channels.removeAll { $0 === right }
+                        rightGroup = next
+                        self.groupChannels.append(next)
+                        next.start()
+                        oldDestroyed()
+                    }) ?? false)
+            }), onComparison: { _, _ in XCTFail("No bootstrap comparison in group mode") },
+            onClosed: { _ in XCTFail("Old owner must not close after cession") })
+            left?.start()
+            right?.start()
+        }
+        wait(for: [oldReleased, leftConfirmed, rightConfirmed], timeout: 10)
+    }
+
+    func testTransferredOwnerKeepsOriginalDeadlineAndOldCancelCannotRevokeIt() throws {
+        let pair = try readyPair()
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let transferred = expectation(description: "both owners handed over near original expiry")
+        transferred.expectedFulfillmentCount = 2
+        let expired = expectation(description: "both group owners expire without a new 120 second window")
+        expired.expectedFulfillmentCount = 2
+        let selectedAt = HandshakeV1Channel.monotonicMillis() - 117_000
+        var expiryCount = 0
+        try queue.sync {
+            weak var left: HandshakeV1Channel?
+            weak var right: HandshakeV1Channel?
+            let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "CONFIRMED")
+            }, onComparison: { _, _ in }, onClosed: { failure in
+                if case .confirmation(let reason) = failure, reason.name == "EXPIRED" || reason.name == "TRANSPORT" {
+                    if reason.name == "EXPIRED" { expiryCount += 1 }
+                    expired.fulfill()
+                } else { XCTFail("Expected original deadline or its peer disconnect") }
+            })
+            func retain(_ next: GroupAdmissionChannel) {
+                self.groupChannels.append(next)
+                next.start()
+                transferred.fulfill()
+            }
+            left = try adopt(pair, client: true, selectedAt: selectedAt, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(left?.sendEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.clientIdentity.id, evidence: evidence, callbacks: callbacks,
+                    onTransferred: { next in left?.cancel(); retain(next) }) ?? false)
+            }), onClosed: { _ in XCTFail("Old owner must not run its expired timer after release") })
+            right = try adopt(pair, client: false, selectedAt: selectedAt, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(right?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.clientIdentity.id, callbacks: callbacks,
+                    onTransferred: { next in right?.cancel(); retain(next) }) ?? false)
+            }), onClosed: { _ in XCTFail("Old owner must not close transferred TLS") })
+            left?.start()
+            right?.start()
+        }
+        wait(for: [transferred, expired], timeout: 8)
+        queue.sync { XCTAssertGreaterThanOrEqual(expiryCount, 1) }
+    }
+
+    func testEvidenceReadRemainsOwnedAndCancellationClosesBlockedActualTLS() throws {
+        try assertPendingEvidenceClosure(expire: false)
+    }
+
+    func testOriginalDeadlineClosesBlockedEvidenceReadBeforeAnyCession() throws {
+        try assertPendingEvidenceClosure(expire: true)
+    }
+
+    private func assertPendingEvidenceClosure(expire: Bool) throws {
+        let pair = try readyPair()
+        let waiting = expectation(description: "member waiting for evidence")
+        let cancelled = expectation(description: "bootstrap lifecycle interrupts evidence receive")
+        let eof = expectation(description: "actual TLS peer observes closure")
+        try queue.sync {
+            weak var owner: HandshakeV1Channel?
+            let remote = try scriptedPeer(pair, onComparison: { _, _ in }, onEOF: { _ in eof.fulfill() })
+            let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { _ in XCTFail("No receiving group yet") },
+                onComparison: { _, _ in XCTFail("No evidence proof") }, onClosed: { _ in XCTFail("No group owner") })
+            owner = try adopt(pair, client: true,
+                selectedAt: expire ? HandshakeV1Channel.monotonicMillis() - 118_000 : pair.selectedAt,
+                continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(owner?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.serverIdentity.id, callbacks: callbacks,
+                    onTransferred: { _ in XCTFail("Evidence was never sent") }) ?? false)
+                waiting.fulfill()
+                if !expire { self.queue.asyncAfter(deadline: .now() + .milliseconds(100)) { owner?.cancel() } }
+            }), onComparison: { _, _ in XCTFail("No bootstrap comparison") }, onClosed: { failure in
+                if expire {
+                    if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
+                    else { XCTFail("Expected original deadline during evidence read") }
+                } else if case .cancelled = failure {} else { XCTFail("Expected explicit cancellation during read") }
+                cancelled.fulfill()
+            })
+            try remote.start()
+            owner?.start()
+        }
+        wait(for: [waiting, cancelled, eof], timeout: 8)
+    }
+
+    func testEvidenceWrongRootAndWrongSendingRoleNeverTransferOrPublishComparison() throws {
+        for wrongRole in [false, true] {
+            let pair = try readyPair()
+            let supplied = try groupEvidence(issuer: pair.serverIdentity, member: pair.clientIdentity.id)
+            let rejected = expectation(description: "evidence context rejected before release")
+            try queue.sync {
+                weak var owner: HandshakeV1Channel?
+                let remote = try scriptedPeer(pair, onComparison: { _, _ in }, onEOF: { _ in })
+                let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { _ in XCTFail("No group owner") },
+                    onComparison: { _, _ in XCTFail("No comparison on context mismatch") },
+                    onClosed: { _ in XCTFail("Bootstrap still owns rejected evidence") })
+                owner = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                    if wrongRole {
+                        XCTAssertFalse(owner?.sendEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                            expectedFounder: pair.serverIdentity.id, evidence: supplied, callbacks: callbacks,
+                            onTransferred: { _ in XCTFail("Member cannot send issuer evidence") }) ?? true)
+                    } else {
+                        XCTAssertTrue(owner?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "d", count: 64),
+                            expectedFounder: pair.serverIdentity.id, callbacks: callbacks,
+                            onTransferred: { _ in XCTFail("Received root cannot replace expected root") }) ?? false)
+                    }
+                }), onComparison: { _, _ in XCTFail("No bootstrap comparison") }, onClosed: { failure in
+                    if case .adapter = failure {} else { XCTFail("Expected sanitized context failure") }
+                    rejected.fulfill()
+                })
+                try remote.start(tail: wrongRole ? Data() : Self.data(supplied.framedBytes()))
+                owner?.start()
+            }
+            wait(for: [rejected], timeout: 5)
+        }
+    }
+
+    func testInvalidAdmissionSignatureTransfersCleanupButNeverExposesGroupComparison() throws {
+        let pair = try readyPair()
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id, invalidSignature: true)
+        let rejected = expectation(description: "full proof rejected by receiving owners")
+        rejected.expectedFulfillmentCount = 2
+        try queue.sync {
+            weak var left: HandshakeV1Channel?
+            weak var right: HandshakeV1Channel?
+            let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { snapshot in
+                XCTAssertEqual(snapshot.phase.name, "AWAITING_START")
+            }, onComparison: { _, _ in XCTFail("Invalid proof must not expose UI confirmation") }, onClosed: { failure in
+                if case .confirmation(let reason) = failure, reason.name == "INVALID_PROOF" || reason.name == "TRANSPORT" {
+                    rejected.fulfill()
+                } else { XCTFail("Expected invalid proof or resulting peer closure") }
+            })
+            func retain(_ next: GroupAdmissionChannel) { self.groupChannels.append(next); next.start() }
+            left = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(left?.sendEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.clientIdentity.id, evidence: evidence, callbacks: callbacks, onTransferred: retain) ?? false)
+            }), onClosed: { _ in XCTFail("Proof must be checked by new owner, not old APPROVE") })
+            right = try adopt(pair, client: false, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(right?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.clientIdentity.id, callbacks: callbacks, onTransferred: retain) ?? false)
+            }), onClosed: { failure in
+                // The issuer may reject and close before the member's final exact read completes.
+                if case .transport = failure { rejected.fulfill() } else { XCTFail("Unexpected old-owner failure") }
+            })
+            left?.start()
+            right?.start()
+        }
+        wait(for: [rejected], timeout: 10)
+    }
+
+    func testCoalescedEvidenceAndGroupConfirmationAreNotLostOrRoutedToBootstrap() throws {
+        let pair = try readyPair()
+        let evidence = try groupEvidence(issuer: pair.serverIdentity, member: pair.clientIdentity.id)
+        let remoteConfirmed = expectation(description: "coalesced group confirmation consumed by new owner")
+        let compared = expectation(description: "same full group comparison")
+        let eof = expectation(description: "group cancellation closes TLS")
+        try queue.sync {
+            weak var owner: HandshakeV1Channel?
+            var expectedCode: String?
+            var observed = false
+            let remote = try scriptedPeer(pair, onComparison: { peer, _ in
+                // One OS write containing both evidence and a valid GROUP_CONFIRM.
+                let confirmation = try peer.groupConfirmation(evidence: evidence, signer: pair.serverIdentity,
+                    remoteCertificate: pair.clientIdentity.certificate, selectedAt: pair.selectedAt)
+                expectedCode = confirmation.1
+                peer.replay(Self.data(try evidence.framedBytes()) + confirmation.0)
+            }, onEOF: { _ in eof.fulfill() })
+            let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "CONFIRMED") // No local user confirmation/write.
+                if snapshot.remoteConfirmed, !observed {
+                    observed = true
+                    XCTAssertEqual(snapshot.phase.name, "AWAITING_CONFIRMATION")
+                    remoteConfirmed.fulfill()
+                }
+            }, onComparison: { _, code in
+                XCTAssertEqual(code, expectedCode)
+                compared.fulfill()
+            }, onClosed: { failure in
+                if case .confirmation(let reason) = failure { XCTAssertEqual(reason.name, "CANCELLED") }
+                else { XCTFail("Expected group cancellation") }
+            })
+            owner = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(owner?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.serverIdentity.id, callbacks: callbacks, onTransferred: { next in
+                        self.groupChannels.append(next)
+                        owner?.cancel()
+                        next.start()
+                    }) ?? false)
+            }), onComparison: { _, _ in XCTFail("GROUP_CONFIRM must not reach bootstrap") },
+            onClosed: { _ in XCTFail("Released bootstrap must not close") })
+            try remote.start()
+            owner?.start()
+        }
+        wait(for: [compared, remoteConfirmed], timeout: 10)
+        queue.sync { groupChannels.last?.cancel() }
+        wait(for: [eof], timeout: 5)
+    }
+
+    func testHostileEvidenceLengthsAndMalformedPayloadCloseBootstrapBeforeCession() throws {
+        let inputs: [Data] = [
+            Data([0, 0, 0, 0]), Data([0, 4, 0, 1]), Data([0xff, 0xff, 0xff, 0xff]),
+            Data([0, 0, 0, 1, 0xff]), Data([0, 0, 0, 2, 0x7b, 0x7d]),
+        ]
+        for input in inputs {
+            let pair = try readyPair()
+            let rejected = expectation(description: "hostile evidence closes old owner")
+            let eof = expectation(description: "peer TLS closed after invalid evidence")
+            try queue.sync {
+                weak var owner: HandshakeV1Channel?
+                let remote = try scriptedPeer(pair, onComparison: { _, _ in }, onEOF: { _ in eof.fulfill() })
+                let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { _ in XCTFail("No group owner") },
+                    onComparison: { _, _ in XCTFail("No evidence proof") }, onClosed: { _ in XCTFail("No receiving owner") })
+                owner = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                    XCTAssertTrue(owner?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                        expectedFounder: pair.serverIdentity.id, callbacks: callbacks,
+                        onTransferred: { _ in XCTFail("Malformed evidence cannot release TLS") }) ?? false)
+                }), onComparison: { _, _ in XCTFail("No bootstrap comparison") }, onClosed: { failure in
+                    if case .adapter = failure {} else { XCTFail("Expected sanitized evidence decoding failure") }
+                    rejected.fulfill()
+                })
+                // HELLO and hostile evidence coalesced in one write, exact budgets keep decoders separate.
+                try remote.start(tail: input)
+                owner?.start()
+            }
+            wait(for: [rejected, eof], timeout: 5)
+        }
+    }
+
+    func testTruncatedEvidenceEOFNeverTransfersOrPublishesConfirmation() throws {
+        for prefix in [Data([0, 0, 1]), Data([0, 0, 0, 10, 0x7b])] {
+            let pair = try readyPair()
+            let written = expectation(description: "actual truncated evidence write completed")
+            let rejected = expectation(description: "EOF revokes incomplete evidence")
+            try queue.sync {
+                weak var owner: HandshakeV1Channel?
+                let remote = try scriptedPeer(pair, onComparison: { peer, _ in
+                    peer.disconnectAfterSending(prefix) { written.fulfill() }
+                }, onEOF: { _ in })
+                let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { _ in XCTFail("No group owner") },
+                    onComparison: { _, _ in XCTFail("Truncated evidence has no comparison") },
+                    onClosed: { _ in XCTFail("No cession before EOF") })
+                owner = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                    XCTAssertTrue(owner?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                        expectedFounder: pair.serverIdentity.id, callbacks: callbacks,
+                        onTransferred: { _ in XCTFail("EOF cannot release the transport") }) ?? false)
+                }), onComparison: { _, _ in XCTFail("No bootstrap comparison") }, onClosed: { failure in
+                    switch failure {
+                    case .adapter, .transport: break // NWConnection may report reset before decoder EOF.
+                    default: XCTFail("Expected truncated frame/transport closure")
+                    }
+                    rejected.fulfill()
+                })
+                try remote.start()
+                owner?.start()
+            }
+            wait(for: [written, rejected], timeout: 5)
+        }
+    }
+
+    func testGroupBlockWhileRealSignerIsPendingClosesTLSAndIgnoresLateCompletion() throws {
+        let pair = try readyPair()
+        let evidence = try groupEvidence(issuer: pair.serverIdentity, member: pair.clientIdentity.id)
+        let blocked = expectation(description: "group owner blocks while signature is queued")
+        let eof = expectation(description: "TLS peer receives no local confirmation before block")
+        let drained = expectation(description: "real signature and late callback drained")
+        let cryptoQueue = DispatchQueue(label: "dev.lantern.tests.group-blocked-real-signer")
+        let gate = DispatchSemaphore(value: 0)
+        cryptoQueue.async { gate.wait() }
+        defer { gate.signal() }
+        var closedCount = 0
+        try queue.sync {
+            weak var owner: HandshakeV1Channel?
+            weak var groupOwner: GroupAdmissionChannel?
+            let remote = try scriptedPeer(pair, onComparison: { _, _ in }, onEOF: { snapshot in
+                XCTAssertFalse(snapshot.remoteApproved)
+                eof.fulfill()
+            })
+            let callbacks = GroupAdmissionChannelCallbacks(onSnapshot: { snapshot in
+                XCTAssertNotEqual(snapshot.phase.name, "CONFIRMED")
+            }, onComparison: { ticket, _ in
+                groupOwner?.confirm(ticket)
+                groupOwner?.block()
+                groupOwner?.confirm(ticket) // Obsolete UI ticket cannot queue a replacement signature.
+                cryptoQueue.async { self.queue.async { drained.fulfill() } }
+            }, onClosed: { failure in
+                closedCount += 1
+                XCTAssertEqual(closedCount, 1)
+                if case .confirmation(let reason) = failure { XCTAssertEqual(reason.name, "BLOCKED") }
+                else { XCTFail("Expected explicit local block") }
+                blocked.fulfill()
+            })
+            owner = try adopt(pair, client: true, signingQueue: cryptoQueue, continuation: .groupAdmission(onHello: {
+                XCTAssertTrue(owner?.receiveEvidenceAndTransfer(expectedGroup: String(repeating: "c", count: 64),
+                    expectedFounder: pair.serverIdentity.id, callbacks: callbacks, onTransferred: { next in
+                        groupOwner = next
+                        self.groupChannels.append(next)
+                        owner?.cancel()
+                        next.start()
+                    }) ?? false)
+            }), onComparison: { _, _ in XCTFail("No bootstrap APPROVE") },
+            onClosed: { _ in XCTFail("Old owner cannot close receiving group") })
+            try remote.start(tail: Self.data(evidence.framedBytes()))
+            owner?.start()
+        }
+        wait(for: [blocked, eof], timeout: 5)
+        gate.signal()
+        wait(for: [drained], timeout: 5)
+        queue.sync { XCTAssertEqual(closedCount, 1) }
+    }
+
+    func testReceivingInitializationOwnsCleanupEvenWhenEndpointBindingFails() throws {
+        let pair = try readyPair()
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let eof = expectation(description: "failed receiving initializer closes actual TLS")
+        try queue.sync {
+            // Core-only offers fixture bound to this ready TLS pair. No live OS bootstrap owner
+            // or pending client receive/write exists when the receiving initializer is invoked.
+            func bootstrap(local: String, remote: String, nonce: String) throws -> IosHandshakeV1 {
+                try IosHandshakeV1.companion.create(
+                    localIdentity: local, localNonce: String(repeating: nonce, count: 64),
+                    capabilitiesJson: "{\"version\":1,\"supportedFeatures\":[\"text\"],\"requiredFeatures\":[]}",
+                    authenticatedLocalIdentity: local, selectedPeerIdentity: remote, authenticatedPeerIdentity: remote,
+                    selectedAtMillis: pair.selectedAt,
+                    nowMillis: { KotlinLong(longLong: HandshakeV1Channel.monotonicMillis()) },
+                    verifyRemoteSignature: { _, _ in KotlinBoolean(bool: false) }
+                )
+            }
+            let core = try bootstrap(local: pair.clientIdentity.id, remote: pair.serverIdentity.id, nonce: "1")
+            let remote = try bootstrap(local: pair.serverIdentity.id, remote: pair.clientIdentity.id, nonce: "2")
+            XCTAssertTrue(try core.sent(ticket: try XCTUnwrap(core.start())))
+            XCTAssertTrue(try core.accept(chunk: try XCTUnwrap(remote.start()).bytes))
+            let offers = try XCTUnwrap(core.releaseForGroupAdmission())
+            remote.cancel()
+            pair.server.receive(minimumIncompleteLength: 1, maximumLength: 1) { data, _, complete, error in
+                XCTAssertTrue(data?.isEmpty ?? true)
+                XCTAssertTrue(complete || error != nil)
+                eof.fulfill()
+            }
+            XCTAssertThrowsError(try GroupAdmissionChannel(
+                connection: pair.client, identity: pair.clientIdentity,
+                peerCertificate: pair.clientIdentity.certificate, // Deliberately not the selected peer.
+                offers: offers, evidence: evidence, role: .issuer,
+                expectedGroup: String(repeating: "c", count: 64), expectedFounder: pair.clientIdentity.id,
+                evidenceCertificates: GroupAdmissionEvidenceCertificates.decode(evidence),
+                selectedAtMillis: pair.selectedAt, queue: queue, signingQueue: .global(qos: .userInitiated),
+                nowMillis: HandshakeV1Channel.monotonicMillis,
+                onSnapshot: { _ in XCTFail("Invalid adoption cannot publish progress") },
+                onComparison: { _, _ in XCTFail("Invalid endpoint cannot publish a comparison") },
+                onClosed: { _ in XCTFail("Throwing initialization reports failure to the releasing caller") }
+            ))
+            core.cancel() // Old core remains terminal after failed receiving adoption.
+            XCTAssertEqual(try core.snapshot().phase.name, "RELEASED_TO_GROUP")
+        }
+        wait(for: [eof], timeout: 5)
+    }
+
+    func testGroupBoundaryPausesBeforeCoalescedTailAndKeepsCancellationOwned() throws {
+        let pair = try readyPair()
+        let paused = expectation(description: "group HELLO boundary")
+        let cancelled = expectation(description: "bootstrap still owns cancellation")
+        try queue.sync {
+            weak var owner: HandshakeV1Channel?
+            var callbacks = 0
+            let remote = try scriptedPeer(pair, onComparison: { _, _ in }, onEOF: { _ in })
+            owner = try adopt(pair, client: true, continuation: .groupAdmission(onHello: {
+                callbacks += 1
+                XCTAssertEqual(callbacks, 1)
+                paused.fulfill()
+                owner?.start() // Reentry cannot queue another HELLO/read.
+                self.queue.asyncAfter(deadline: .now() + .milliseconds(200)) { owner?.cancel() }
+            }), onComparison: { _, _ in XCTFail("Group mode must not publish bootstrap comparison") },
+            onClosed: { failure in
+                if case .cancelled = failure {} else { XCTFail("Tail was incorrectly routed to bootstrap") }
+                cancelled.fulfill()
+            })
+            // Invalid bootstrap tail in the same OS write: it must remain unread, not authorize anything.
+            try remote.start(tail: Data([0, 0, 0, 1, 0]))
+            owner?.start()
+        }
+        wait(for: [paused, cancelled], timeout: 5)
+    }
+
+    func testGroupBoundaryIdlePauseStillExpiresAtOriginalSelectionDeadline() throws {
+        let pair = try readyPair()
+        let paused = expectation(description: "paused before expiry")
+        let expired = expectation(description: "original deadline closes idle pause")
+        try queue.sync {
+            let remote = try scriptedPeer(pair, onComparison: { _, _ in }, onEOF: { _ in })
+            let owner = try adopt(pair, client: true,
+                selectedAt: HandshakeV1Channel.monotonicMillis() - 119_000,
+                continuation: .groupAdmission(onHello: { paused.fulfill() }),
+                onComparison: { _, _ in XCTFail("No bootstrap comparison in group mode") },
+                onClosed: { failure in
+                    if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
+                    else { XCTFail("Expected original selection expiry") }
+                    expired.fulfill()
+                })
+            try remote.start()
+            owner.start()
+        }
+        wait(for: [paused, expired], timeout: 5)
+    }
+
     override func tearDown() {
         queue.sync {
+            groupChannels.forEach { $0.cancel() }
+            groupChannels.removeAll()
             channels.forEach { $0.cancel() }
             channels.removeAll()
             scriptedPeers.forEach { $0.stop() }
@@ -707,6 +1202,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
     private func adopt(
         _ pair: Pair, client: Bool, selectedAt: Int64? = nil,
         signingQueue: DispatchQueue = .global(qos: .userInitiated),
+        continuation: HandshakeV1Continuation = .approvals,
         onSnapshot: @escaping (IosHandshakeV1Snapshot) -> Void = { _ in },
         onComparison: @escaping (IosHandshakeV1Comparison, String) -> Void = { _, _ in },
         onClosed: @escaping (HandshakeV1ChannelFailure) -> Void = { failure in
@@ -719,6 +1215,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
             transport: client ? pair.clientTransport : pair.serverTransport,
             selectedPeerID: client ? pair.serverIdentity.id : pair.clientIdentity.id,
             selectedAtMillis: selectedAt ?? pair.selectedAt, queue: queue, signingQueue: signingQueue,
+            continuation: continuation,
             onSnapshot: onSnapshot, onComparison: onComparison, onClosed: onClosed
         )
         channels.append(channel)
@@ -765,6 +1262,26 @@ final class HandshakeV1ChannelTests: XCTestCase {
         let namespace = "dev.lantern.tests.v1-channel.\(UUID().uuidString)"
         namespaces.append(namespace)
         return try AppleIdentityStore(namespace: namespace).open()
+    }
+
+    private func groupEvidence(issuer: AppleIdentity, member: String, invalidSignature: Bool = false) throws -> IosGroupAdmissionEvidence {
+        let group = String(repeating: "c", count: 64)
+        var canonical = Data()
+        // Independent fixture only; production canonical encoding/roles remain in Kotlin.
+        for value in ["lantern-group-admission-1", "1", group, issuer.id, member] {
+            let field = Data(value.utf8)
+            canonical.append(Data("\(field.count):".utf8))
+            canonical.append(field)
+        }
+        let signature = try (invalidSignature ? "cHJvb2Y=" : issuer.sign(canonical))
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "version": 1, "type": "GROUP_EVIDENCE",
+            "proof": ["version": 1, "anchor": ["group": group, "founder": issuer.id],
+                "admissions": [["claim": ["version": 1, "group": group, "issuer": issuer.id, "member": member],
+                    "signature": signature]]],
+            "certificates": [["identity": issuer.id, "der": (SecCertificateCopyData(issuer.certificate) as Data).base64EncodedString()]],
+        ], options: [.sortedKeys, .withoutEscapingSlashes])
+        return try IosGroupAdmissionEvidence.companion.decode(payload: Self.bytes(payload))
     }
 
     private func scriptedPeer(
@@ -817,11 +1334,11 @@ final class HandshakeV1ChannelTests: XCTestCase {
             self.onEOF = onEOF
         }
 
-        func start() throws {
+        func start(tail: Data = Data()) throws {
             dispatchPrecondition(condition: .onQueue(queue))
             let hello = try XCTUnwrap(bridge.start())
             self.hello = HandshakeV1ChannelTests.data(hello.bytes)
-            send(hello) { [weak self] in self?.receiveNext() }
+            send(hello, tail: tail) { [weak self] in self?.receiveNext() }
         }
 
         func helloFrame() throws -> Data {
@@ -838,9 +1355,42 @@ final class HandshakeV1ChannelTests: XCTestCase {
             return try XCTUnwrap(bridge.signed(ticket: signing, signature: signature))
         }
 
-        func send(_ ticket: IosHandshakeV1Write, onSent: @escaping () -> Void = {}) {
+        func groupConfirmation(
+            evidence: IosGroupAdmissionEvidence, signer: AppleIdentity,
+            remoteCertificate: SecCertificate, selectedAt: Int64
+        ) throws -> (Data, String) {
             dispatchPrecondition(condition: .onQueue(queue))
-            connection.send(content: HandshakeV1ChannelTests.data(ticket.bytes), completion: .contentProcessed { [weak self] error in
+            let context = try IosGroupAdmissionContext.companion.create(
+                offers: XCTUnwrap(bridge.offersForGroupAdmission()), expectedGroup: String(repeating: "c", count: 64),
+                expectedFounder: signer.id, evidence: evidence, role: .issuer
+            )
+            let attempt = try IosGroupAdmissionConfirmation.companion.create(
+                context: context, selectedAtMillis: selectedAt,
+                nowMillis: { KotlinLong(longLong: HandshakeV1Channel.monotonicMillis()) },
+                verifyAdmissionSignature: { id, bytes, signature in
+                    KotlinBoolean(bool: ApplePublicCertificate.verifySignature(certificate: signer.certificate,
+                        expectedID: id, message: HandshakeV1ChannelTests.data(bytes), signature: signature))
+                },
+                verifyRemoteSignature: { bytes, signature in
+                    KotlinBoolean(bool: AppleIdentity.verify(certificate: remoteCertificate,
+                        message: HandshakeV1ChannelTests.data(bytes), signature: signature))
+                }
+            )
+            XCTAssertTrue(try attempt.prepare())
+            let comparison = try XCTUnwrap(attempt.comparison())
+            let code = SHA256.hash(data: HandshakeV1ChannelTests.data(comparison.bytes))
+                .map { String(format: "%02x", $0) }.joined()
+            let sign = try XCTUnwrap(attempt.confirm(ticket: comparison))
+            let signature = try signer.sign(HandshakeV1ChannelTests.data(sign.bytes))
+            let write = try XCTUnwrap(attempt.signed(ticket: sign, signature: signature))
+            let frame = HandshakeV1ChannelTests.data(write.bytes)
+            attempt.cancel() // Fixture frame only; no fake OS acknowledgement or shared production owner.
+            return (frame, code)
+        }
+
+        func send(_ ticket: IosHandshakeV1Write, tail: Data = Data(), onSent: @escaping () -> Void = {}) {
+            dispatchPrecondition(condition: .onQueue(queue))
+            connection.send(content: HandshakeV1ChannelTests.data(ticket.bytes) + tail, completion: .contentProcessed { [weak self] error in
                 guard let self, !self.stopped else { return }
                 dispatchPrecondition(condition: .onQueue(self.queue))
                 XCTAssertNil(error)

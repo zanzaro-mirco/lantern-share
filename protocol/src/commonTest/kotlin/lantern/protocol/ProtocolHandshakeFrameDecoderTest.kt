@@ -18,6 +18,39 @@ class ProtocolHandshakeFrameDecoderTest {
     private val approvalBytes = ProtocolHandshakeFrameDecoder.encode(approval)
 
     @Test
+    fun exactBudgetStopsAtHelloWithoutConsumingCoalescedNextPhase() {
+        val tail = byteArrayOf(0, 0, 0, 1, 0)
+        val source = helloBytes + tail
+        val decoder = ProtocolHandshakeFrameDecoder()
+        var offset = 0
+        var frames = emptyList<ProtocolHandshakeFrame>()
+        while (frames.isEmpty()) {
+            val budget = decoder.nextReadBytes
+            assertTrue(budget in 1..ProtocolHandshakeFrameCodec.MAX_BYTES)
+            frames = decoder.accept(source.copyOfRange(offset, offset + budget))
+            offset += budget
+        }
+        assertFrames(listOf(hello), frames)
+        assertEquals(helloBytes.size, offset)
+        assertContentEquals(tail, source.copyOfRange(offset, source.size))
+        assertEquals(4, decoder.nextReadBytes)
+        decoder.close()
+        assertFailsWith<IllegalStateException> { decoder.nextReadBytes }
+    }
+
+    @Test
+    fun exactBudgetTracksEveryPartialHeaderAndPayloadByte() {
+        val decoder = ProtocolHandshakeFrameDecoder()
+        helloBytes.forEachIndexed { index, byte ->
+            assertEquals(if (index < 4) 4 - index else helloBytes.size - index, decoder.nextReadBytes)
+            decoder.accept(byteArrayOf(byte))
+        }
+        assertEquals(4, decoder.nextReadBytes)
+        decoder.finish()
+        assertFailsWith<IllegalStateException> { decoder.nextReadBytes }
+    }
+
+    @Test
     fun everySplitAndSingleByteDeliveryPreserveHeaderPayloadAndFrameOrder() {
         val bytes = helloBytes + approvalBytes
         for (split in 0..bytes.size) {

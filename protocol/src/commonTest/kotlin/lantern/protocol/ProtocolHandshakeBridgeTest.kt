@@ -18,6 +18,115 @@ class ProtocolHandshakeBridgeTest {
     private val signature = "cHJvb2Y="
 
     @Test
+    fun groupReleaseFreezesOffersAndPermanentlyInvalidatesBootstrapTicketsWithoutClockReads() {
+        var now = 1L
+        var released = false
+        val owner = bridge(leftParticipant, rightParticipant, now = {
+            check(!released) { "Old owner read clock after release" }
+            now
+        })
+        assertNull(owner.releaseForGroupAdmission())
+        val hello = assertNotNull(owner.start())
+        assertNull(owner.offersForGroupAdmission())
+        owner.sent(hello)
+        owner.accept(ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Hello(rightParticipant)))
+        val comparison = assertNotNull(owner.comparison())
+        now = 13L
+        val offers = assertNotNull(owner.releaseForGroupAdmission())
+        released = true
+        assertEquals(13L, offers.observedAtMillis)
+        assertEquals(leftParticipant.identity, offers.local.identity)
+        assertEquals(rightParticipant.nonce, offers.remote.nonce)
+        assertEquals(ProtocolHandshakeBridgeState.ReleasedToGroup, owner.state())
+        assertNull(owner.releaseForGroupAdmission())
+        assertNull(owner.offersForGroupAdmission())
+        assertNull(owner.nextReadBytes())
+        assertNull(owner.remainingMillis())
+        assertNull(owner.start())
+        assertFalse(owner.sent(hello))
+        assertFalse(owner.writeFailed(hello))
+        assertNull(owner.confirm(comparison))
+        assertNull(owner.comparison())
+        assertFalse(owner.accept(byteArrayOf(0)))
+        owner.finish()
+        owner.cancel()
+        assertEquals(ProtocolHandshakeBridgeState.ReleasedToGroup, owner.state())
+    }
+
+    @Test
+    fun groupReleaseRejectsPendingFrameAndAnyBootstrapApprovalOperation() {
+        val partial = started()
+        partial.accept(ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Hello(rightParticipant)))
+        partial.accept(byteArrayOf(0))
+        assertNull(partial.offersForGroupAdmission())
+        assertNull(partial.releaseForGroupAdmission())
+        partial.cancel()
+        val signing = started()
+        signing.accept(ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Hello(rightParticipant)))
+        val ticket = assertNotNull(signing.confirm(assertNotNull(signing.comparison())))
+        assertNull(signing.releaseForGroupAdmission())
+        val write = assertNotNull(signing.signed(ticket, signature))
+        assertNull(signing.releaseForGroupAdmission())
+        signing.sent(write)
+        assertNull(signing.releaseForGroupAdmission())
+        val remoteApproved = started()
+        remoteApproved.accept(ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Hello(rightParticipant)))
+        remoteApproved.accept(ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Approve(
+            ProtocolHandshakeApproval(rightParticipant.identity, leftParticipant.identity, signature),
+        )))
+        assertNull(remoteApproved.releaseForGroupAdmission())
+    }
+
+    @Test
+    fun retainedGroupOffersCannotReleaseExpiredCancelledOrBackwardsClockAttempt() {
+        for (invalid in listOf("expired", "cancelled", "backwards")) {
+            var now = 10L
+            val owner = bridge(leftParticipant, rightParticipant, now = { now })
+            owner.sent(assertNotNull(owner.start()))
+            owner.accept(ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Hello(rightParticipant)))
+            assertNotNull(owner.offersForGroupAdmission())
+            when (invalid) {
+                "expired" -> now = 120_000L
+                "cancelled" -> owner.cancel()
+                else -> now = 9L
+            }
+            assertNull(owner.releaseForGroupAdmission())
+            assertIs<ProtocolHandshakeBridgeState.Closed>(owner.state())
+        }
+    }
+
+    @Test
+    fun exactReadBudgetRequiresCompletedHelloAndPreservesOriginalDeadline() {
+        var now = 0L
+        val owner = bridge(leftParticipant, rightParticipant, now = { now })
+        assertNull(owner.nextReadBytes())
+        val hello = assertNotNull(owner.start())
+        assertNull(owner.nextReadBytes())
+        assertTrue(owner.sent(hello))
+        assertEquals(4, owner.nextReadBytes())
+        val remote = ProtocolHandshakeFrameDecoder.encode(ProtocolHandshakeFrame.Hello(rightParticipant))
+        owner.accept(remote.copyOfRange(0, 2))
+        assertEquals(2, owner.nextReadBytes())
+        owner.accept(remote.copyOfRange(2, 4))
+        assertEquals(remote.size - 4, owner.nextReadBytes())
+        owner.accept(remote.copyOfRange(4, remote.size))
+        assertEquals(4, owner.nextReadBytes())
+        now = 120_000L
+        assertNull(owner.nextReadBytes())
+        assertClosed(owner, ProtocolHandshakeFailure.Expired)
+    }
+
+    @Test
+    fun exactReadBudgetIsUnavailableAfterCancelOrInvalidInput() {
+        val cancelled = started()
+        cancelled.cancel()
+        assertNull(cancelled.nextReadBytes())
+        val invalid = started()
+        assertFailsWith<IllegalArgumentException> { invalid.accept(byteArrayOf(0, 0, 0, 0)) }
+        assertNull(invalid.nextReadBytes())
+    }
+
+    @Test
     fun helloAndApprovalAdvanceOnlyAfterSuccessfulWriteCallbacks() {
         val left = bridge(leftParticipant, rightParticipant)
         val right = bridge(rightParticipant, leftParticipant)

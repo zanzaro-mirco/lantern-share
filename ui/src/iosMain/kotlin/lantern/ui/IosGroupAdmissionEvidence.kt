@@ -6,6 +6,7 @@ import lantern.protocol.GroupAdmissionChainResult
 import lantern.protocol.GroupAdmissionChainVerification
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupAdmissionEvidenceCodec
+import lantern.protocol.GroupAdmissionEvidenceFraming
 
 /** Validated syntax only: Swift must still parse exact DER and check every certificate pin. */
 class IosGroupAdmissionCertificate internal constructor(private val supplied: GroupAdmissionCertificate) {
@@ -17,10 +18,14 @@ class IosGroupAdmissionCertificate internal constructor(private val supplied: Gr
  * Swift-facing view of untrusted evidence. No root adoption, confirmation or authorization.
  * The shared codec owns all JSON, coverage, count, pin syntax and canonical Base64 rules.
  */
-class IosGroupAdmissionEvidence private constructor(internal val evidence: GroupAdmissionEvidence) {
+class IosGroupAdmissionEvidence internal constructor(internal val evidence: GroupAdmissionEvidence) {
     val certificates: List<IosGroupAdmissionCertificate>
         get() = evidence.certificates.map(::IosGroupAdmissionCertificate)
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES
+
+    /** Encoding only, not a completed OS write, signature check or ownership transfer. */
+    @Throws(Exception::class)
+    fun framedBytes(): ByteArray = GroupAdmissionEvidenceFraming.encode(evidence)
 
     /**
      * Pure whole-chain verification, never an authorization ticket. The anchor and member must

@@ -12,6 +12,12 @@ enum HandshakeV1ChannelFailure {
     case cancelled
 }
 
+enum HandshakeV1Continuation {
+    case approvals
+    // Bootstrap owns connection/deadline until the explicit evidence exchange releases it.
+    case groupAdmission(onHello: () -> Void)
+}
+
 /// Owns one READY mutual-TLS connection created by the supplied AppleTLSTransport with the exact
 /// explicitly selected pin. Caller must use the same serial queue for adoption and ALL methods.
 /// Isolated from PairingChannel/v0; READY bootstrap progress never authorizes chat or persists trust.
@@ -21,13 +27,22 @@ final class HandshakeV1Channel {
     private let queue: DispatchQueue
     private let signingQueue: DispatchQueue
     private let bridge: IosHandshakeV1
+    private let peerCertificate: SecCertificate
+    private let selectedAtMillis: Int64
+    private let nowMillis: () -> Int64
     private let onSnapshot: (IosHandshakeV1Snapshot) -> Void
     private let onComparison: (IosHandshakeV1Comparison, String) -> Void
     private let onClosed: (HandshakeV1ChannelFailure) -> Void
+    private let continuation: HandshakeV1Continuation
     private var timer: DispatchSourceTimer?
     private var started = false
     private var closed = false
     private var comparisonPublished = false
+    private var pausedForGroup = false
+    private var exchangingEvidence = false
+    private var receivePending = false
+    private var writePending = false
+    private var evidenceDecoder: IosGroupAdmissionEvidenceDecoder?
 
     /// Transfers connection ownership even if validation or initialization throws.
     /// TLS setup/listener ownership and the selection BEFORE TLS remain the caller's responsibility.
@@ -40,6 +55,7 @@ final class HandshakeV1Channel {
         queue: DispatchQueue,
         signingQueue: DispatchQueue = .global(qos: .userInitiated),
         nowMillis: @escaping () -> Int64 = HandshakeV1Channel.monotonicMillis,
+        continuation: HandshakeV1Continuation = .approvals,
         onSnapshot: @escaping (IosHandshakeV1Snapshot) -> Void,
         onComparison: @escaping (IosHandshakeV1Comparison, String) -> Void,
         onClosed: @escaping (HandshakeV1ChannelFailure) -> Void
@@ -52,6 +68,7 @@ final class HandshakeV1Channel {
                   AppleIdentity.fingerprint(certificate) == selectedPeerID else {
                 throw AdoptionError.invalidTLS
             }
+            self.peerCertificate = certificate
             self.bridge = try IosHandshakeV1.companion.create(
                 localIdentity: identity.id,
                 localNonce: Self.randomNonce(),
@@ -73,9 +90,12 @@ final class HandshakeV1Channel {
         self.identity = identity
         self.queue = queue
         self.signingQueue = signingQueue
+        self.selectedAtMillis = selectedAtMillis
+        self.nowMillis = nowMillis
         self.onSnapshot = onSnapshot
         self.onComparison = onComparison
         self.onClosed = onClosed
+        self.continuation = continuation
         // Deadline covers idle time even before start() and is not extended by HELLO or callbacks.
         armDeadline()
     }
@@ -104,6 +124,8 @@ final class HandshakeV1Channel {
     func confirm(_ comparison: IosHandshakeV1Comparison) {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !closed else { return }
+        // Group mode never opens an APPROVE window, including reentrant UI callbacks.
+        guard case .approvals = continuation else { return }
         do {
             guard let signing = try bridge.confirm(ticket: comparison) else { _ = try observe(); return }
             let identity = self.identity
@@ -134,11 +156,160 @@ final class HandshakeV1Channel {
         terminate(.cancelled)
     }
 
+    /// Issuer-only write. Success means exchange started, not sent, confirmed or authorized.
+    @discardableResult
+    func sendEvidenceAndTransfer(
+        expectedGroup: String, expectedFounder: String, evidence: IosGroupAdmissionEvidence,
+        callbacks: GroupAdmissionChannelCallbacks,
+        onTransferred: @escaping (GroupAdmissionChannel) -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard let offers = try bridge.offersForGroupAdmission() else { _ = try observe(); return false }
+            _ = try IosGroupAdmissionContext.companion.create(
+                offers: offers, expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                evidence: evidence, role: .issuer
+            )
+            let certificates = try GroupAdmissionEvidenceCertificates.decode(evidence)
+            let content = Self.data(try evidence.framedBytes())
+            guard try evidenceActive() else { return false }
+            exchangingEvidence = true
+            writePending = true
+            connection.send(content: content, completion: .contentProcessed { [weak self] error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.writePending = false
+                    if error != nil { self.transportFailed(); return }
+                    self.transferEvidence(evidence, certificates: certificates, role: .issuer,
+                        expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                        callbacks: callbacks, onTransferred: onTransferred)
+                }
+            })
+            return true
+        } catch { adapterFailed(); return false }
+    }
+
+    /// Member-only exact reads. Bootstrap keeps cancellation/timer during the entire exchange.
+    @discardableResult
+    func receiveEvidenceAndTransfer(
+        expectedGroup: String, expectedFounder: String, callbacks: GroupAdmissionChannelCallbacks,
+        onTransferred: @escaping (GroupAdmissionChannel) -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard try evidenceActive() else { return false }
+            exchangingEvidence = true
+            evidenceDecoder = IosGroupAdmissionEvidenceDecoder()
+            receiveEvidence(expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                callbacks: callbacks, onTransferred: onTransferred)
+            return !closed
+        } catch { adapterFailed(); return false }
+    }
+
+    private var canExchangeEvidence: Bool {
+        !closed && pausedForGroup && !exchangingEvidence && !receivePending && !writePending
+    }
+
+    private func evidenceActive() throws -> Bool {
+        guard !closed, try bridge.offersForGroupAdmission() != nil else { _ = try observe(); return false }
+        return true
+    }
+
+    private func receiveEvidence(
+        expectedGroup: String, expectedFounder: String, callbacks: GroupAdmissionChannelCallbacks,
+        onTransferred: @escaping (GroupAdmissionChannel) -> Void
+    ) {
+        guard !closed, let decoder = evidenceDecoder else { return }
+        do {
+            guard try evidenceActive() else { return }
+            let budget = Int(try decoder.nextReadBytes())
+            receivePending = true
+            connection.receive(minimumIncompleteLength: 1, maximumLength: budget) { [weak self] data, _, complete, error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.receivePending = false
+                    do {
+                        guard try self.evidenceActive() else { return }
+                        if error != nil { self.transportFailed(); return }
+                        var evidence: IosGroupAdmissionEvidence?
+                        if let data, !data.isEmpty {
+                            let read = try decoder.accept(chunk: Self.bytes(data))
+                            guard Int(read.consumedBytes) == data.count else { throw AdoptionError.invalidEvidence }
+                            evidence = read.evidence
+                        }
+                        // EOF revokes the attempt even when its last chunk completes the evidence.
+                        if complete {
+                            if evidence == nil { try decoder.finish() }
+                            self.transportFailed()
+                            return
+                        }
+                        if let evidence {
+                            guard let offers = try self.bridge.offersForGroupAdmission() else { _ = try self.observe(); return }
+                            _ = try IosGroupAdmissionContext.companion.create(
+                                offers: offers, expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                                evidence: evidence, role: .member
+                            )
+                            let certificates = try GroupAdmissionEvidenceCertificates.decode(evidence)
+                            self.transferEvidence(evidence, certificates: certificates, role: .member,
+                                expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                                callbacks: callbacks, onTransferred: onTransferred)
+                        } else {
+                            self.receiveEvidence(expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                                callbacks: callbacks, onTransferred: onTransferred)
+                        }
+                    } catch { self.adapterFailed() }
+                }
+            }
+        } catch { adapterFailed() }
+    }
+
+    private func transferEvidence(
+        _ evidence: IosGroupAdmissionEvidence, certificates: [String: SecCertificate], role: IosGroupAdmissionRole,
+        expectedGroup: String, expectedFounder: String, callbacks: GroupAdmissionChannelCallbacks,
+        onTransferred: (GroupAdmissionChannel) -> Void
+    ) {
+        guard !closed, exchangingEvidence, !receivePending, !writePending else { return }
+        do {
+            guard let fresh = try bridge.offersForGroupAdmission() else { _ = try observe(); return }
+            _ = try IosGroupAdmissionContext.companion.create(
+                offers: fresh, expectedGroup: expectedGroup, expectedFounder: expectedFounder, evidence: evidence, role: role
+            )
+            guard let offers = try bridge.releaseForGroupAdmission() else { _ = try observe(); return }
+            // Queue-atomic ownership change: no old receive/write/sign is outstanding here.
+            closed = true // Old owner is terminal and relinquishes cleanup, including deinit.
+            timer?.cancel()
+            timer = nil
+            evidenceDecoder?.cancel()
+            evidenceDecoder = nil
+            connection.stateUpdateHandler = nil
+            do {
+                let next = try GroupAdmissionChannel(
+                    connection: connection, identity: identity, peerCertificate: peerCertificate,
+                    offers: offers, evidence: evidence, role: role,
+                    expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                    evidenceCertificates: certificates, selectedAtMillis: selectedAtMillis,
+                    queue: queue, signingQueue: signingQueue, nowMillis: nowMillis,
+                    onSnapshot: callbacks.onSnapshot, onComparison: callbacks.onComparison, onClosed: callbacks.onClosed
+                )
+                onTransferred(next) // Caller retains the new owner and invokes start().
+            } catch {
+                // Receiving initializer owns cleanup even on failure; old owner never cancels again.
+                callbacks.onClosed(.adapter)
+            }
+        } catch { adapterFailed() }
+    }
+
     private func send(_ ticket: IosHandshakeV1Write, initialHello: Bool) {
+        writePending = true
         connection.send(content: Self.data(ticket.bytes), completion: .contentProcessed { [weak self] error in
             guard let self else { return }
             self.queue.async { [weak self] in
                 guard let self, !self.closed else { return }
+                self.writePending = false
                 do {
                     var accepted = false
                     if error != nil {
@@ -154,11 +325,18 @@ final class HandshakeV1Channel {
     }
 
     private func receiveNext() {
-        guard !closed else { return }
-        connection.receive(minimumIncompleteLength: 1, maximumLength: Int(bridge.maximumChunkBytes)) { [weak self] data, _, complete, error in
+        guard !closed, !pausedForGroup else { return }
+        let budget: Int
+        do {
+            guard let remaining = try bridge.nextReadBytes() else { _ = try observe(); return }
+            budget = Int(remaining.int32Value)
+        } catch { adapterFailed(); return }
+        receivePending = true
+        connection.receive(minimumIncompleteLength: 1, maximumLength: budget) { [weak self] data, _, complete, error in
             guard let self else { return }
             self.queue.async { [weak self] in
                 guard let self, !self.closed else { return }
+                self.receivePending = false
                 do {
                     if error != nil { self.transportFailed(); return }
                     if let data, !data.isEmpty { _ = try self.bridge.accept(chunk: Self.bytes(data)) }
@@ -179,6 +357,13 @@ final class HandshakeV1Channel {
         }
         onSnapshot(snapshot)
         guard !closed else { return false }
+        if case .groupAdmission(let onHello) = continuation {
+            if !pausedForGroup, snapshot.phase == .awaitingConfirmation, !snapshot.remoteApproved {
+                pausedForGroup = true // No receive is outstanding; current exact-budget callback has completed.
+                onHello()
+            }
+            return !closed && !pausedForGroup
+        }
         if !comparisonPublished, let comparison = try bridge.comparison() {
             comparisonPublished = true
             let code = SHA256.hash(data: Self.data(comparison.bytes)).map { String(format: "%02x", $0) }.joined()
@@ -227,6 +412,8 @@ final class HandshakeV1Channel {
         bridge.cancel()
         timer?.cancel()
         timer = nil
+        evidenceDecoder?.cancel()
+        evidenceDecoder = nil
         connection.stateUpdateHandler = nil
         connection.cancel()
         onClosed(failure)
@@ -234,7 +421,7 @@ final class HandshakeV1Channel {
 
     deinit {
         timer?.cancel()
-        connection.cancel()
+        if !closed { connection.cancel() }
     }
 
     static func monotonicMillis() -> Int64 { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) }
@@ -258,6 +445,7 @@ final class HandshakeV1Channel {
 
     private enum AdoptionError: Error {
         case invalidTLS
+        case invalidEvidence
         case random(OSStatus)
     }
 }
