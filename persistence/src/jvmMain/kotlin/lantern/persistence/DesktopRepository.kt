@@ -24,6 +24,11 @@ fun openDesktopRepository(path: Path): SqliteDeviceRepository {
                 LanternDatabase.Schema.create(driver)
                 driver.execute(null, "PRAGMA user_version=${LanternDatabase.Schema.version}", 0)
             }
+        } else if (version < LanternDatabase.Schema.version) {
+            LanternDatabase(driver).transaction {
+                LanternDatabase.Schema.migrate(driver, version, LanternDatabase.Schema.version)
+                driver.execute(null, "PRAGMA user_version=${LanternDatabase.Schema.version}", 0)
+            }
         }
         return SqliteDeviceRepository(driver)
     } catch (error: Exception) {

@@ -2,9 +2,11 @@ package lantern.persistence
 
 import app.cash.sqldelight.db.SqlDriver
 import lantern.domain.DeviceRepository
+import lantern.domain.GroupTrustAnchor
+import lantern.domain.LocalGroupRepository
 
 /** Owns an initialized driver. Close after all repository consumers stop. */
-class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, AutoCloseable {
+class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, LocalGroupRepository, AutoCloseable {
     private val store = SqliteDeviceStore(driver)
 
     @Synchronized
@@ -21,6 +23,13 @@ class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, 
 
     @Synchronized
     override fun rename(name: String) { store.rename(name) }
+
+    @Synchronized
+    override fun localGroup(): GroupTrustAnchor? = store.localGroup()
+
+    @Synchronized
+    override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
+        store.foundLocalGroup(anchor, currentIdentityId)
 
     @Synchronized
     override fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =

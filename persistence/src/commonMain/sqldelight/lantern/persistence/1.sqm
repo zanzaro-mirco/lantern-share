@@ -1,0 +1,5 @@
+CREATE TABLE local_group (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  group_id TEXT NOT NULL CHECK (length(group_id) > 0),
+  founder_id TEXT NOT NULL CHECK (length(founder_id) > 0)
+);

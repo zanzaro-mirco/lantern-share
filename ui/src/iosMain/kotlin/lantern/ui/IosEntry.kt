@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ComposeUIViewController
 import lantern.domain.ContentLimits
+import lantern.domain.LocalGroupRepository
 import lantern.domain.Reconnection
 import lantern.persistence.IosDeviceRepository
 import lantern.persistence.openIosRepository
@@ -20,6 +21,13 @@ import lantern.protocol.Frame
 import platform.UIKit.UIViewController
 
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
+    internal val localGroups: LocalGroupRepository get() = repository
+
+    @Throws(Exception::class)
+    fun localGroup(): IosLocalGroupAnchor? = repository.localGroup()?.let {
+        IosLocalGroupAnchor(it.groupId, it.founderId)
+    }
+
     @Throws(Exception::class)
     fun name(): String = repository.name()
 

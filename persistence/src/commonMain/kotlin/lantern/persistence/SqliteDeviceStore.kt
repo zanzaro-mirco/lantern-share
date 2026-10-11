@@ -2,6 +2,7 @@ package lantern.persistence
 
 import app.cash.sqldelight.db.SqlDriver
 import lantern.domain.ChatLine
+import lantern.domain.GroupTrustAnchor
 
 /** Shared SQLDelight operations. Platform repositories provide their own synchronization and lifecycle. */
 internal class SqliteDeviceStore(driver: SqlDriver) {
@@ -23,6 +24,19 @@ internal class SqliteDeviceStore(driver: SqlDriver) {
     fun rename(name: String) {
         queries.putSetting("name", name)
     }
+
+    fun localGroup(): GroupTrustAnchor? = queries.localGroup().executeAsOneOrNull()?.let {
+        GroupTrustAnchor(it.group_id, it.founder_id)
+    }
+
+    fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
+        database.transactionWithResult {
+            require(anchor.founderId == currentIdentityId) { "Local foundation identity changed" }
+            // Write first: a single conditional INSERT arbitrates independent connections too.
+            // No REPLACE/IGNORE, no read-then-overwrite race, and no swallowed constraint errors.
+            queries.foundLocalGroup(anchor.groupId, anchor.founderId)
+            queries.lastInsertCount().executeAsOne() == 1L
+        }
 
     fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =
         database.transactionWithResult {

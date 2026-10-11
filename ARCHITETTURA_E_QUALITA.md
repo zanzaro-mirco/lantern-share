@@ -94,6 +94,8 @@ La revisione non misura qualità dal numero di classi né promette assenza di bu
 
 Le decisioni successive che cambiano sicurezza, dipendenze, schema o ciclo di vita saranno registrate qui oppure in un ADR separato se richiedono alternative e trade-off più ampi.
 
+Fondazione locale persistente: [ADR 010](docs/ADR-010-FONDAZIONE-LOCALE-PERSISTENTE.md). Schema 2 additivo con migrazione del database esistente, singleton e inserimento condizionale atomico; contratto separato dal trust PoC. Identità OS/cancellazione serializzate dal futuro owner, nessuna autorizzazione di peer dal solo salvataggio.
+
 Incremento successivo: [ADR 001 — identità Mac](docs/ADR-001-IDENTITA-MAC.md). Adattatore KeychainStore separato dalla migrazione e dal motore; riferimento locale con pin, importazione conservativa, verifica della chiave dopo rilettura, nessuna rotazione automatica in caso di errore. Dipendenze e protocollo invariati. Test portabili distinti dalla prova nativa Mac ancora non eseguita.
 
 ## 10. Revisione applicata al codice esistente

@@ -3,12 +3,14 @@ package lantern.persistence
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import lantern.domain.ChatLine
 import lantern.domain.DeviceRepository
+import lantern.domain.GroupTrustAnchor
+import lantern.domain.LocalGroupRepository
 import platform.Foundation.NSLock
 
 /** Owns the native SQLDelight driver. Call [close] after all consumers stop. */
 class IosDeviceRepository internal constructor(
     private val driver: NativeSqliteDriver,
-) : DeviceRepository {
+) : DeviceRepository, LocalGroupRepository {
     private val lock = NSLock()
     private val store = SqliteDeviceStore(driver)
 
@@ -26,6 +28,9 @@ class IosDeviceRepository internal constructor(
     override fun block(id: String) { locked { store.block(id) } }
     override fun name(): String = locked(store::name)
     override fun rename(name: String) { locked { store.rename(name) } }
+    override fun localGroup(): GroupTrustAnchor? = locked(store::localGroup)
+    override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
+        locked { store.foundLocalGroup(anchor, currentIdentityId) }
     override fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =
         locked { store.save(id, sender, session, body, signature) }
     override fun history(): List<ChatLine> = locked(store::history)
