@@ -1,6 +1,22 @@
 # Stato sviluppo — 11 ottobre 2026
 
-## Sintesi corrente — fondazione nella UI Android/desktop
+## Sintesi corrente — fondazione nella UI iOS
+
+**Implementato:** lo stesso pannello Compose Gruppo locale è ora collegato all'app iOS. IosLocalGroupController riserva una sola creazione prima dell'accodamento; Swift usa la coda seriale del servizio e l'identità Apple già aperta. Apertura e recupero dopo errore sono sole letture; l'ID visualizzato proviene dal database dopo commit, non dalla bozza. Errori disabilitano nuove scritture fino alla rilettura esplicita; callback tardive non riaprono un controller chiuso. Il proprietario Swift mantiene sé stesso e il driver vivi durante l'operazione. Nessuna creazione automatica, modifica al trust, TLS, associazione o sessioni.
+
+**Regole condivise:** localGroupPresentation valida identità e radice canoniche per entrambi i controller, senza normalizzare/sostituire dati. Anche un'identità invalida con database vuoto impedisce la creazione. Schema 2, dati, wire, versioni, lock e workflow invariati.
+
+**Verificato localmente:** `./gradlew -Pandroid=true :protocol:jvmTest --tests '*LocalGroupPresentationTest' :protocol:testDebugUnitTest --tests '*LocalGroupPresentationTest' :connectivity:jvmTest --tests '*LocalGroupServiceTest' :androidApp:assembleDebug :desktopApp:classes --console=plain`, BUILD SUCCESSFUL **11 s**: cinque nuove regressioni JVM, cinque unit Android e undici integrazioni del servizio. APK Android e desktop compilati, non eseguiti su hardware. `& .\ui\build\foundation-portability\check.ps1`: **11 controlli host del controller + dieci della facciata riusciti**, circa 7 s, sorgenti Kotlin effettivi/JDBC reale ma fixture del confine IosPersistence. Non verifica driver Native, export o Swift. Cinque nuovi XCTest predisposti, **non compilati/eseguiti su Windows**. Nessun nuovo runtime Apple attestato.
+
+**CI precedente verificata da conclusa:** `7216413022b3141add233cb3d63d097cc5886d08`, [Android/desktop 38173745842](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38173745842) e [iOS ordinaria 38173745788](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38173745788) success, lettura compatta unica. iOS ordinaria compila, non esegue XCTest. I 112 XCTest del checkpoint `7b88c9d` sottostante restano evidenza della fondazione precedente, non del nuovo controller.
+
+**Consegna prevista:** unico commit/push autorizzato con note precedenti preservate; checkpoint iOS completo per i cinque nuovi XCTest, senza polling. Nessun collaudo fisico nuovo. Fase 0 chiusa; fase 1 e prove obbligatorie Android/Windows/iPhone/Mac ancora aperte.
+
+**Prossimo incremento unico:** verificare Native/export/Swift e runtime del pannello iOS dal checkpoint concluso, correggendo eventuali errori prima di estendere le funzionalità del gruppo. Prova fisica crea → riapri stesso ID, clic ripetuti e nessun nuovo peer autorizzato ancora da eseguire.
+
+## Storico — fondazione nella UI Android/desktop
+
+**Consegna del pannello effettuata:** unico commit/push `7216413`, dieci file. La lettura unica delle run subito dopo push ha restituito lista vuota: ID/stati non ancora osservati, CI non attestata riuscita/in corso. Link ai workflow: [Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/workflows/verify.yml), [iOS](https://github.com/zanzaro-mirco/lantern-share/actions/workflows/ios.yml). Nessun retry/polling/dispatch manuale. Due sole note post-push locali, da raggruppare senza push documentale separato. Riprendere la verifica alla successiva richiesta.
 
 **Checkpoint precedente verificato da concluso:** commit `7b88c9d29fb066ef664dc65c717613d330981963`, [Android/desktop 38171484655](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38171484655) e [checkpoint iOS 38171502067](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38171502067) **success**. Native dominio/protocollo/persistenza eseguiti, framework/export/Swift compilati, **112 XCTest zero fallimenti**, inclusi gli undici nuovi LocalGroupFoundationTests. Bootstrap interop solo compilato, non eseguito; non hardware. Run duplicata 38171484632 cancelled. Una lettura compatta e soli riepiloghi del log concluso, niente polling.
 

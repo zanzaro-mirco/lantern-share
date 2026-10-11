@@ -326,6 +326,7 @@ private enum PairingError: Error, LocalizedError {
 
 final class BonjourProbe: ObservableObject {
     let state = IosProbeState()
+    private(set) var localGroup: IosLocalGroupController!
     private let queue = DispatchQueue(label: "dev.lantern.poc.ios-service")
     private let allowedPeers = AllowedPeerStore()
     private var browser: NWBrowser?
@@ -343,10 +344,16 @@ final class BonjourProbe: ObservableObject {
     private var deviceName = ""
 
     init() {
+        // Set once before publishing the probe or starting async store initialization.
+        localGroup = IosLocalGroupController(
+            requestCreate: { [weak self] in self?.createLocalGroup() },
+            requestReload: { [weak self] in self?.reloadLocalGroup() }
+        )
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.openStores() }
     }
 
     deinit {
+        localGroup.close()
         stopResources()
         persistence?.close()
     }
@@ -363,6 +370,33 @@ final class BonjourProbe: ObservableObject {
                 self.onMain { self.state.updateDeviceName(value: value) }
             } catch { self.reportPersistence(error) }
         }
+    }
+
+    private func createLocalGroup() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard self.localGroup.hasPendingCreation(), let identity = self.identity,
+                  let persistence = self.persistence else { self.localGroup.createFailed(); return }
+            do {
+                // This queue serializes store/identity lifetime and the entire synchronous commit.
+                // The retained self prevents deinit from closing the driver during the operation.
+                let owner = try LocalGroupFoundation(identity: identity)
+                if let ticket = try owner.prepare(persistence: persistence) {
+                    _ = try owner.commit(ticket: ticket, currentIdentity: identity, persistence: persistence)
+                }
+                try self.localGroup.created(identityId: identity.id, persistence: persistence)
+            } catch { self.localGroup.createFailed() }
+        }
+    }
+
+    private func reloadLocalGroup() {
+        queue.async { [weak self] in self?.loadLocalGroup() }
+    }
+
+    private func loadLocalGroup() {
+        guard let identity, let persistence else { localGroup.loadFailed(); return }
+        do { try localGroup.loaded(identityId: identity.id, persistence: persistence) }
+        catch { localGroup.loadFailed() }
     }
 
     func start() {
@@ -479,6 +513,7 @@ final class BonjourProbe: ObservableObject {
                 self.refreshMessages()
             case .failure(let error): self.reportPersistence(error)
             }
+            self.loadLocalGroup()
         }
     }
 

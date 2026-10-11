@@ -11,7 +11,8 @@ struct ComposeScreen: UIViewControllerRepresentable {
             pair: { probe.pair($0) },
             confirm: { probe.confirm() },
             reject: { probe.reject() },
-            send: { probe.send(peerID: $0, text: $1) }
+            send: { probe.send(peerID: $0, text: $1) },
+            localGroup: probe.localGroup
         )
     }
     func updateUIViewController(_ controller: UIViewController, context: Context) {}

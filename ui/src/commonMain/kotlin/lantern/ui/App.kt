@@ -81,7 +81,7 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
 }
 
 @Composable
-private fun LocalGroupPanel(controller: LocalGroupController) {
+internal fun LocalGroupPanel(controller: LocalGroupController) {
     val state by controller.state.collectAsState()
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -8,7 +8,7 @@ Il desktop contiene un percorso reale: identità persistente, mDNS, associazione
 
 Il pannello **Gruppo locale** legge il database senza creare nulla. **Crea gruppo locale** salva una nuova fondazione soltanto su richiesta esplicita e ne mostra l'ID dopo la persistenza; alla riapertura conserva lo stesso ID. Non crea sessioni, non associa automaticamente peer e non modifica le autorizzazioni della prova tecnica.
 
-In caso di errore, **Rileggi stato salvato** effettua solo una lettura: non ripete la scrittura. Dati invalidi o riferiti a un'altra identità non vengono sostituiti. Uscita durevole dal gruppo ancora non implementata; non cancellare identità/database per aggirare un errore. Pannello compilato Android/desktop e controller testato con SQLite reale; interazione fisica ancora da collaudare. L'equivalente pannello iOS è il prossimo incremento, distinto dall'owner Apple già verificato in simulatore.
+In caso di errore, **Rileggi stato salvato** effettua solo una lettura: non ripete la scrittura. Dati invalidi o riferiti a un'altra identità non vengono sostituiti. Uscita durevole dal gruppo ancora non implementata; non cancellare identità/database per aggirare un errore. Pannello compilato Android/desktop e controller testato con SQLite reale; interazione fisica ancora da collaudare. Il pannello condiviso è collegato anche all'app iOS, con operazioni sulla coda del servizio e identità Apple esistente: nuova integrazione Swift/runtime ancora da verificare, distinta dall'owner Apple già verificato in simulatore.
 
 ## Struttura
 

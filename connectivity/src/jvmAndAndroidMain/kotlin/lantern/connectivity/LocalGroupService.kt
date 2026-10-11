@@ -14,7 +14,7 @@ import lantern.domain.LocalGroupController
 import lantern.domain.LocalGroupFailure
 import lantern.domain.LocalGroupRepository
 import lantern.domain.LocalGroupState
-import lantern.protocol.Wire
+import lantern.protocol.localGroupPresentation
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -87,14 +87,7 @@ class LocalGroupService(
         }
     }
 
-    private fun readState(): LocalGroupState {
-        val anchor = repository.localGroup() ?: return LocalGroupState.Empty
-        if (!Wire.isFingerprint(anchor.groupId) || !Wire.isFingerprint(anchor.founderId)) {
-            return LocalGroupState.Failed(LocalGroupFailure.INVALID_ROOT)
-        }
-        if (anchor.founderId != identity.id) return LocalGroupState.Failed(LocalGroupFailure.IDENTITY_MISMATCH)
-        return LocalGroupState.Founded(anchor)
-    }
+    private fun readState(): LocalGroupState = localGroupPresentation(repository.localGroup(), identity.id)
 
     override fun close() {
         synchronized(lifecycleGate) {

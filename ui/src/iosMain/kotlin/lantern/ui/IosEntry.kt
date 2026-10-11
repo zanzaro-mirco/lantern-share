@@ -193,6 +193,7 @@ fun ProbeViewController(
     confirm: () -> Unit,
     reject: () -> Unit,
     send: (String, String) -> Unit,
+    localGroup: IosLocalGroupController,
 ): UIViewController = ComposeUIViewController {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
@@ -215,6 +216,7 @@ fun ProbeViewController(
                         editedName != state.deviceName && ContentLimits.isValidName(editedName),
                 ) { Text("Salva nome") }
                 if (state.persistenceError.isNotEmpty()) Text(state.persistenceError, color = MaterialTheme.colorScheme.error)
+                LocalGroupPanel(localGroup)
                 Text("TLS 1.3 con confronto completo del codice. Ricevuta dopo il salvataggio sul destinatario.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)
