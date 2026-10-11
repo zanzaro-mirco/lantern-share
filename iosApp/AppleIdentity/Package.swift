@@ -11,6 +11,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-asn1.git", exact: "1.3.0"),
     ],
     targets: [
-        .target(name: "LanternIdentity", dependencies: [.product(name: "X509", package: "swift-certificates")]),
+        .target(name: "LanternIdentity", dependencies: [
+            .product(name: "X509", package: "swift-certificates"),
+            .product(name: "SwiftASN1", package: "swift-asn1"),
+        ]),
     ]
 )

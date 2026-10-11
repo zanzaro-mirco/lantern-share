@@ -1,4 +1,4 @@
-# Passaggio di consegne — 9 ottobre 2026
+# Passaggio di consegne — 11 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,22 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Push autorizzato dall'utente l'11 ottobre:** raggruppare i dieci file dell'incremento, base `45110656fad1bf9c09512c5b92257531da3e49e2`, preservando le note precedenti. Un solo push/CI ordinaria solo iOS, nessun dispatch duplicato/polling; SHA/link alla consegna, nuovo esito Apple non ancora verificato. Checkpoint [37952903588](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37952903588) verificato `success` una volta da concluso: Native dominio/protocollo/persistenza eseguiti, framework/app compilati, 38 XCTest zero fallimenti; bootstrap interop solo compilato. Non attribuire questo esito ai nuovi sorgenti.
+
+**Implementato:** `IosGroupAdmissionEvidence` (facciata Kotlin, codec/limiti/copie/diagnostica e verifica catena condivisi), `ApplePublicCertificate` (DER rigoroso con SwiftASN1 già vincolato, X.509 Security esatto/pin e riuso policy Apple di certificato/firma), `GroupAdmissionEvidenceCertificates` (mappa intera e verifica offline contro radice/destinatario indipendenti). Target SPM rende esplicito SwiftASN1 già presente; app Xcode include il nuovo adattatore. Nessuna versione/lock/workflow/schema/wire 0/identità modificata, nessun servizio/UI/trust/SQLite attivato. `verifyChain=true` non è conferma, appartenenza o autorizzazione; owner TLS/gruppo Apple, fondazione/adozione confermata e commit recuperabile restano aperti.
+
+**Evidenze e limiti:** `:ui:compileIosMainKotlinMetadata` restituisce success ma task iOS **SKIPPED** su Windows. Compilatore Kotlin JVM 2.1.21 sul sorgente effettivo e **14 smoke check locali** riusciti, inclusi P-256 reale con ID/DER fixture; comando finale `& .\ui\build\evidence-portability\check.ps1`, artefatti ignorati/solo locali. **19 XCTest aggiunti ma non compilati/eseguiti**: parsing/copie/input/limiti/diagnostica, certificati e firme reali, root mismatch, delegazione, validità/autofirma/firma finale errate; quattro ulteriori casi JVM → Apple e callback Swift. Tre fixture pubbliche JDK/Bouncy Castle sono state verificate leggendo il sorgente Swift effettivo: DER/pin/autofirma/date/canonico/firma claim JVM corretti; nessuna chiave privata nel repository. Dettagli/comandi in sintesi STATO. Non nuovo Native/export/Swift/Apple runtime/TLS gruppo/hardware; niente build ripetute per Markdown.
+
+**Prossimo passo unico:** leggere la nuova CI iOS da conclusa; se verde, checkpoint macOS/simulatore dei 19 XCTest prima dell'owner gruppo Apple. Non dispatch sul vecchio main o in parallelo alla run ordinaria; se pendente, riportare link/commit e fermarsi senza polling. Il planner richiede solo iOS, full=false; la CI rapida compila i test, non li esegue. Fase 1 e tutti i collaudi obbligatori rimangono aperti.
+
+**Vincoli da preservare dopo il checkpoint:** il futuro handover Apple deve impedire read-ahead/receive bootstrap concorrente e preservare tail coalescente; vecchi timer/callback/close/**deinit** non possono cancellare NWConnection ceduta. Revisione e minimo collaudo futuri in `docs/AMMISSIONE_GRUPPO.md`. Trasporto attuale non modificato; nuovo owner non implementato. Diff/whitespace dei nuovi file controllati; dieci file da raggruppare, nessuna modifica altrui rimossa.
+
+## Storico — checkpoint e scambio evidence TLS
+
+**Checkpoint iOS da verificare:** CI ordinarie `45110656fad1bf9c09512c5b92257531da3e49e2` entrambe `success`: [37950455081 iOS rapida](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37950455081), [37950455063 Android/desktop](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37950455063). Dopo verifica HEAD == main remoto, avviato una sola volta `gh workflow run ios.yml --repo zanzaro-mirco/lantern-share --ref main -f bootstrap_interop=false`: [checkpoint 37952903588](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37952903588), **esito non verificato**. Esegue test comuni Native e XCTest ordinari, non ripete bootstrap interop; nessun polling/nuova build locale/modifica codice/push. Queste due note locali vanno preservate e raggruppate nel prossimo incremento.
+
+**Prossimo passo unico:** leggere la run 37952903588 conclusa; se pendente riportare link/commit e fermarsi, senza nuovo dispatch. Risolvere eventuali regressioni prima dell'adattatore Apple evidence. Non attribuire ai verdi rapidi esecuzione Native/XCTest o collaudo fisico. Fase 1/collaudi obbligatori aperti.
 
 **Suite completa finale:** 120 casi connettività JVM, 119 riusciti e un test mDNS reale opt-in non eseguito; zero errori/fallimenti. `git diff --check` riuscito. Venti file cumulativi, nessuna modifica workflow/versioni/lock.
 
