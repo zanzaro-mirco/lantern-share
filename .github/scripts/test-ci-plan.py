@@ -45,6 +45,13 @@ class PlanTests(unittest.TestCase):
     def test_joint_source_set_keeps_android_and_jvm(self):
         self.assertEqual(ci.targets_for("connectivity/src/jvmAndAndroidMain/Owner.kt"), {"jvm", "android"})
 
+    def test_public_group_confirmation_fixture_selects_both_consumers(self):
+        path = "iosApp/Tests/JvmGroupConfirmationVectors.swift"
+        self.assertEqual(ci.targets_for(path), {"jvm", "ios"})
+        result = ci.plan([path])
+        self.assertEqual([result[key] for key in ["jvm", "android", "ios", "full"]],
+                         ["true", "false", "true", "false"])
+
     def test_shared_build_locks_and_unknown_paths_broaden_checks(self):
         for path in ["domain/src/commonMain/Device.kt", "protocol/src/commonTest/Test.kt", "newModule/src/Foo.kt",
                      "settings.gradle.kts", "gradle/libs.versions.toml", "ui/gradle.lockfile", "gradlew"]:

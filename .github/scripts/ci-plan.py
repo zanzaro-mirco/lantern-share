@@ -36,6 +36,9 @@ def targets_for(path):
         return {"android"}
     if parts[0] == "desktopApp":
         return {"jvm"}
+    # Public fixture also consumed by protocol:jvmTest; not just compiled by XCTest.
+    if path == "iosApp/Tests/JvmGroupConfirmationVectors.swift":
+        return {"ios", "jvm"}
     if parts[0] == "iosApp":
         return {"ios"}
     if len(parts) >= 3 and parts[0] in MODULES and parts[1] == "src":

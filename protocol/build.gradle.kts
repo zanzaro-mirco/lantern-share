@@ -8,3 +8,10 @@ kotlin {
     sourceSets { commonMain.dependencies { api(project(":domain")); api(libs.serialization) }; commonTest.dependencies { implementation(kotlin("test")) } }
 }
 if (withAndroid) extensions.configure<com.android.build.gradle.LibraryExtension> { namespace = "lantern.protocol"; compileSdk = 35; defaultConfig { minSdk = 29 }; compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 } }
+
+// The public Swift fixture is deliberately shared by the JVM interoperability test.
+// A fixture-only edit must invalidate cached/up-to-date test results too.
+tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest") {
+    inputs.file(rootProject.file("iosApp/Tests/JvmGroupConfirmationVectors.swift"))
+        .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
+}
