@@ -63,7 +63,8 @@ jobs:
         run: bash ./gradlew :ui:linkDebugFrameworkIosSimulatorArm64 --console=plain
       - name: Checkpoint Native protocol and persistence tests
         if: needs.plan.outputs.full == 'true'
-        run: bash ./gradlew :domain:iosSimulatorArm64Test :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain
+        # Keep the underlying cause visible if Gradle cannot serialize the Native report.
+        run: bash ./gradlew :domain:iosSimulatorArm64Test :protocol:iosSimulatorArm64Test :persistence:iosSimulatorArm64Test --console=plain --stacktrace
       - name: Generate Xcode project
         run: |
           git clone --depth 1 --branch 2.43.0 https://github.com/yonaskolb/XcodeGen.git "$RUNNER_TEMP/XcodeGen"
@@ -97,5 +98,9 @@ jobs:
             build/ios-identity-tests.xcresult
             build/ios-bootstrap-interop-*.xcresult
             iosApp/Lantern.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+            domain/build/reports/tests/
+            domain/build/test-results/iosSimulatorArm64Test/
             persistence/build/reports/tests/
+            persistence/build/test-results/iosSimulatorArm64Test/
             protocol/build/reports/tests/
+            protocol/build/test-results/iosSimulatorArm64Test/
