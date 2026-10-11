@@ -1,6 +1,6 @@
 # ADR 010 — fondazione locale persistente
 
-Data: 11 ottobre 2026. Implementazione locale; verifica Native e integrazione nel servizio ancora aperte.
+Data: 11 ottobre 2026. Fondazione/owner Apple verificati in CI su `7b88c9d`; integrazione UI locale Android/desktop aggiunta nell'incremento successivo, collaudo fisico aperto.
 
 ## Decisione
 
@@ -18,9 +18,13 @@ Il driver desktop esegue la migrazione e aggiorna `user_version` nella stessa tr
 
 La facciata Apple espone snapshot/ticket opachi, lettura immutabile della radice salvata e risultati di commit espliciti. Nessuna API pubblica espone direttamente l'inserimento di una radice arbitraria. Swift non ricrea stati, identificatori da UUID o regole di appartenenza: genera 32 byte OS soltanto quando Kotlin richiede casualità. Errore OS restituito come null al callback non-throwing → chiusura terminale Kotlin e rilancio dell'errore originale da Swift, senza fallback/retry. Cancellazione/reentrata durante quel callback non riattiva la richiesta. `leaveGroup` su questo owner invalida soltanto la richiesta: non implementa l'uscita durevole.
 
-L'identità OS non è un dato SQLite: **non si promette atomicità distribuita fra Keychain/Keystore e database**. Il futuro servizio deve serializzare richieste, lettura dell'identità corrente, cambi di identità, cancellazione e commit sincrono, fuori dal thread UI. Il repository ricontrolla l'identità del fondatore rispetto a quella fornita dentro la transazione e arbitra l'assenza di appartenenza. Non accetta come autorità un pin di rete. Nessun codice di servizio/UI chiama ancora questo percorso.
+L'identità OS non è un dato SQLite: **non si promette atomicità distribuita fra Keychain/Keystore e database**. Il proprietario deve serializzare richieste, identità, cancellazione e commit sincrono, fuori dal thread UI. Il repository ricontrolla l'identità del fondatore rispetto a quella fornita dentro la transazione e arbitra l'assenza di appartenenza. Non accetta come autorità un pin di rete.
 
-Dopo errore, prima di una nuova richiesta esplicita si rilegge lo stato durevole. La sola tabella non abilita peer, chat o sessioni e non completa l'ammissione distribuita recuperabile. Uscita persistente e adozione remota sono incrementi separati. Owner Apple implementato localmente, non ancora verificato con Native/export/Swift/runtime: non attivarlo nel servizio prima del checkpoint pertinente.
+`LocalGroupService` JVM/Android implementa il contratto separato `LocalGroupController`. Le app lo compongono con la stessa identità immutabile di Node e lo chiudono prima del database. Solo IO worker legge/prepara/scrive; gli ingressi UI riservano atomicamente lo stato, senza I/O/lock di database sul chiamante. Apertura → sola lettura; creazione solo da Empty e su azione esplicita; niente coda di clic/riprova automatica. Founded contiene solo la radice riletta e validata dopo il commit, non la bozza perdente. Errori/identità discordante/origine non canonica disabilitano creazione; reload esplicito legge senza generare o sovrascrivere. Nessun cambiamento nel ciclo di Node, nel trasporto o nel trust PoC.
+
+Gate breve di lifecycle ordina chiusura e cessione al commit sincrono. Close prima della cessione impedisce scritture; dopo cessione la transazione può finire, senza riattivare lo stato Closed. Tutti i closer concorrenti attendono il worker: nessuna chiusura prematura del driver da un secondo close. Sostituire l'identità richiede ricreare entrambi gli owner. La chiusura è chiamata dall'app, mai dal worker stesso; non è annullamento/uscita durevole.
+
+Dopo errore, prima di una nuova richiesta esplicita si rilegge lo stato durevole. La sola tabella non abilita peer, chat o sessioni e non completa l'ammissione distribuita recuperabile. Uscita persistente e adozione remota sono incrementi separati. Owner Apple compilato/eseguito con Native/export/Swift/runtime nel checkpoint 38171502067, 112 XCTest zero fallimenti; il pannello iOS non è ancora integrato.
 
 ## Verifica
 
@@ -28,4 +32,4 @@ SQLite JDBC reale: riapertura, identità discordante, due connessioni concorrent
 
 Owner JVM con identità/firme OS e SQLite reali: commit e riapertura, richieste concorrenti, cancellazione/uscita, identità/ticket estranei, errore senza replay e nuova richiesta, inserimento fra snapshot e scrittura, cancellazione durante la lettura. Le sole callback di interleaving/errore sono fixture di test; nessun adattatore simulato in produzione.
 
-Undici regressioni comuni del commit, incluse lettura fallita prima dell'handoff, conferma incerta dopo scrittura e cancellazione tardiva. Quattro nuovi test Native iOS di riapertura/rifiuto della sostituzione, migrazione, guasto prima/dopo INSERT e sola lettura; undici XCTest del confine Kotlin/Swift e dell'owner con Keychain/SQLite/casualità OS predisposti, **non compilati/eseguiti su Windows**. Dieci scenari della facciata Kotlin effettiva compilati/eseguiti su JVM con JDBC reale e fixture del solo confine IosPersistence: non verificano la classe IosPersistence reale, Native, export o Swift. Evidenze effettive e limiti in `STATO_SVILUPPO.md`; collaudi fisici fase 1 obbligatori.
+Undici regressioni comuni del commit, incluse lettura fallita prima dell'handoff, conferma incerta dopo scrittura e cancellazione tardiva. Quattro nuovi test Native iOS di riapertura/rifiuto della sostituzione, migrazione, guasto prima/dopo INSERT e sola lettura eseguiti nel checkpoint; undici XCTest dell'owner/confine Swift tutti riusciti. Undici integrazioni LocalGroupService con SQLite reale verificano riapertura, IO fuori dal chiamante, clic ripetuti, read/write falliti, conferma incerta, radice concorrente, identità cambiata/dati non canonici, acknowledgement senza radice e chiusure prima/dopo cessione con due closer. Le callback di errore/interleaving sono solo fixture. UI compilata, non collaudata fisicamente. Evidenze e comandi in `STATO_SVILUPPO.md`.

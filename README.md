@@ -4,6 +4,12 @@
 
 Il desktop contiene un percorso reale: identità persistente, mDNS, associazione esplicita su entrambi gli schermi, TLS 1.3 reciproco, testo firmato, SQLite e ricevute dopo salvataggio. Android riusa protocollo e motore TLS con NSD e Keystore nativi. iOS implementa identità Keychain, SQLite, Bonjour, TLS, associazione e testo/ricevute, verificati in simulatore sul commit `08dfb86`; collaudi fisici Apple pendenti. Non è l'app completa prevista dal piano. Gli esiti delle build e dei test effettivi sono in STATO_SVILUPPO.md.
 
+## Fondazione locale del gruppo — incremento Android/desktop
+
+Il pannello **Gruppo locale** legge il database senza creare nulla. **Crea gruppo locale** salva una nuova fondazione soltanto su richiesta esplicita e ne mostra l'ID dopo la persistenza; alla riapertura conserva lo stesso ID. Non crea sessioni, non associa automaticamente peer e non modifica le autorizzazioni della prova tecnica.
+
+In caso di errore, **Rileggi stato salvato** effettua solo una lettura: non ripete la scrittura. Dati invalidi o riferiti a un'altra identità non vengono sostituiti. Uscita durevole dal gruppo ancora non implementata; non cancellare identità/database per aggirare un errore. Pannello compilato Android/desktop e controller testato con SQLite reale; interazione fisica ancora da collaudare. L'equivalente pannello iOS è il prossimo incremento, distinto dall'owner Apple già verificato in simulatore.
+
 ## Struttura
 
 | Modulo | Responsabilità |

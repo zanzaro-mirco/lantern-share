@@ -30,9 +30,12 @@ import lantern.domain.ContentLimits
 import lantern.domain.DeviceController
 import lantern.domain.DeviceState
 import lantern.domain.Peer
+import lantern.domain.LocalGroupController
+import lantern.domain.LocalGroupFailure
+import lantern.domain.LocalGroupState
 
 @Composable
-fun LanternApp(controller: DeviceController) {
+fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? = null) {
     val state by controller.state.collectAsState()
     var recipient by remember { mutableStateOf<String?>(null) }
 
@@ -51,6 +54,7 @@ fun LanternApp(controller: DeviceController) {
                 )
                 SelectionContainer { Text("Identità: ${state.id}") }
                 Text(state.status)
+                if (localGroup != null) LocalGroupPanel(localGroup)
                 PairingPanel(state.pairingPeer, state.comparisonCode, controller::confirm, controller::reject)
                 Text("Dispositivi scoperti", style = MaterialTheme.typography.titleLarge)
                 if (state.peers.isEmpty()) Text("Nessun dispositivo. Verifica rete locale e firewall.")
@@ -72,6 +76,35 @@ fun LanternApp(controller: DeviceController) {
                 MessageHistory(state.id, state.messages)
                 Text("Autorizzati: ${state.trusted.size}. Cronologia locale: ultimi 200 messaggi. Nessun recupero automatico in questa prova.")
             }
+        }
+    }
+}
+
+@Composable
+private fun LocalGroupPanel(controller: LocalGroupController) {
+    val state by controller.state.collectAsState()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Gruppo locale", style = MaterialTheme.typography.titleMedium)
+            when (val current = state) {
+                LocalGroupState.Loading -> Text("Lettura del gruppo salvato…")
+                LocalGroupState.Empty -> {
+                    Text("Nessun gruppo locale salvato.")
+                    Button(onClick = controller::create) { Text("Crea gruppo locale") }
+                }
+                LocalGroupState.Creating -> Text("Salvataggio del gruppo…")
+                is LocalGroupState.Founded -> SelectionContainer { Text("Gruppo: ${current.anchor.groupId}") }
+                is LocalGroupState.Failed -> {
+                    Text(when (current.reason) {
+                        LocalGroupFailure.STORAGE -> "Impossibile leggere o salvare il gruppo. Nessun nuovo tentativo automatico."
+                        LocalGroupFailure.INVALID_ROOT -> "Dati del gruppo non validi. Nessun dato è stato sostituito."
+                        LocalGroupFailure.IDENTITY_MISMATCH -> "Il gruppo salvato appartiene a un'altra identità. Nessun dato è stato sostituito."
+                    })
+                    OutlinedButton(onClick = controller::reload) { Text("Rileggi stato salvato") }
+                }
+                LocalGroupState.Closed -> Text("Gestione gruppo arrestata.")
+            }
+            Text("La creazione salva solo la fondazione locale: non associa dispositivi e non abilita sessioni o messaggi di gruppo.")
         }
     }
 }

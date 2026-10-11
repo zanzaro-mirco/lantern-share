@@ -6,6 +6,7 @@ import lantern.connectivity.Identity
 import lantern.connectivity.LanDiscovery
 import lantern.connectivity.MacKeychainIdentityStore
 import lantern.connectivity.Node
+import lantern.connectivity.LocalGroupService
 import lantern.connectivity.open
 import lantern.persistence.openDesktopRepository
 import lantern.ui.LanternApp
@@ -36,9 +37,11 @@ fun main() {
             val identity = unlockIdentity(directory) ?: return
             openDesktopRepository(directory.resolve("lantern.db")).use { repository ->
                 Node(identity, repository, LanDiscovery(address), address).use { node ->
-                    application(exitProcessOnExit = false) {
-                        Window(onCloseRequest = ::exitApplication, title = "Lantern · LAN") {
-                            LanternApp(node)
+                    LocalGroupService(identity, repository).use { group ->
+                        application(exitProcessOnExit = false) {
+                            Window(onCloseRequest = ::exitApplication, title = "Lantern · LAN") {
+                                LanternApp(node, group)
+                            }
                         }
                     }
                 }

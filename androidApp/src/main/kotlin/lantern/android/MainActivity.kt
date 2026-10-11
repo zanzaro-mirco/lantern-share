@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import lantern.connectivity.Node
+import lantern.connectivity.LocalGroupService
 import lantern.persistence.LanternDatabase
 import lantern.persistence.SqliteDeviceRepository
 import lantern.ui.LanternApp
@@ -18,6 +19,7 @@ import java.net.InetAddress
 class MainActivity : ComponentActivity() {
     private var node: Node? = null
     private var repository: SqliteDeviceRepository? = null
+    private var localGroup: LocalGroupService? = null
     private val discoveryError = mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,14 +32,20 @@ class MainActivity : ComponentActivity() {
         try {
             val controller = createNode(address)
             node = controller
+            val group = LocalGroupService(controller.identity, checkNotNull(repository))
+            localGroup = group
             setContent {
                 Column {
                     if (discoveryError.value.isNotEmpty()) Text(discoveryError.value)
-                    LanternApp(controller)
+                    LanternApp(controller, group)
                 }
             }
         } catch (error: Exception) {
-            repository?.close()
+            runCatching { localGroup?.close() }.exceptionOrNull()?.let(error::addSuppressed)
+            localGroup = null
+            runCatching { node?.close() }.exceptionOrNull()?.let(error::addSuppressed)
+            node = null
+            runCatching { repository?.close() }.exceptionOrNull()?.let(error::addSuppressed)
             repository = null
             val message = if (error is IncompatibleAndroidIdentityException) {
                 error.message.orEmpty()
@@ -72,11 +80,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         try {
-            node?.close()
+            try { localGroup?.close() } finally { node?.close() }
         } finally {
             repository?.close()
             node = null
             repository = null
+            localGroup = null
             super.onDestroy()
         }
     }

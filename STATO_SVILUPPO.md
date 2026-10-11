@@ -1,6 +1,22 @@
 # Stato sviluppo — 11 ottobre 2026
 
-## Sintesi corrente — owner Apple della fondazione, senza push
+## Sintesi corrente — fondazione nella UI Android/desktop
+
+**Checkpoint precedente verificato da concluso:** commit `7b88c9d29fb066ef664dc65c717613d330981963`, [Android/desktop 38171484655](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38171484655) e [checkpoint iOS 38171502067](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38171502067) **success**. Native dominio/protocollo/persistenza eseguiti, framework/export/Swift compilati, **112 XCTest zero fallimenti**, inclusi gli undici nuovi LocalGroupFoundationTests. Bootstrap interop solo compilato, non eseguito; non hardware. Run duplicata 38171484632 cancelled. Una lettura compatta e soli riepiloghi del log concluso, niente polling.
+
+**Nuovo incremento implementato:** pannello Gruppo locale Android/desktop con creazione esplicita e ID persistito/riletto; nessuna creazione all'apertura. Contratto LocalGroupController e servizio IO separato da Node/TLS: stessa identità dell'app, CAS contro clic ripetuti, errori tipizzati, reload solo lettura dopo guasto/conferma incerta. Radici invalide o di altra identità non rigenerate. La UI mostra esclusivamente stato durevole, non la bozza perdente. Gate di lifecycle ordina close/cessione al commit; chiusure concorrenti attendono il worker prima del driver e non pubblicano stato tardivo. Composizione/cleanup Android e desktop aggiornati; trust/associazione/sessioni invariati. Il pannello dichiara i limiti; uscita durevole e equivalente UI iOS ancora aperti.
+
+**Verifica locale finale:** `./gradlew -Pandroid=true :connectivity:jvmTest :androidApp:assembleDebug :desktopApp:classes --console=plain`, BUILD SUCCESSFUL **20 s**, **144 connettività JVM riusciti / un multicast opt-in skipped**, zero errori/fallimenti. Undici nuove integrazioni del servizio, con SQLite/identità reali e sole fixture di guasto/interleaving. APK Android e app desktop compilati, non avviati/collaudati fisicamente. Prima selezione sette test/build riuscita in 8 s; suite ampliata dopo revisione chiusura e invariante post-commit. Nessuna build ripetuta per sole note. Nuovi tipi comuni/pannello non ancora compilati Apple in questo incremento; checkpoint verde precedente non li copre.
+
+**Consegna:** modifiche precedenti ai due Markdown preservate e incluse nel blocco coerente. Schema 2, dati, identità, wire, versioni/lock/workflow invariati; niente nuova libreria o subagente. Preparare un unico commit/push autorizzato, sole CI ordinarie (nessun nuovo checkpoint manuale necessario per questo blocco), link letti una volta senza polling. Collaudi fisici obbligatori fase 1 aperti: provare crea → riapri stesso ID, clic ripetuti e nessun cambiamento ai peer autorizzati, senza cancellare dati per aggirare errori.
+
+**Prossimo incremento unico:** equivalente creazione/visualizzazione locale nella UI iOS, riusando facciata e identità già verificate, senza duplicare protocollo o aggiungere adozione remota/sessioni.
+
+## Storico — consegna della fondazione prima del pannello
+
+**Consegna effettuata:** unico commit/push `7b88c9d29fb066ef664dc65c717613d330981963`, 26 file raggruppati. [Android/desktop 38171484655](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38171484655) **in_progress**; [checkpoint completo iOS 38171502067](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38171502067) **queued**. Un solo dispatch ios.yml con bootstrap_interop=false; il checkpoint include compilazione e runtime Native/XCTest, ma non è ancora attestato riuscito. Link/stati letti una sola volta dopo push, niente polling o attese ripetute. Richiesta cancellazione della build iOS push duplicata 38171484632 perché sostituita dal checkpoint completo sullo stesso SHA; esito finale cancellazione non monitorato. Nessun test/sicurezza indeboliti o workflow modificato. Due sole note post-push locali, da raggruppare alla prossima consegna senza push documentale aggiuntivo.
+
+**Prossimo passo attuale:** leggere il checkpoint da concluso, analizzare soltanto gli errori pertinenti e correggere eventuali regressioni prima di integrare la fondazione nel servizio. Nessun nuovo risultato Apple/hardware dichiarato; fase 1 e collaudi fisici obbligatori aperti.
 
 **Autorizzazione di consegna:** l'utente ora autorizza push e CI. Un solo commit raggruppato dei 26 file, push e checkpoint iOS esplicito (bootstrap_interop=false), senza polling. Le limitazioni senza push nei paragrafi sottostanti descrivono il blocco locale concluso; nessuna verifica Apple attestata prima dell'esito remoto.
 
