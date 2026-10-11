@@ -1,5 +1,15 @@
 # Dichiarazione di ammissione al gruppo
 
+## Preparazione locale della fondazione — 11 ottobre 2026
+
+`GroupFoundationDraft.prepare` prepara una radice locale distinta dall'auto-ammissione: identità esistente con pin canonico e un solo ID gruppo da 256 bit generato dall'adattatore OS. Rifiuta un'appartenenza corrente prima di invocare la casualità, controlla la rappresentazione senza normalizzare e propaga gli errori senza retry/fallback. La validazione non dimostra entropia; il callback è una dipendenza OS fidata, non input di rete. `prepareLocalGroupFoundation` JVM/Android riusa `Identity` e `randomNonce`/SecureRandom esistenti, senza ruotare chiavi o derivare ID da LAN/sessione.
+
+È soltanto una **bozza non persistita**, non fondazione completata, prova firmata, autorizzazione o prenotazione atomica. Il futuro owner deve serializzare richiesta esplicita, preparazione e commit con cambi di appartenenza/uscita, ricontrollare identità e assenza di gruppo e persistere prima di pubblicare. Non riusare la bozza dopo cancellazione; due preparazioni su snapshot null non impediscono da sole due commit concorrenti. Nessun chiamante nel servizio/UI, schema o wire modificato; adozione della radice remota e commit recuperabile restano aperti. Non introdotto un nuovo formato di firma o auto-ammissione del fondatore.
+
+Verifiche: sette casi comuni eseguiti su JVM/unit Android, nove regressioni di catena per target, due integrazioni JVM con identità/firme/casualità OS reali; compilazione adattatore Android riuscita. Nuovo codice non ancora verificato Native/Apple/hardware. Il checkpoint precedente `4776fb0`, [38158675197](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38158675197), ha eseguito Native e **101 XCTest senza fallimenti**, inclusi i 44 casi owner/framing/vettori; non copre questa nuova preparazione.
+
+Le sezioni successive conservano il contratto e le evidenze storiche; la preparazione qui descritta non completa i percorsi di fondazione/adozione ancora indicati come aperti.
+
 Incremento di dominio preparatorio al protocollo v1: `GroupAdmissionClaim` contiene gruppo, emittente e destinatario. È una **dichiarazione non firmata**, non una credenziale verificata o un'appartenenza autorizzata. Non sostituisce l'ammissione PoC wire 0 né `ProtocolHandshakeApproval`, che prova solo il transcript della connessione corrente.
 
 Gli ID nel dominio sono opachi e non vuoti; non vengono normalizzati. Emittente e destinatario devono essere diversi. L'auto-ammissione è rifiutata: la fondazione del gruppo richiederà un percorso distinto. Non sono introdotti ruoli amministrativi, scadenze o revoche globali assenti dalla specifica.
