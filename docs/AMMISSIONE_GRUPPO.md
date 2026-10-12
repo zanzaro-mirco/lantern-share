@@ -1,5 +1,13 @@
 # Dichiarazione di ammissione al gruppo
 
+## Owner Apple del destinatario candidato — 12 ottobre 2026
+
+`GroupRootAdoptionChannel` possiede una NWConnection mutual-TLS pronta durante il confronto, usando IosGroupRootAdoption. Controlla identità del trasporto, certificato estratto da quella connessione e pin selezionato; il caller deve fornire offerte verificate sullo stesso canale dopo aver ritirato tutti gli I/O/timer dell'owner precedente. Nessun nuovo handover bootstrap/evidence è collegato al servizio. Policy DER/P-256 Apple, Keychain e firme esistenti riusate, certificati TLS reali prioritari; nessuna fiducia indipendente deriva dalla radice ricevuta.
+
+Start verifica identità corrente e assenza di gruppo tramite IosPersistence prima del codice. Il confronto completo è SHA-256 dei byte Kotlin; solo il ticket preciso può richiedere la firma OS su coda separata. La write viene riconosciuta esclusivamente dal contentProcessed riuscito; anche dopo doppia conferma Confirmed resta revocabile e il DB del destinatario rimane senza appartenenza/trust. Timer originale attivo prima di start, chiusura socket su revoca/errore/EOF/scadenza, callback tardivi ignorati e primo motivo/cause originali mantenuti.
+
+Tutte le operazioni/cambi identità/gruppo/lifecycle restano serializzati fuori dalla UI; preflight DB sincrono, non cancellazione non bloccante di SQLite fermo. Il chiamante mantiene vivo il driver fino al drain, l'owner non lo chiude. Nessun releaseForCommit, salvataggio remoto, autorizzazione applicativa o nuova UI. Sei XCTest aggiunti alla fixture TLS/Keychain esistente, con HELLO reali e riapertura SQLite; evidence/clic sono fixture. Compilazione/runtime del nuovo Swift ancora da attestare nel checkpoint completo. La facciata e i precedenti otto XCTest sono compilati dalla CI 76b85d4, non ancora eseguiti in simulatore. Stato corrente in STATO; collaudi fisici aperti.
+
 ## Confine Kotlin/Swift del destinatario candidato — 12 ottobre 2026
 
 `IosGroupRootAdoption` espone il ciclo comune GroupRootAdoptionAttempt tramite snapshot finiti e ticket opachi, riusando framing/decoder. Solo il destinatario TLS delle offerte può costruirlo; identità corrente e radice locale assente sono controllate prima della prova. Un errore SQLite è rilanciato, non un gruppo vuoto. Buffer esposti sono difensivi, ticket firma/write sono legati all'istanza; la write deve essere riconosciuta soltanto dal futuro callback OS contentProcessed riuscito.

@@ -12,10 +12,224 @@ final class HandshakeV1ChannelTests: XCTestCase {
     private let queue = DispatchQueue(label: "dev.lantern.tests.bootstrap-v1")
     private var channels: [HandshakeV1Channel] = []
     private var groupChannels: [GroupAdmissionChannel] = []
+    private var rootChannels: [GroupRootAdoptionChannel] = []
+    private var rootStores: [IosPersistence] = []
+    private var rootDirectories: [URL] = []
     private var scriptedPeers: [ScriptedPeer] = []
     private var connections: [NWConnection] = []
     private var listeners: [NWListener] = []
     private var namespaces: [String] = []
+
+    func testCandidateRootOwnerUsesActualTLSSignaturesAndReopenedDatabaseStaysEmpty() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, directory) = try rootStore()
+        let confirmed = expectation(description: "both actual TLS owners confirmed candidate")
+        confirmed.expectedFulfillmentCount = 2
+        try queue.sync {
+            weak var root: GroupRootAdoptionChannel?
+            weak var issuer: GroupAdmissionChannel?
+            var rootTicket: (IosGroupAdmissionComparison, String)?
+            var issuerTicket: (IosGroupAdmissionComparison, String)?
+            var explicit = false
+            var rootDone = false
+            var issuerDone = false
+            func confirmBoth() {
+                guard !explicit, let rootTicket, let issuerTicket else { return }
+                XCTAssertEqual(rootTicket.1, issuerTicket.1)
+                XCTAssertEqual(rootTicket.1.count, 64)
+                explicit = true // Fixture-only explicit comparison, never production auto-consent.
+                root?.confirm(rootTicket.0)
+                issuer?.confirm(issuerTicket.0)
+            }
+            issuer = try GroupAdmissionChannel(
+                connection: pair.client, identity: pair.clientIdentity,
+                peerCertificate: XCTUnwrap(pair.clientTransport.certificate(for: pair.client)),
+                offers: offers.client, evidence: evidence, role: .issuer,
+                expectedGroup: String(repeating: "c", count: 64), expectedFounder: pair.clientIdentity.id,
+                evidenceCertificates: GroupAdmissionEvidenceCertificates.decode(evidence),
+                selectedAtMillis: pair.selectedAt, queue: queue, signingQueue: .global(qos: .userInitiated),
+                nowMillis: HandshakeV1Channel.monotonicMillis,
+                onSnapshot: { snapshot in
+                    if snapshot.phase == .confirmed, !issuerDone {
+                        XCTAssertTrue(explicit)
+                        issuerDone = true
+                        confirmed.fulfill()
+                    }
+                }, onComparison: { issuerTicket = ($0, $1); confirmBoth() }, onClosed: { _ in }
+            )
+            self.groupChannels.append(try XCTUnwrap(issuer))
+            root = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+                onSnapshot: { snapshot in
+                    if snapshot.phase == .confirmed, !rootDone {
+                        XCTAssertTrue(explicit)
+                        rootDone = true
+                        confirmed.fulfill()
+                    }
+                }, onComparison: { rootTicket = ($0, $1); confirmBoth() })
+            issuer?.start()
+            root?.start(currentIdentity: pair.serverIdentity)
+        }
+        wait(for: [confirmed], timeout: 10)
+        try queue.sync {
+            XCTAssertNil(try store.localGroup())
+            XCTAssertEqual(try store.trusted(), [])
+            rootChannels.forEach { $0.cancel() }
+            rootChannels.removeAll()
+            groupChannels.forEach { $0.cancel() }
+            groupChannels.removeAll()
+            rootStores.removeAll { $0 === store }
+            store.close()
+            let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+            defer { reopened.close() }
+            XCTAssertNil(try reopened.localGroup())
+            XCTAssertEqual(try reopened.trusted(), [])
+            XCTAssertEqual(try reopened.history().count, 0)
+        }
+    }
+
+    func testCandidateRootIdleOwnerClosesAtOriginalDeadlineWithoutStart() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, _) = try rootStore()
+        let expired = expectation(description: "candidate idle deadline")
+        let eof = expectation(description: "actual peer sees idle owner close")
+        try queue.sync {
+            pair.client.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, complete, error in
+                XCTAssertTrue(complete || error != nil)
+                eof.fulfill()
+            }
+            _ = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+                selectedAt: HandshakeV1Channel.monotonicMillis() - 119_500,
+                onComparison: { _, _ in XCTFail("Owner not started") }, onClosed: { failure in
+                    if case .root(let reason, _) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
+                    else { XCTFail("Expected original deadline") }
+                    expired.fulfill()
+                })
+        }
+        wait(for: [expired, eof], timeout: 5)
+    }
+
+    func testCandidateRootLocalPreflightRejectsChangedIdentityExistingRootAndInvalidProof() throws {
+        for scenario in ["identity", "existing", "proof"] {
+            let pair = try readyPair()
+            let offers = try freezeRootOffers(pair)
+            let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id,
+                                            invalidSignature: scenario == "proof")
+            let (store, _) = try rootStore()
+            let rejected = expectation(description: "candidate \(scenario) refused")
+            let eof = expectation(description: "candidate \(scenario) closes TLS")
+            try queue.sync {
+                if scenario == "existing" {
+                    let foundation = try IosLocalGroupFoundation.companion.create(identityId: pair.serverIdentity.id)
+                    let ticket = try XCTUnwrap(foundation.prepare(persistence: store, generateGroupId: { String(repeating: "d", count: 64) }))
+                    XCTAssertEqual(try foundation.commit(ticket: ticket, currentIdentityId: pair.serverIdentity.id, persistence: store).name, "COMMITTED")
+                }
+                pair.client.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, complete, error in
+                    XCTAssertTrue(complete || error != nil)
+                    eof.fulfill()
+                }
+                let owner = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+                    onComparison: { _, _ in XCTFail("No code before successful preflight/proof") }, onClosed: { failure in
+                        let expected = scenario == "identity" ? "IDENTITY_CHANGED" : (scenario == "existing" ? "ALREADY_IN_GROUP" : "INVALID_PROOF")
+                        if case .root(let reason, _) = failure { XCTAssertEqual(reason.name, expected) }
+                        else { XCTFail("Expected typed refusal") }
+                        rejected.fulfill()
+                    })
+                owner.start(currentIdentity: scenario == "identity" ? pair.clientIdentity : pair.serverIdentity)
+            }
+            wait(for: [rejected, eof], timeout: 5)
+        }
+    }
+
+    func testCandidateRootBlockRevokesQueuedRealSignatureAndPendingRead() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, _) = try rootStore()
+        let cryptoQueue = DispatchQueue(label: "dev.lantern.tests.root.delayed-signature")
+        let gate = DispatchSemaphore(value: 0)
+        cryptoQueue.async { gate.wait() }
+        defer { gate.signal() }
+        let blocked = expectation(description: "block while real OS signature is queued")
+        let drained = expectation(description: "queued signature drained")
+        let eof = expectation(description: "peer sees blocked TLS close, no approval")
+        try queue.sync {
+            weak var owner: GroupRootAdoptionChannel?
+            pair.client.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, complete, error in
+                XCTAssertTrue(data == nil || data!.isEmpty)
+                XCTAssertTrue(complete || error != nil)
+                eof.fulfill()
+            }
+            owner = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+                signingQueue: cryptoQueue, onSnapshot: { snapshot in
+                    XCTAssertNotEqual(snapshot.phase.name, "CONFIRMED")
+                }, onComparison: { ticket, _ in
+                    owner?.confirm(ticket)
+                    // Let start() install its pending actual receive before revocation.
+                    self.queue.async { owner?.block(); owner?.cancel() }
+                }, onClosed: { failure in
+                    if case .root(let reason, _) = failure { XCTAssertEqual(reason.name, "BLOCKED") }
+                    else { XCTFail("Expected first block reason") }
+                    blocked.fulfill()
+                })
+            owner?.start(currentIdentity: pair.serverIdentity)
+        }
+        wait(for: [blocked, eof], timeout: 5)
+        gate.signal()
+        cryptoQueue.async { self.queue.async { drained.fulfill() } }
+        wait(for: [drained], timeout: 5)
+        try queue.sync { XCTAssertNil(try store.localGroup()); XCTAssertEqual(try store.trusted(), []) }
+    }
+
+    func testCandidateRootMalformedFrameAndPeerDisconnectNeverConfirm() throws {
+        for malformed in [false, true] {
+            let pair = try readyPair()
+            let offers = try freezeRootOffers(pair)
+            let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+            let (store, _) = try rootStore()
+            let closed = expectation(description: "candidate framing or transport failure")
+            try queue.sync {
+                let owner = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+                    onSnapshot: { XCTAssertNotEqual($0.phase.name, "CONFIRMED") }, onComparison: { _, _ in
+                        if malformed {
+                            pair.client.send(content: Data([0, 0, 0, 0]), completion: .contentProcessed { error in XCTAssertNil(error) })
+                        } else { pair.client.cancel() }
+                    }, onClosed: { failure in
+                        if case .root(let reason, _) = failure {
+                            XCTAssertEqual(reason.name, malformed ? "INVALID_FRAME" : "TRANSPORT")
+                        } else { XCTFail("Expected typed frame/transport failure") }
+                        closed.fulfill()
+                    })
+                owner.start(currentIdentity: pair.serverIdentity)
+            }
+            wait(for: [closed], timeout: 5)
+        }
+    }
+
+    func testCandidateRootConstructorRejectsWrongSelectedPinAndClosesSocket() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, _) = try rootStore()
+        let eof = expectation(description: "candidate constructor failure releases TLS")
+        try queue.sync {
+            pair.client.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, complete, error in
+                XCTAssertTrue(complete || error != nil)
+                eof.fulfill()
+            }
+            XCTAssertThrowsError(try GroupRootAdoptionChannel(
+                connection: pair.server, identity: pair.serverIdentity, transport: pair.serverTransport,
+                selectedPeerID: String(repeating: "0", count: 64), offers: offers.server, evidence: evidence,
+                persistence: store, selectedAtMillis: pair.selectedAt, queue: queue,
+                onSnapshot: { _ in XCTFail("Wrong pin adopted") }, onComparison: { _, _ in XCTFail("Wrong pin code") },
+                onClosed: { _ in XCTFail("Constructor throws, no live owner callback") }
+            ))
+        }
+        wait(for: [eof], timeout: 5)
+    }
 
     func testEvidenceExchangeHandsOverActualTLSRequiresBothConfirmationsAndSurvivesOldDeinit() throws {
         let pair = try readyPair()
@@ -510,6 +724,8 @@ final class HandshakeV1ChannelTests: XCTestCase {
 
     override func tearDown() {
         queue.sync {
+            rootChannels.forEach { $0.cancel() }
+            rootChannels.removeAll()
             groupChannels.forEach { $0.cancel() }
             groupChannels.removeAll()
             channels.forEach { $0.cancel() }
@@ -520,7 +736,11 @@ final class HandshakeV1ChannelTests: XCTestCase {
             connections.removeAll()
             listeners.forEach { $0.cancel() }
             listeners.removeAll()
+            rootStores.forEach { $0.close() }
+            rootStores.removeAll()
         }
+        rootDirectories.forEach { try? FileManager.default.removeItem(at: $0) }
+        rootDirectories.removeAll()
         for namespace in namespaces {
             let queries: [[String: Any]] = [
                 [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: Data("\(namespace).key".utf8)],
@@ -1186,6 +1406,114 @@ final class HandshakeV1ChannelTests: XCTestCase {
             if let comparison { owner?.confirm(comparison) }
             owner?.cancel()
             XCTAssertEqual(closedCount, 1)
+        }
+    }
+
+    private func rootStore() throws -> (IosPersistence, URL) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lantern-root-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        rootDirectories.append(directory)
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+        rootStores.append(store)
+        return (store, directory)
+    }
+
+    private func rootOwner(
+        _ pair: Pair, offers: IosHandshakeV1Offers, evidence: IosGroupAdmissionEvidence,
+        persistence: IosPersistence, selectedAt: Int64? = nil,
+        signingQueue: DispatchQueue = .global(qos: .userInitiated),
+        onSnapshot: @escaping (IosGroupRootSnapshot) -> Void = { _ in },
+        onComparison: @escaping (IosGroupAdmissionComparison, String) -> Void = { _, _ in },
+        onClosed: @escaping (GroupRootAdoptionChannelFailure) -> Void = { failure in
+            if case .root(let reason, _) = failure, reason.name == "CANCELLED" || reason.name == "TRANSPORT" {} else {
+                XCTFail("Unexpected candidate root closure")
+            }
+        }
+    ) throws -> GroupRootAdoptionChannel {
+        let owner = try GroupRootAdoptionChannel(
+            connection: pair.server, identity: pair.serverIdentity, transport: pair.serverTransport,
+            selectedPeerID: pair.clientIdentity.id, offers: offers, evidence: evidence, persistence: persistence,
+            selectedAtMillis: selectedAt ?? pair.selectedAt, queue: queue, signingQueue: signingQueue,
+            onSnapshot: onSnapshot, onComparison: onComparison, onClosed: onClosed
+        )
+        rootChannels.append(owner)
+        return owner
+    }
+
+    /// Fixture-only bootstrap on both REAL selected TLS endpoints. Exact read budgets prevent
+    /// consuming the next protocol's header; release occurs only after the actual HELLO write.
+    /// No production owner/handover is introduced by this test helper.
+    private func freezeRootOffers(_ pair: Pair) throws -> (client: IosHandshakeV1Offers, server: IosHandshakeV1Offers) {
+        let released = expectation(description: "actual TLS bootstrap offers released")
+        released.expectedFulfillmentCount = 2
+        var clientOffers: IosHandshakeV1Offers?
+        var serverOffers: IosHandshakeV1Offers?
+        var failure: Error?
+        try queue.sync {
+            func start(connection: NWConnection, identity: AppleIdentity, peer: AppleIdentity,
+                       frozen: @escaping (IosHandshakeV1Offers) -> Void) throws {
+                var nonce = [UInt8](repeating: 0, count: 32)
+                guard SecRandomCopyBytes(kSecRandomDefault, nonce.count, &nonce) == errSecSuccess else {
+                    throw IdentityError.cryptography
+                }
+                let bridge = try IosHandshakeV1.companion.create(
+                    localIdentity: identity.id, localNonce: nonce.map { String(format: "%02x", $0) }.joined(),
+                    capabilitiesJson: "{\"version\":1,\"supportedFeatures\":[\"text\",\"receipts\"],\"requiredFeatures\":[\"text\"]}",
+                    authenticatedLocalIdentity: identity.id, selectedPeerIdentity: peer.id, authenticatedPeerIdentity: peer.id,
+                    selectedAtMillis: pair.selectedAt, nowMillis: { KotlinLong(longLong: HandshakeV1Channel.monotonicMillis()) },
+                    verifyRemoteSignature: { bytes, signature in
+                        KotlinBoolean(bool: AppleIdentity.verify(certificate: peer.certificate, message: Self.data(bytes), signature: signature))
+                    }
+                )
+                var done = false
+                func fail(_ error: Error) {
+                    guard !done else { return }
+                    done = true
+                    failure = failure ?? error
+                    bridge.cancel()
+                    connection.cancel()
+                    released.fulfill()
+                }
+                func receive() {
+                    do {
+                        let budget = try XCTUnwrap(bridge.nextReadBytes())
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: Int(budget.int32Value)) { data, _, complete, error in
+                            dispatchPrecondition(condition: .onQueue(self.queue))
+                            guard !done else { return }
+                            do {
+                                if let error { throw error }
+                                guard let data, !data.isEmpty, !complete else { throw PublicCertificateError.invalid }
+                                let accepted = try bridge.accept(chunk: Self.bytes(data))
+                                XCTAssertTrue(accepted)
+                                guard accepted else { throw PublicCertificateError.invalid }
+                                if let offers = try bridge.releaseForGroupAdmission() {
+                                    done = true
+                                    frozen(offers)
+                                    released.fulfill()
+                                } else { receive() }
+                            } catch { fail(error) }
+                        }
+                    } catch { fail(error) }
+                }
+                let hello = try XCTUnwrap(bridge.start())
+                connection.send(content: Self.data(hello.bytes), completion: .contentProcessed { error in
+                    dispatchPrecondition(condition: .onQueue(self.queue))
+                    do {
+                        if let error { throw error }
+                        let accepted = try bridge.sent(ticket: hello)
+                        XCTAssertTrue(accepted)
+                        guard accepted else { throw PublicCertificateError.invalid }
+                        receive()
+                    } catch { fail(error) }
+                })
+            }
+            try start(connection: pair.client, identity: pair.clientIdentity, peer: pair.serverIdentity) { clientOffers = $0 }
+            try start(connection: pair.server, identity: pair.serverIdentity, peer: pair.clientIdentity) { serverOffers = $0 }
+        }
+        wait(for: [released], timeout: 10)
+        return try queue.sync {
+            if let failure { throw failure }
+            return (try XCTUnwrap(clientOffers), try XCTUnwrap(serverOffers))
         }
     }
 
