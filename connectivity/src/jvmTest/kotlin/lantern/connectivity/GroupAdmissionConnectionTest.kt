@@ -10,20 +10,26 @@ import lantern.protocol.GroupAdmissionChainResult
 import lantern.protocol.GroupAdmissionCodec
 import lantern.protocol.GroupAdmissionComparison
 import lantern.protocol.GroupAdmissionConfirmation
+import lantern.protocol.GroupAdmissionConfirmationCodec
 import lantern.protocol.GroupAdmissionConfirmationContext
 import lantern.protocol.GroupAdmissionConfirmationFailure
 import lantern.protocol.GroupAdmissionConfirmationFrameDecoder
+import lantern.protocol.GroupAdmissionConfirmationFraming
 import lantern.protocol.GroupAdmissionConfirmationState
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupAdmissionEvidenceCodec
 import lantern.protocol.GroupAdmissionEvidenceFraming
+import lantern.protocol.GroupAdmissionEvidenceFrameDecoder
 import lantern.protocol.GroupAdmissionProof
+import lantern.protocol.GroupRootAdoptionAttempt
+import lantern.protocol.GroupRootAdoptionState
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.ProtocolHandshakeFrame
 import lantern.protocol.ProtocolHandshakeParticipant
 import lantern.protocol.SignedGroupAdmission
 import java.io.FilterInputStream
+import java.io.DataInputStream
 import java.io.FilterOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -53,6 +59,108 @@ import kotlin.test.assertTrue
 
 /** Real TLS/certificates/JCA. Test-only explicit UI clicks, injected clocks and I/O failures. */
 class GroupAdmissionConnectionTest {
+    @Test
+    fun receivedRootRemainsCandidateUntilLiveFullComparisonAndBothConfirmations() {
+        val directory = Files.createTempDirectory("lantern-root-candidate-tls-test-")
+        try {
+            val founder = createDesktopIdentity().identity()
+            val member = createDesktopIdentity().identity()
+            val anchor = GroupTrustAnchor(randomNonce(), founder.id)
+            val founderPath = directory.resolve("founder.db")
+            val memberPath = directory.resolve("member.db")
+            openDesktopRepository(founderPath).use { assertTrue(it.foundLocalGroup(anchor, founder.id)) }
+            val proof = openDesktopRepository(founderPath).use { prepareFounderGroupAdmission(founder, it, member.id) }
+            val evidence = GroupAdmissionEvidence(proof, listOf(
+                GroupAdmissionCertificate(founder.id, Base64.getEncoder().encodeToString(founder.certificate.encoded)),
+            ))
+            openDesktopRepository(memberPath).use { memberStore ->
+                withFixture(Peers(founder, founder, member, proof), exchangeOffers = false) { fixture ->
+                    // Test-only orchestration on real pinned TLS. These pure bootstrap attempts
+                    // own no OS socket/timer; no active bootstrap owner is bypassed or duplicated.
+                    val clientFrames = HandshakeV1FrameStream(fixture.clientSocket.inputStream, fixture.clientSocket.outputStream)
+                    val serverFrames = HandshakeV1FrameStream(fixture.serverSocket.inputStream, fixture.serverSocket.outputStream)
+                    val bootstrap = ProtocolHandshakeAttempt(fixture.memberOffer, founder.id, founder.id,
+                        fixture.selectedAt, ::monotonicMillis) { _, _ -> error("No bootstrap APPROVE") }
+                    clientFrames.write(ProtocolHandshakeFrame.Hello(fixture.issuerOffer))
+                    serverFrames.write(ProtocolHandshakeFrame.Hello(fixture.memberOffer))
+                    val receivedMember = (clientFrames.read() as ProtocolHandshakeFrame.Hello).participant
+                    assertEquals(member.id, receivedMember.identity)
+                    assertTrue(bootstrap.receive(serverFrames.read()))
+                    val offers = assertNotNull(bootstrap.offersForGroupAdmission())
+                    bootstrap.cancel() // Retire the pure fixture before using its frozen offers.
+
+                    fixture.clientSocket.outputStream.write(GroupAdmissionEvidenceFraming.encode(evidence))
+                    fixture.clientSocket.outputStream.flush()
+                    val decoder = GroupAdmissionEvidenceFrameDecoder()
+                    var received: GroupAdmissionEvidence? = null
+                    while (received == null) {
+                        val buffer = ByteArray(decoder.nextReadBytes)
+                        val count = fixture.serverSocket.inputStream.read(buffer)
+                        assertTrue(count > 0)
+                        val read = decoder.accept(buffer.copyOf(count))
+                        assertEquals(count, read.consumedBytes)
+                        received = read.evidence
+                    }
+                    val certificates = GroupAdmissionEvidenceCertificates.decode(received).toMutableMap().apply {
+                        // Real TLS endpoints prevail over received certificate entries.
+                        put(founder.id, founder.certificate)
+                        put(member.id, member.certificate)
+                    }
+                    val verifier = GroupAdmissionCertificateVerifier { certificates[it] }
+                    val candidate = GroupRootAdoptionAttempt(offers, member.id, founder.id, founder.id,
+                        received.proof, fixture.selectedAt, ::monotonicMillis, verifier::verify,
+                        { bytes, signature -> verifier.verify(founder.id, bytes, signature) })
+                    assertNull(candidate.releaseForCommit(member.id, memberStore))
+                    assertTrue(candidate.prepare(member.id, memberStore))
+                    assertNull(memberStore.localGroup())
+                    assertTrue(memberStore.trusted().isEmpty())
+                    val rightCode = assertNotNull(candidate.comparison())
+                    assertNull(candidate.releaseForCommit(member.id, memberStore))
+                    fixture.clientOwner().use { issuer ->
+                        assertTrue(issuer.prepare())
+                        val leftCode = assertNotNull(issuer.comparison())
+                        assertEquals(digest(leftCode.bytes), digest(rightCode.bytes))
+                        assertTrue(issuer.confirm(leftCode))
+                        val input = DataInputStream(fixture.serverSocket.inputStream)
+                        val header = ByteArray(GroupAdmissionConfirmationFraming.HEADER_BYTES).also(input::readFully)
+                        val payload = ByteArray(GroupAdmissionConfirmationFraming.payloadBytes(header))
+                            .also(input::readFully)
+                        val remote = GroupAdmissionConfirmationCodec.decode(payload)
+                        assertTrue(candidate.receive(remote.sender, remote.recipient, remote.signature))
+                        assertNull(candidate.releaseForCommit(member.id, memberStore))
+
+                        // Explicit full-code click is a test fixture, not an automatic app action.
+                        val sign = assertNotNull(candidate.confirm(rightCode))
+                        val send = assertNotNull(candidate.signed(sign, member.sign(sign.bytes)))
+                        val frame = GroupAdmissionConfirmationFrameDecoder.encode(
+                            GroupAdmissionConfirmation(send.sender, send.recipient, send.signature))
+                        fixture.serverSocket.outputStream.write(frame)
+                        fixture.serverSocket.outputStream.flush()
+                        assertTrue(candidate.sent(send))
+                        assertTrue(issuer.readChunk())
+                        assertConfirmed(issuer)
+                        val draft = assertNotNull(candidate.releaseForCommit(member.id, memberStore))
+                        assertEquals(anchor, draft.anchor)
+                        assertEquals(member.id, draft.memberIdentity)
+                        assertEquals(digest(rightCode.bytes), digest(draft.comparisonBytes()))
+                        assertEquals(GroupRootAdoptionState.ReleasedForCommit, candidate.state())
+                        assertNull(candidate.releaseForCommit(member.id, memberStore))
+                        assertNull(memberStore.localGroup())
+                        assertTrue(memberStore.trusted().isEmpty())
+                    }
+                }
+            }
+            openDesktopRepository(memberPath).use {
+                assertNull(it.localGroup())
+                assertTrue(it.trusted().isEmpty())
+                assertTrue(it.history().isEmpty())
+            }
+            openDesktopRepository(founderPath).use { assertEquals(anchor, it.localGroup()) }
+        } finally {
+            Files.walk(directory).use { it.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
+        }
+    }
+
     @Test
     fun savedFounderEvidenceCrossesBootstrapAndBothConfirmationsWithoutDurableAdmission() {
         val directory = Files.createTempDirectory("lantern-founder-evidence-tls-test-")

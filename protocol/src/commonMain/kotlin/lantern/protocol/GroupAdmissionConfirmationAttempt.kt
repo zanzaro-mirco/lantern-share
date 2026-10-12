@@ -54,6 +54,8 @@ sealed interface GroupAdmissionConfirmationOperation {
  * same queue, schedules the remaining deadline even while idle, and uses a new instance per
  * reconnect with fresh OS nonces. Context/offers and local/selected/peer pins must belong to
  * that very TLS connection. Root adoption and durable commit remain outside this component.
+ * A receiving owner supplies the bootstrap watermark as observedAtMillis without resetting
+ * selectedAtMillis: the inherited monotonic deadline and backwards-clock checks both survive.
  */
 class GroupAdmissionConfirmationAttempt(
     private val context: GroupAdmissionConfirmationContext,
@@ -64,6 +66,7 @@ class GroupAdmissionConfirmationAttempt(
     private val nowMillis: () -> Long,
     private val verifyAdmissionSignature: (String, ByteArray, String) -> Boolean,
     private val verifyRemoteSignature: (ByteArray, String) -> Boolean,
+    observedAtMillis: Long = selectedAtMillis,
 ) {
     private var current: GroupAdmissionConfirmationState = GroupAdmissionConfirmationState.AwaitingProof
     private var comparison: GroupAdmissionComparison? = null
@@ -71,10 +74,11 @@ class GroupAdmissionConfirmationAttempt(
     private var remoteConfirmed = false
     private var localSent = false
     private var verifyingRemote = false
-    private var lastObservedMillis = selectedAtMillis
+    private var lastObservedMillis = observedAtMillis
     private val peerIdentity: String
 
     init {
+        require(observedAtMillis >= selectedAtMillis) { "Confirmation watermark precedes selection" }
         require(localIdentity == context.issuerIdentity || localIdentity == context.memberIdentity) {
             "Local TLS identity must participate in the admission"
         }

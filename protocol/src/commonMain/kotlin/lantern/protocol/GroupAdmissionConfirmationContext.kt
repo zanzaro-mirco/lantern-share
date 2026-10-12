@@ -5,7 +5,9 @@ import lantern.domain.GroupTrustAnchor
 /**
  * Frozen comparison context, NOT verified membership or a user confirmation.
  * Participants must be the TLS-bound compatible bootstrap offers with fresh OS-generated nonces.
- * The expected anchor comes from independent local context, never merely from `proof.anchor`.
+ * Established-group callers supply an independent local anchor, never merely `proof.anchor`.
+ * GroupRootAdoptionAttempt instead uses a visibly untrusted candidate only to bind the full
+ * comparison before explicit consent and both confirmations; this context itself adopts nothing.
  */
 class GroupAdmissionConfirmationContext(
     issuer: ProtocolHandshakeParticipant,
@@ -63,6 +65,18 @@ class GroupAdmissionConfirmationContext(
          * The independent anchor is mandatory; this does not verify the proof or adopt its root.
          */
         fun fromBootstrapOffers(
+            offers: ProtocolHandshakeOffers,
+            expectedAnchor: GroupTrustAnchor,
+            proof: GroupAdmissionProof,
+        ): GroupAdmissionConfirmationContext = fromOffers(offers, expectedAnchor, proof)
+
+        /** Only the adoption lifecycle may propose this root; no independent trust is asserted. */
+        internal fun forRootCandidate(
+            offers: ProtocolHandshakeOffers,
+            proof: GroupAdmissionProof,
+        ): GroupAdmissionConfirmationContext = fromOffers(offers, proof.anchor, proof)
+
+        private fun fromOffers(
             offers: ProtocolHandshakeOffers,
             expectedAnchor: GroupTrustAnchor,
             proof: GroupAdmissionProof,

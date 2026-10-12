@@ -1,5 +1,17 @@
 # Dichiarazione di ammissione al gruppo
 
+## Radice candidata e consenso della connessione — 12 ottobre 2026
+
+`GroupRootAdoptionAttempt` è il ciclo comune del nuovo destinatario prima della persistenza. Diversamente da un membro con radice durevole indipendente, parte da **proof.anchor non attendibile**. La verifica completa della catena stabilisce solo coerenza/firme rispetto a quella candidata, non fiducia esterna: non si presenta VerifiedChain come appartenenza. Un peer LAN non può fare adottare una radice con il solo payload, HELLO o READY.
+
+Il confronto usa gli stessi byte canonici GroupAdmissionConfirmationContext, inclusi radice, percorso, firme, ruoli, nonce e capability delle offerte TLS selezionate. GroupAdmissionConfirmationAttempt resta proprietario del ticket opaco; solo il clic esplicito su quel confronto completo può richiedere la firma direzionale locale. Firma remota verificata e write locale effettivamente riuscita sono entrambe obbligatorie. Non si aggiunge una conferma abbreviata, firma o formato wire diverso.
+
+Il wrapper controlla identità locale destinataria e radice assente prima di verificare la prova e nuovamente prima del rilascio. Un gruppo esistente, anche identico, è rifiutato senza sostituirlo. Errore di lettura non è null; non vi sono retry/scritture. Read reentrante non può produrre due bozze o riavviare preparazione; cancel/blocco/uscita/EOF/scadenza e callback tardive invalidano anche Confirmed. Il watermark delle offerte alimenta il ciclo comune senza cambiare l'istante della selezione: non ripartono i 120 secondi, clock arretrato/overflow sono rifiutati.
+
+`GroupRootAdoptionDraft` conserva proof/membro/byte difensivi del confronto; ReleasedForCommit è un handoff monouso, **non adozione durevole o autorizzazione**. Il futuro owner trasferisce separatamente socket/timer/deadline e gestisce cancellazione dopo handoff, ricontrollando identità, blocchi e assenza di appartenenza nella transazione di commit recuperabile. Uno snapshot vuoto non prenota SQLite e non protegge cambi esterni A→B→A. LocalGroupRepository/foundLocalGroup restano il contratto della sola fondazione; non si usa quell'INSERT per adottare radici remote. Credenziali persistenti, commit distribuito, owner OS e integrazione UI/servizio restano aperti.
+
+20 regressioni comuni, quattro P-256 reali e una nuova integrazione pinned TLS 1.3/DER/SQLite verificano candidato → confronto completo → doppia conferma → handoff, senza gruppo/trust nemmeno alla riapertura del DB. Clic e orchestrazione sono fixture test, non un nuovo servizio. Nuovo ciclo non ancora Native/Apple attestato; il checkpoint precedente b38b4c0 ha invece verificato la prova del fondatore: 276 protocollo Native, sei SQLite e 120 XCTest riusciti. Evidenze/comandi correnti in STATO; collaudi fisici aperti.
+
 ## Preparazione della prima prova dal fondatore — 12 ottobre 2026
 
 `FounderGroupAdmissionDraft` prepara una singola delega dal fondatore corrente a un altro dispositivo, riutilizzando claim/byte/firma/proof v1 esistenti. `prepareSigned` legge la radice tramite LocalGroupRepository, valida fondatore e destinatario prima degli adattatori OS, firma/verifica copie indipendenti dei byte canonici e rilegge la radice prima di restituire. Nessuna generazione di gruppo, self-admission, normalizzazione, retry o scrittura. Un errore OS/lettura/verifica rifiuta la prova e propaga il guasto; l'ultimo snapshot non promette atomicità fra OS/database o contro modifiche esterne A→B→A.
