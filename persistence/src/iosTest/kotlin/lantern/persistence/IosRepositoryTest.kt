@@ -62,13 +62,7 @@ class IosRepositoryTest {
         assertTrue(files.createDirectoryAtPath(directory, true, null, null))
         val anchor = GroupTrustAnchor("b".repeat(64), "a".repeat(64))
         try {
-            val driver = NativeSqliteDriver(
-                schema = LanternDatabase.Schema,
-                name = "lantern.db",
-                onConfiguration = { configuration ->
-                    configuration.copy(extendedConfig = configuration.extendedConfig.copy(basePath = directory))
-                },
-            )
+            val driver = openFaultInjectionDriver(directory)
             val repository = IosDeviceRepository(driver)
             try {
                 repository.rename("preservato")
@@ -95,13 +89,7 @@ class IosRepositoryTest {
         assertTrue(files.createDirectoryAtPath(directory, true, null, null))
         val anchor = GroupTrustAnchor("b".repeat(64), "a".repeat(64))
         try {
-            val driver = NativeSqliteDriver(
-                schema = LanternDatabase.Schema,
-                name = "lantern.db",
-                onConfiguration = { configuration ->
-                    configuration.copy(extendedConfig = configuration.extendedConfig.copy(basePath = directory))
-                },
-            )
+            val driver = openFaultInjectionDriver(directory)
             val repository = IosDeviceRepository(driver)
             try {
                 repository.rename("preservato")
@@ -162,7 +150,7 @@ class IosRepositoryTest {
         val sender = "a".repeat(64)
         val session = "b".repeat(64)
         try {
-            val first = openIosRepository(directory)
+            val first = IosDeviceRepository(openFaultInjectionDriver(directory))
             try {
                 assertTrue(first.save(id, sender, session, "Caffè ☕", "signature"))
                 assertFalse(first.save(id, sender, session, "Caffè ☕", "signature"))
