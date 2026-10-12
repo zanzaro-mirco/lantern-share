@@ -216,6 +216,81 @@ final class LocalGroupFoundationTests: XCTestCase {
         XCTAssertFalse(core.cancel())
     }
 
+    func testSavedFounderPreparesEvidenceWithoutPersistingRemoteMembership() throws {
+        let (founder, namespace) = try identity()
+        let (member, _) = try identity()
+        let path = try directory()
+        let first = try IosEntryKt.openIosPersistence(databaseDirectory: path.path)
+        var firstClosed = false
+        defer { if !firstClosed { first.close() } }
+        let owner = try LocalGroupFoundation(identity: founder)
+        let ticket = try XCTUnwrap(owner.prepare(persistence: first))
+        XCTAssertEqual(try owner.commit(ticket: ticket, currentIdentity: founder, persistence: first).name, "COMMITTED")
+        let saved = try XCTUnwrap(first.localGroup())
+        first.close()
+        firstClosed = true
+        let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: path.path)
+        defer { reopened.close() }
+        let current = try AppleIdentityStore(namespace: namespace).open()
+        let evidence = try FounderGroupAdmission.prepare(identity: current, persistence: reopened, memberID: member.id)
+        XCTAssertTrue(try GroupAdmissionEvidenceCertificates.verifyChain(
+            evidence, expectedGroup: saved.groupId, expectedFounder: saved.founderId, expectedMember: member.id
+        ))
+        XCTAssertFalse(try GroupAdmissionEvidenceCertificates.verifyChain(
+            evidence, expectedGroup: saved.groupId, expectedFounder: member.id, expectedMember: member.id
+        ))
+        XCTAssertEqual(evidence.certificates.count, 1)
+        XCTAssertEqual(evidence.certificates.first?.identity, founder.id)
+        XCTAssertEqual(try reopened.localGroup()?.groupId, saved.groupId)
+        XCTAssertEqual(try reopened.trusted(), [])
+        XCTAssertEqual(try reopened.history().count, 0)
+    }
+
+    func testMissingOrForeignFoundationAndSelfAdmissionCannotPrepareEvidence() throws {
+        let (founder, _) = try identity()
+        let (other, _) = try identity()
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        defer { store.close() }
+        XCTAssertThrowsError(try FounderGroupAdmission.prepare(identity: founder, persistence: store, memberID: other.id))
+        XCTAssertNil(try store.localGroup())
+        let owner = try LocalGroupFoundation(identity: founder)
+        let ticket = try XCTUnwrap(owner.prepare(persistence: store))
+        XCTAssertEqual(try owner.commit(ticket: ticket, currentIdentity: founder, persistence: store).name, "COMMITTED")
+        let saved = try XCTUnwrap(store.localGroup())
+        XCTAssertThrowsError(try FounderGroupAdmission.prepare(identity: other, persistence: store, memberID: founder.id))
+        XCTAssertThrowsError(try FounderGroupAdmission.prepare(identity: founder, persistence: store, memberID: founder.id))
+        XCTAssertThrowsError(try FounderGroupAdmission.prepare(identity: founder, persistence: store, memberID: "invalid"))
+        XCTAssertEqual(try store.localGroup()?.groupId, saved.groupId)
+        XCTAssertEqual(try store.trusted(), [])
+    }
+
+    func testFounderEvidenceOSSigningFailureDoesNotVerifyRetryOrWrite() throws {
+        let (founder, _) = try identity()
+        let (member, _) = try identity()
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        defer { store.close() }
+        let owner = try LocalGroupFoundation(identity: founder)
+        let ticket = try XCTUnwrap(owner.prepare(persistence: store))
+        XCTAssertEqual(try owner.commit(ticket: ticket, currentIdentity: founder, persistence: store).name, "COMMITTED")
+        let saved = try XCTUnwrap(store.localGroup())
+        var signs = 0
+        XCTAssertThrowsError(try IosFounderGroupAdmission.shared.prepare(
+            persistence: store, identityId: founder.id, memberId: member.id,
+            certificateDer: (SecCertificateCopyData(founder.certificate) as Data).base64EncodedString(),
+            sign: { _ in
+                signs += 1
+                return nil
+            },
+            verifySignature: { _, _ in
+                XCTFail("Failed signing must not reach verification")
+                return KotlinBoolean(bool: false)
+            }
+        ))
+        XCTAssertEqual(signs, 1)
+        XCTAssertEqual(try store.localGroup()?.groupId, saved.groupId)
+        XCTAssertEqual(try store.trusted(), [])
+    }
+
     private func identity() throws -> (AppleIdentity, String) {
         let namespace = "dev.lantern.foundation-tests.\(UUID().uuidString)"
         namespaces.append(namespace)

@@ -30,6 +30,8 @@ Il pannello Compose e gli stati sono condivisi anche con iOS. IosLocalGroupContr
 
 ## Verifica
 
+Aggiornamento 12 ottobre: il pannello iOS è verificato nel checkpoint `35a8a44` / 38177162240, Native/export/Swift/runtime riusciti: sei test SQLite Native e 117 XCTest senza errori, inclusi cinque del controller. Non è collaudo hardware. La successiva preparazione della prima prova dal fondatore, descritta in AMMISSIONE_GRUPPO, non è coperta da tale checkpoint e non cambia schema/contratto della fondazione né autorizza peer.
+
 SQLite JDBC reale: riapertura, identità discordante, due connessioni concorrenti, guasto tramite trigger SQLite prima e dopo INSERT, connessione in sola lettura, migrazione dal vecchio schema con nome/trust/messaggio/ricevuta preservati, origine corrotta, migrazione fallita senza reset, versione futura senza downgrade.
 
 Owner JVM con identità/firme OS e SQLite reali: commit e riapertura, richieste concorrenti, cancellazione/uscita, identità/ticket estranei, errore senza replay e nuova richiesta, inserimento fra snapshot e scrittura, cancellazione durante la lettura. Le sole callback di interleaving/errore sono fixture di test; nessun adattatore simulato in produzione.

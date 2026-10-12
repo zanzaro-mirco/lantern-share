@@ -1,4 +1,4 @@
-# Passaggio di consegne — 11 ottobre 2026
+# Passaggio di consegne — 12 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,20 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Incremento attuale:** preparazione della prima prova dal fondatore, non ammissione completata. FounderGroupAdmissionDraft/prepareSigned sono comuni; adattatori JVM/Android e Apple riusano identità/firma/policy OS. Solo radice salvata e fondatore corrispondente, byte canonici difensivi, verifica firma e rilettura finale, errori senza retry/scritture. Nessun caller attivo, peer autorizzato, adozione remota o modifica a schema/wire/versioni/lock. Il futuro owner deve serializzare identità/gruppo/cancel e verificare liveness prima dell'invio; la prova non è un ticket di autorizzazione.
+
+**Evidenze locali:** 14 test comuni JVM / 14 unit Android, sette integrazioni OS/SQLite e 48 connessione TLS gruppo riusciti; nuova prova generata da DB riaperto attraversa bootstrap e doppia conferma senza appartenenza/trust persistito. Dieci smoke della nuova facciata Kotlin su JDBC/JCA riusciti, solo confine host. Tre XCTest aggiunti, ancora non compilati/eseguiti; project.yml include il sorgente Swift. Comandi/limiti in STATO. Preservate le due note locali post-push precedenti. Consegna unica autorizzata, niente push intermedi/polling.
+
+**Checkpoint precedente verificato:** `35a8a44`, [38177162240](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38177162240) success; sei SQLite Native e **117 XCTest zero fallimenti**, inclusi cinque controller. Nuovo codice sopra non coperto. Errore XML non riprodotto e causa non dimostrata; diagnostica mantenuta, non attribuire a GitHub o SQLite. Fase 1/hardware aperti.
+
+**Checkpoint locale finale:** **305 protocollo JVM / 276 unit Android / 69 integrazioni JVM** riusciti, zero errori/fallimenti/skipped; APK Android e desktop compilati dopo le ultime modifiche, Gradle 17 s. 12 test selezione CI e whitespace riusciti. Comando completo in STATO. Tre XCTest nuovi restano da verificare Native/export/Swift/runtime sul commit raggruppato.
+
+**Prossimo passo unico:** checkpoint completo della preparazione dopo la consegna raggruppata, senza bootstrap interop/polling. Leggere da concluso, correggere eventuali regressioni Native/export/Swift prima del servizio/ammissione. Nessuna promessa di app completa o nuovi collaudi fisici.
+
+### Storico — checkpoint diagnostico e pannello iOS
+
+**Diagnostica pubblicata:** `35a8a44758098ca82e53d685b46aef8614f8f7bb`, tre file; 12 test selezione CI e whitespace riusciti. [Checkpoint iOS 38177162240](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38177162240) queued nella lettura unica dopo push, esito sconosciuto. PoC 38177154448 success (non nuova build app); richiesta cancellazione del duplicato iOS 38177154442. Niente polling. Prossimo passo leggere il checkpoint da concluso, usando stacktrace/risultati grezzi per il guasto XML se ripetuto. Due note locali post-push da preservare nella prossima consegna coerente.
 
 **Checkpoint `635f8a2` fallito, Android/desktop riuscito:** errore di scrittura rapporto XML IosRepositoryTest nel task Native persistenza, non errore Swift noto. Framework compilato, protocollo Native **262 test zero fallimenti** da artefatto, inclusi cinque nuovi; persistenza non attestata e nuovi XCTest non ancora compilati/eseguiti. Log privo di causa interna, artefatto senza rapporto SQLite. Non attribuire a GitHub/SQLite e non rifare identità già verificata.
 

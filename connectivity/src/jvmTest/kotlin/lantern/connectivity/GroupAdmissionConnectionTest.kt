@@ -2,6 +2,7 @@ package lantern.connectivity
 
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
+import lantern.persistence.openDesktopRepository
 import lantern.protocol.GroupAdmissionBridgeFailure
 import lantern.protocol.GroupAdmissionBridgeState
 import lantern.protocol.GroupAdmissionCertificate
@@ -28,6 +29,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
+import java.nio.file.Files
 import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.concurrent.CountDownLatch
@@ -51,6 +53,61 @@ import kotlin.test.assertTrue
 
 /** Real TLS/certificates/JCA. Test-only explicit UI clicks, injected clocks and I/O failures. */
 class GroupAdmissionConnectionTest {
+    @Test
+    fun savedFounderEvidenceCrossesBootstrapAndBothConfirmationsWithoutDurableAdmission() {
+        val directory = Files.createTempDirectory("lantern-founder-evidence-tls-test-")
+        try {
+            val founder = createDesktopIdentity().identity()
+            val newMember = createDesktopIdentity().identity()
+            val anchor = GroupTrustAnchor(randomNonce(), founder.id)
+            val founderPath = directory.resolve("founder.db")
+            openDesktopRepository(founderPath).use { assertTrue(it.foundLocalGroup(anchor, founder.id)) }
+            val proof = openDesktopRepository(founderPath).use {
+                prepareFounderGroupAdmission(founder, it, newMember.id)
+            }
+            val evidence = GroupAdmissionEvidence(proof, listOf(
+                GroupAdmissionCertificate(founder.id, Base64.getEncoder().encodeToString(founder.certificate.encoded)),
+            ))
+            // An independently supplied expected root is a test fixture, NOT remote adoption.
+            val peers = Peers(founder, founder, newMember, proof)
+            openDesktopRepository(directory.resolve("member.db")).use { memberStore ->
+                withFixture(peers, exchangeOffers = false) { fixture ->
+                    fixture.bootstrapClient().use { issuer ->
+                        fixture.bootstrapServer().use { member ->
+                            assertTrue(issuer.start())
+                            assertTrue(member.start())
+                            assertTrue(issuer.readNext())
+                            assertTrue(member.readNext())
+                            assertNotNull(issuer.sendEvidenceAndTransfer(anchor, evidence)).use { left ->
+                                assertTrue(left.prepare())
+                                val leftCode = assertNotNull(left.comparison())
+                                assertNotNull(member.receiveEvidenceAndTransfer(anchor)).use { right ->
+                                    assertTrue(right.prepare())
+                                    val rightCode = assertNotNull(right.comparison())
+                                    assertEquals(digest(leftCode.bytes), digest(rightCode.bytes))
+                                    assertTrue(left.confirm(leftCode))
+                                    assertTrue(right.readChunk())
+                                    assertTrue(right.confirm(rightCode))
+                                    assertTrue(left.readChunk())
+                                    assertConfirmed(left)
+                                    assertConfirmed(right)
+                                    assertNull(memberStore.localGroup())
+                                    assertTrue(memberStore.trusted().isEmpty())
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            openDesktopRepository(founderPath).use {
+                assertEquals(anchor, it.localGroup())
+                assertTrue(it.trusted().isEmpty())
+            }
+        } finally {
+            Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
+        }
+    }
+
     @Test
     fun evidenceCrossesTlsAndQueuedConfirmationSurvivesExactReads() = withFixture(exchangeOffers = false) { fixture ->
         fixture.bootstrapClient().use { issuer ->
@@ -1218,12 +1275,14 @@ class GroupAdmissionConnectionTest {
         GroupAdmissionConfirmationFrameDecoder.encode(GroupAdmissionConfirmation(fixture.member.id, fixture.issuer.id,
             fixture.member.sign(context.approvalBytes(fixture.member.id))))
 
-    private class Peers {
-        val founder = createDesktopIdentity().identity()
-        val issuer = createDesktopIdentity().identity()
-        val member = createDesktopIdentity().identity()
-        val anchor = GroupTrustAnchor(randomNonce(), founder.id)
-        val proof = GroupAdmissionProof(anchor, listOf(admission(founder, issuer), admission(issuer, member)))
+    private class Peers(
+        val founder: Identity = createDesktopIdentity().identity(),
+        val issuer: Identity = createDesktopIdentity().identity(),
+        val member: Identity = createDesktopIdentity().identity(),
+        savedProof: GroupAdmissionProof? = null,
+    ) {
+        val anchor = savedProof?.anchor ?: GroupTrustAnchor(randomNonce(), founder.id)
+        val proof = savedProof ?: GroupAdmissionProof(anchor, listOf(admission(founder, issuer), admission(issuer, member)))
         private fun admission(issuer: Identity, member: Identity): SignedGroupAdmission {
             val claim = GroupAdmissionClaim(anchor.groupId, issuer.id, member.id)
             return SignedGroupAdmission(claim, issuer.sign(GroupAdmissionCodec.signedBytes(claim)))
