@@ -1,5 +1,13 @@
 # Dichiarazione di ammissione al gruppo
 
+## Owner del confronto candidato JVM/Android — 12 ottobre 2026
+
+`GroupRootAdoptionConnection` possiede un singolo socket TLS 1.3 selezionato/autenticato reciprocamente durante il confronto del nuovo membro. Firma con Identity OS, verifica con la policy dei certificati e usa framing/decoder e GroupRootAdoptionAttempt comuni. Il pin/certificato del canale prevale sull'evidence; quella ricevuta non stabilisce automaticamente una radice fidata.
+
+Il chiamante deve fornire offerte verificate su quel socket, ritirare il precedente owner e mantenere DB/scheduler vivi fino a close e join degli I/O. La firma e le write non tengono il lock di lifecycle; timeout inattivo, cancel, blocco, uscita e perdita del canale abortiscono il socket. Rifiuti false/null aggiornano subito lo stato terminale. Una write completata dopo revoca non promuove il tentativo. Il preflight DB è sincrono serializzato: non si promette cancellazione non bloccante di un driver fermo. Il futuro servizio serializza anche cambi di identità/gruppo e invalida il tentativo.
+
+L'owner non espone handoff al commit: Confirmed è ancora revocabile, non appartenenza durevole o autorizzazione applicativa. Nessuna chiamata Node/UI, adozione persistente, nuovo handover bootstrap o owner Apple in questo incremento. Test TLS reali verificano consenso/revoca/timeout/framing e riapertura SQLite ancora vuota; non sono collaudi fisici. Il checkpoint 834648e ha ora verificato il core precedente anche Native (296 protocollo, otto SQLite e 120 XCTest), non questo adattatore JVM. Evidenze correnti in STATO; sezioni sotto storiche.
+
 ## Radice candidata e consenso della connessione — 12 ottobre 2026
 
 `GroupRootAdoptionAttempt` è il ciclo comune del nuovo destinatario prima della persistenza. Diversamente da un membro con radice durevole indipendente, parte da **proof.anchor non attendibile**. La verifica completa della catena stabilisce solo coerenza/firme rispetto a quella candidata, non fiducia esterna: non si presenta VerifiedChain come appartenenza. Un peer LAN non può fare adottare una radice con il solo payload, HELLO o READY.

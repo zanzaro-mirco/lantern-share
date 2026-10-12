@@ -2,6 +2,7 @@ package lantern.connectivity
 
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.LocalGroupRepository
 import lantern.persistence.openDesktopRepository
 import lantern.protocol.GroupAdmissionBridgeFailure
 import lantern.protocol.GroupAdmissionBridgeState
@@ -22,6 +23,7 @@ import lantern.protocol.GroupAdmissionEvidenceFraming
 import lantern.protocol.GroupAdmissionEvidenceFrameDecoder
 import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.GroupRootAdoptionAttempt
+import lantern.protocol.GroupRootAdoptionFailure
 import lantern.protocol.GroupRootAdoptionState
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
@@ -59,6 +61,272 @@ import kotlin.test.assertTrue
 
 /** Real TLS/certificates/JCA. Test-only explicit UI clicks, injected clocks and I/O failures. */
 class GroupAdmissionConnectionTest {
+    @Test
+    fun rootOwnerConfirmsOnRealTlsButLeavesReopenedMembershipAndTrustEmpty() {
+        val directory = Files.createTempDirectory("lantern-root-owner-")
+        val path = directory.resolve("member.db")
+        try {
+            openDesktopRepository(path).use { store ->
+                withFixture { fixture ->
+                    fixture.rootOwner(store).use { member ->
+                        fixture.clientOwner().use { issuer ->
+                            assertNull(member.comparison())
+                            assertFalse(member.readChunk())
+                            assertTrue(member.prepare(fixture.member))
+                            assertFalse(member.prepare(fixture.member))
+                            assertTrue(issuer.prepare())
+                            val comparison = assertNotNull(member.comparison())
+                            assertEquals(digest(assertNotNull(issuer.comparison()).bytes), digest(comparison.bytes))
+                            assertTrue(issuer.confirm(assertNotNull(issuer.comparison())))
+                            assertTrue(member.readChunk())
+                            assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.AwaitingConfirmation(true)), member.state)
+                            assertTrue(member.confirm(comparison))
+                            assertTrue(issuer.readChunk())
+                            assertConfirmed(issuer)
+                            assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), member.state)
+                            assertNull(store.localGroup())
+                            assertTrue(store.trusted().isEmpty())
+                            member.block()
+                            assertRootClosed(member, GroupAdmissionConfirmationFailure.Blocked)
+                            assertTrue(fixture.serverSocket.isClosed)
+                            assertFalse(member.confirm(comparison))
+                        }
+                    }
+                }
+            }
+            openDesktopRepository(path).use { reopened ->
+                assertNull(reopened.localGroup())
+                assertTrue(reopened.trusted().isEmpty())
+                assertTrue(reopened.history().isEmpty())
+            }
+        } finally {
+            Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
+        }
+    }
+
+    @Test
+    fun rootOwnerRefusesExistingRootOrChangedIdentityBeforeComparison() {
+        for (existingRoot in listOf(false, true)) withFixture { fixture ->
+            fixture.rootOwner(rootRepository { if (existingRoot) fixture.anchor else null }).use { owner ->
+                val identity = if (existingRoot) fixture.member else fixture.issuer
+                assertFalse(owner.prepare(identity))
+                assertTrue(fixture.serverSocket.isClosed) // No subsequent state getter needed for abort.
+                val reason = if (existingRoot) GroupRootAdoptionFailure.AlreadyInGroup else GroupRootAdoptionFailure.IdentityChanged
+                assertEquals(GroupRootAdoptionState.Closed(reason), owner.state)
+                assertNull(owner.comparison())
+                assertTrue(fixture.serverSocket.isClosed)
+            }
+        }
+    }
+
+    @Test
+    fun rootOwnerReadFailurePropagatesWithoutEmptyMembershipFallback() = withFixture { fixture ->
+        val failure = IllegalStateException("injected database failure")
+        fixture.rootOwner(rootRepository { throw failure }).use { owner ->
+            assertSame(failure, assertFailsWith<IllegalStateException> { owner.prepare(fixture.member) })
+            assertEquals(GroupRootAdoptionState.Closed(GroupRootAdoptionFailure.StorageFailed), owner.state)
+            assertTrue(fixture.serverSocket.isClosed)
+            assertFalse(owner.prepare(fixture.member))
+        }
+    }
+
+    @Test
+    fun rootOwnerMalformedAndTruncatedFramesAbortWithoutConfirmation() {
+        for (truncated in listOf(false, true)) withFixture { fixture ->
+            fixture.rootOwner(rootRepository()).use { owner ->
+                assertTrue(owner.prepare(fixture.member))
+                fixture.clientSocket.outputStream.write(if (truncated) byteArrayOf(0, 0) else byteArrayOf(0, 0, 0, 0))
+                fixture.clientSocket.outputStream.flush()
+                if (truncated) {
+                    assertTrue(owner.readChunk())
+                    fixture.clientSocket.close()
+                }
+                assertFailsWith<IllegalArgumentException> { owner.readChunk() }
+                assertRootClosed(owner, GroupAdmissionConfirmationFailure.TransportClosed)
+                assertNull(owner.comparison())
+                assertTrue(fixture.serverSocket.isClosed)
+            }
+        }
+    }
+
+    @Test
+    fun rootOwnerIdleDeadlineAbortsWithoutUiInspectionAndKeepsScheduler() = withFixture { fixture ->
+        val selected = monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 1000
+        fixture.rootOwner(rootRepository(), selectedAt = selected).use { owner ->
+            assertTrue(owner.prepare(fixture.member))
+            val expired = CountDownLatch(1)
+            fixture.scheduler.schedule({ expired.countDown() }, 1300, TimeUnit.MILLISECONDS)
+            assertTrue(expired.await(5, TimeUnit.SECONDS))
+            assertTrue(fixture.serverSocket.isClosed)
+            assertRootClosed(owner, GroupAdmissionConfirmationFailure.Expired)
+            assertFalse(fixture.scheduler.isShutdown)
+        }
+    }
+
+    @Test
+    fun rootOwnerBlockUnblocksRealPendingTlsReadAndPreservesFirstReason() = withFixture { fixture ->
+        val entered = CountDownLatch(1)
+        val input = object : FilterInputStream(fixture.serverSocket.inputStream) {
+            override fun read(bytes: ByteArray): Int {
+                entered.countDown()
+                return super.read(bytes)
+            }
+        }
+        fixture.rootOwner(rootRepository(), socket = WrappedSocket(fixture.serverSocket, input = input)).use { owner ->
+            assertTrue(owner.prepare(fixture.member))
+            val reader = Executors.newSingleThreadExecutor()
+            try {
+                val pending = reader.submit<Boolean> {
+                    try { owner.readChunk() } catch (_: IOException) { false }
+                }
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                owner.block()
+                assertFalse(pending.get(5, TimeUnit.SECONDS))
+                owner.close()
+                owner.leaveGroup()
+                assertRootClosed(owner, GroupAdmissionConfirmationFailure.Blocked)
+                assertTrue(fixture.serverSocket.isClosed)
+            } finally {
+                reader.shutdownNow()
+                assertTrue(reader.awaitTermination(5, TimeUnit.SECONDS))
+            }
+        }
+    }
+
+    @Test
+    fun rootOwnerWriteFailurePreservesExceptionAndCannotReachConfirmed() = withFixture { fixture ->
+        val failure = IOException("injected output failure")
+        val output = object : FilterOutputStream(fixture.serverSocket.outputStream) {
+            override fun write(bytes: ByteArray) { throw failure }
+        }
+        fixture.rootOwner(rootRepository(), socket = WrappedSocket(fixture.serverSocket, output = output)).use { owner ->
+            assertTrue(owner.prepare(fixture.member))
+            assertSame(failure, assertFailsWith<IOException> { owner.confirm(assertNotNull(owner.comparison())) })
+            assertRootClosed(owner, GroupAdmissionConfirmationFailure.TransportClosed)
+            assertTrue(fixture.serverSocket.isClosed)
+        }
+    }
+
+    @Test
+    fun rootOwnerRejectsOtherConnectionTicketWithoutSigning() = withFixture { fixture ->
+        fixture.rootOwner(rootRepository()).use { owner ->
+            fixture.clientOwner().use { issuer ->
+                assertTrue(owner.prepare(fixture.member))
+                assertTrue(issuer.prepare())
+                assertFalse(owner.confirm(assertNotNull(issuer.comparison())))
+                assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.AwaitingConfirmation(false)), owner.state)
+            }
+        }
+    }
+
+    @Test
+    fun rootOwnerRejectsWrongSelectedPinAndSchedulerFailureClosesOwnedSocket() {
+        for (rejectedScheduler in listOf(false, true)) withFixture { fixture ->
+            if (rejectedScheduler) fixture.scheduler.shutdown()
+            if (rejectedScheduler) assertFailsWith<RejectedExecutionException> { fixture.rootOwner(rootRepository()) }
+            else assertFailsWith<IllegalArgumentException> {
+                fixture.rootOwner(rootRepository(), selectedPeer = fixture.member.id)
+            }
+            assertTrue(fixture.serverSocket.isClosed)
+        }
+    }
+
+    @Test
+    fun rootOwnerInvalidProofFailsBeforeCodeAndEndpointEvidenceCannotReplaceTlsKey() {
+        withFixture { fixture ->
+            val last = fixture.proof.admissions.last()
+            val invalid = GroupAdmissionProof(fixture.anchor, fixture.proof.admissions.dropLast(1) +
+                SignedGroupAdmission(last.claim, fixture.member.sign(GroupAdmissionCodec.signedBytes(last.claim))))
+            fixture.rootOwner(rootRepository(), proof = invalid).use { owner ->
+                assertFalse(owner.prepare(fixture.member))
+                assertTrue(fixture.serverSocket.isClosed)
+                assertTrue(owner.state is GroupRootAdoptionState.Closed)
+                assertNull(owner.comparison())
+                assertTrue(fixture.serverSocket.isClosed)
+            }
+        }
+        withFixture { fixture ->
+            val certificates = fixture.certificates + (fixture.issuer.id to fixture.member.certificate)
+            fixture.rootOwner(rootRepository(), certificates = certificates).use { owner ->
+                assertTrue(owner.prepare(fixture.member))
+                assertNotNull(owner.comparison()) // Actual TLS certificate overrides hostile evidence.
+            }
+        }
+    }
+
+    @Test
+    fun rootOwnerBlockDuringWriteDoesNotAcknowledgeLateCompletion() = withFixture { fixture ->
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val output = object : FilterOutputStream(fixture.serverSocket.outputStream) {
+            override fun write(bytes: ByteArray) {
+                out.write(bytes)
+                out.flush()
+                entered.countDown()
+                assertTrue(release.await(5, TimeUnit.SECONDS))
+            }
+        }
+        val writer = Executors.newSingleThreadExecutor()
+        fixture.rootOwner(rootRepository(), socket = WrappedSocket(fixture.serverSocket, output = output)).use { owner ->
+            try {
+                assertTrue(owner.prepare(fixture.member))
+                val comparison = assertNotNull(owner.comparison())
+                val sending = writer.submit<Boolean> { owner.confirm(comparison) }
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Sending(false)), owner.state)
+                owner.block()
+                assertTrue(fixture.serverSocket.isClosed)
+                release.countDown()
+                // flush on the closed socket can throw; either outcome must remain terminal.
+                try { assertFalse(sending.get(5, TimeUnit.SECONDS)) }
+                catch (failure: java.util.concurrent.ExecutionException) { assertTrue(failure.cause is IOException) }
+                assertRootClosed(owner, GroupAdmissionConfirmationFailure.Blocked)
+            } finally {
+                release.countDown()
+                writer.shutdownNow()
+                assertTrue(writer.awaitTermination(5, TimeUnit.SECONDS))
+            }
+        }
+    }
+
+    @Test
+    fun rootOwnerCleanEofAndRepeatedConfirmationRevokeConfirmedWithoutPersistence() {
+        for (duplicate in listOf(false, true)) withFixture { fixture ->
+            fixture.rootOwner(rootRepository()).use { owner ->
+                fixture.clientOwner().use { issuer ->
+                    assertTrue(owner.prepare(fixture.member))
+                    assertTrue(issuer.prepare())
+                    val remote = assertNotNull(issuer.comparison())
+                    assertTrue(issuer.confirm(remote))
+                    assertTrue(owner.readChunk())
+                    assertTrue(owner.confirm(assertNotNull(owner.comparison())))
+                    assertTrue(issuer.readChunk())
+                    assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), owner.state)
+                    if (duplicate) {
+                        val frame = GroupAdmissionConfirmationFrameDecoder.encode(GroupAdmissionConfirmation(
+                            fixture.issuer.id, fixture.member.id,
+                            fixture.issuer.sign(fixture.context.approvalBytes(fixture.issuer.id))))
+                        fixture.clientSocket.outputStream.write(frame)
+                        fixture.clientSocket.outputStream.flush()
+                    } else fixture.clientSocket.shutdownOutput()
+                    assertFalse(owner.readChunk())
+                    assertRootClosed(owner, if (duplicate) GroupAdmissionConfirmationFailure.UnexpectedConfirmation
+                        else GroupAdmissionConfirmationFailure.TransportClosed)
+                    assertTrue(fixture.serverSocket.isClosed)
+                }
+            }
+        }
+    }
+
+    private fun rootRepository(read: () -> GroupTrustAnchor? = { null }) = object : LocalGroupRepository {
+        override fun localGroup() = read()
+        override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
+            error("Root comparison must never write membership")
+    }
+
+    private fun assertRootClosed(owner: GroupRootAdoptionConnection, reason: GroupAdmissionConfirmationFailure) =
+        assertEquals(GroupRootAdoptionState.Closed(GroupRootAdoptionFailure.Confirmation(reason)), owner.state)
+
     @Test
     fun receivedRootRemainsCandidateUntilLiveFullComparisonAndBothConfirmations() {
         val directory = Files.createTempDirectory("lantern-root-candidate-tls-test-")
@@ -1451,6 +1719,21 @@ class GroupAdmissionConnectionTest {
             GroupAdmissionConnection.adopt(socket, issuer, context, certificates, member.id, selectedAt, scheduler, now)
         fun serverOwner(certificates: Map<String, X509Certificate> = this.certificates) =
             GroupAdmissionConnection.adopt(serverSocket, member, context, certificates, issuer.id, selectedAt, scheduler)
+
+        fun rootOwner(repository: LocalGroupRepository, socket: SSLSocket = serverSocket,
+            selectedAt: Long = this.selectedAt, selectedPeer: String = issuer.id,
+            proof: GroupAdmissionProof = this.proof,
+            certificates: Map<String, X509Certificate> = this.certificates): GroupRootAdoptionConnection {
+            // The offers already crossed real TLS in exchangeContext. Retire this pure
+            // bootstrap fixture before adopting; it owns no socket or deadline task.
+            val bootstrap = ProtocolHandshakeAttempt(memberOffer, issuer.id, issuer.id,
+                selectedAt, ::monotonicMillis) { _, _ -> error("No bootstrap APPROVE") }
+            assertTrue(bootstrap.receive(ProtocolHandshakeFrame.Hello(issuerOffer)))
+            val offers = assertNotNull(bootstrap.offersForGroupAdmission())
+            bootstrap.cancel()
+            return GroupRootAdoptionConnection.adopt(socket, member, repository, offers,
+                proof, certificates, selectedPeer, selectedAt, scheduler)
+        }
     }
 
     private fun withFixture(peers: Peers = Peers(), exchangeOffers: Boolean = true, block: (Fixture) -> Unit) {

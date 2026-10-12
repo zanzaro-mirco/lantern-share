@@ -1,0 +1,264 @@
+package lantern.connectivity
+
+import lantern.domain.LocalGroupRepository
+import lantern.protocol.GroupAdmissionChainVerification
+import lantern.protocol.GroupAdmissionComparison
+import lantern.protocol.GroupAdmissionConfirmationFrameDecoder
+import lantern.protocol.GroupRootAdoptionAttempt
+import lantern.protocol.GroupRootAdoptionState
+import lantern.protocol.GroupAdmissionProof
+import lantern.protocol.ProtocolHandshakeOffers
+import lantern.protocol.Wire
+import java.io.Closeable
+import java.io.IOException
+import java.security.cert.X509Certificate
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLSocket
+import kotlin.coroutines.cancellation.CancellationException
+
+/**
+ * Owns one selected, mutually pinned TLS socket during a new member's comparison.
+ * The received root is only a candidate. Core rules remain in GroupRootAdoptionAttempt;
+ * this adapter owns OS signatures, bounded framing, idle expiry and terminal socket abort.
+ * The caller supplies verified offers from THIS channel after retiring its bootstrap owner.
+ * No Node caller, durable membership, message authorization or commit handoff is exposed.
+ * Even Confirmed remains revocable until a future recoverable commit owner is implemented.
+ */
+internal class GroupRootAdoptionConnection private constructor(
+    private val socket: SSLSocket,
+    private val identity: Identity,
+    private val repository: LocalGroupRepository,
+    private val attempt: GroupRootAdoptionAttempt,
+) : Closeable {
+    private val input = socket.inputStream
+    private val output = socket.outputStream
+    private val decoder = GroupAdmissionConfirmationFrameDecoder()
+    private val stateLock = Any()
+    private val readerLock = Any()
+    private val writerLock = Any()
+    private val cleanupStarted = AtomicBoolean()
+    private val cleanupFinished = CountDownLatch(1)
+    private var expiryTask: ScheduledFuture<*>? = null
+    private var prepared = false
+    private var closed = false
+
+    @Volatile
+    var cleanupFailure: Throwable? = null
+        private set
+
+    val state: GroupRootAdoptionState
+        get() = guarded { synchronized(stateLock) { snapshotLocked() } }
+
+    /** Keep the repository alive until this owner has been closed and all I/O joined. */
+    fun prepare(currentIdentity: Identity): Boolean = guarded {
+        synchronized(stateLock) {
+            if (!activeLocked() || prepared) return@synchronized false
+            val accepted = attempt.prepare(currentIdentity.id, repository)
+            prepared = accepted
+            val active = activeLocked()
+            accepted && active
+        }
+    }
+
+    fun comparison(): GroupAdmissionComparison? = guarded {
+        synchronized(stateLock) {
+            if (!prepared || !activeLocked()) return@synchronized null
+            val comparison = attempt.comparison()
+            if (activeLocked()) comparison else null
+        }
+    }
+
+    /** Called only after the user compares the complete code on both physical devices. */
+    fun confirm(comparison: GroupAdmissionComparison): Boolean = guarded {
+        val signing = synchronized(stateLock) {
+            if (!prepared || !activeLocked()) return@synchronized null
+            val request = attempt.confirm(comparison)
+            if (activeLocked()) request else null
+        } ?: return@guarded false
+        // Neither OS signing nor TLS write holds the lifecycle lock.
+        val signature = identity.sign(signing.bytes)
+        val sending = synchronized(stateLock) {
+            if (!activeLocked()) return@synchronized null
+            val request = attempt.signed(signing, signature)
+            if (activeLocked()) request else null
+        } ?: return@guarded false
+        val bytes = GroupAdmissionConfirmationFrameDecoder.encode(sending)
+        synchronized(writerLock) {
+            if (!synchronized(stateLock) { activeLocked() }) return@guarded false
+            output.write(bytes)
+            output.flush()
+            synchronized(stateLock) {
+                if (!activeLocked()) return@synchronized false
+                val accepted = attempt.sent(sending)
+                val active = activeLocked()
+                accepted && active
+            }
+        }
+    }
+
+    /** One bounded chunk, not necessarily a complete or valid remote confirmation. */
+    fun readChunk(): Boolean = guarded {
+        synchronized(readerLock) {
+            synchronized(stateLock) {
+                if (!prepared || !activeLocked()) return@guarded false
+                val remaining = attempt.remainingMillis()
+                if (remaining == null) {
+                    snapshotLocked()
+                    return@guarded false
+                }
+                socket.soTimeout = remaining.toInt()
+            }
+            val buffer = ByteArray(GroupAdmissionConfirmationFrameDecoder.MAX_CHUNK_BYTES)
+            val count = input.read(buffer)
+            synchronized(stateLock) {
+                if (!activeLocked()) return@synchronized false
+                if (count < 0) {
+                    try {
+                        decoder.finish()
+                    } finally {
+                        attempt.transportClosed()
+                        snapshotLocked()
+                    }
+                    return@synchronized false
+                }
+                if (count == 0) throw IOException("Root confirmation stream made no progress")
+                for (confirmation in decoder.accept(buffer.copyOf(count))) {
+                    if (!attempt.receive(confirmation.sender, confirmation.recipient, confirmation.signature)) {
+                        snapshotLocked()
+                        return@synchronized false
+                    }
+                }
+                activeLocked()
+            }
+        }
+    }
+
+    override fun close() = lifecycle { attempt.cancel() }
+    fun block() = lifecycle { attempt.block() }
+    fun leaveGroup() = lifecycle { attempt.leaveGroup() }
+
+    private fun lifecycle(event: () -> Unit): Unit = guarded {
+        synchronized(stateLock) {
+            if (activeLocked()) event()
+            snapshotLocked()
+        }
+    }
+
+    private fun activeLocked(): Boolean = snapshotLocked() is GroupRootAdoptionState.Active
+
+    private fun snapshotLocked(): GroupRootAdoptionState {
+        val current = attempt.state()
+        if (current is GroupRootAdoptionState.Closed) {
+            closed = true
+            decoder.close()
+            expiryTask?.cancel(false)
+            expiryTask = null
+        }
+        return current
+    }
+
+    private fun armDeadline(scheduler: ScheduledExecutorService): Unit = guarded {
+        synchronized(stateLock) {
+            if (!activeLocked()) return@synchronized
+            val remaining = attempt.remainingMillis()
+            if (remaining == null) {
+                snapshotLocked()
+                return@synchronized
+            }
+            expiryTask = scheduler.schedule({ armDeadline(scheduler) }, remaining, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private inline fun <T> guarded(operation: () -> T): T {
+        var primary: Throwable? = null
+        try {
+            return operation()
+        } catch (error: Throwable) {
+            primary = error
+            synchronized(stateLock) {
+                try {
+                    if (error is CancellationException) attempt.cancel() else attempt.transportClosed()
+                    snapshotLocked()
+                } catch (stateError: Throwable) {
+                    if (stateError !== error) error.addSuppressed(stateError)
+                }
+                closed = true
+                decoder.close()
+                expiryTask?.cancel(false)
+                expiryTask = null
+            }
+            throw error
+        } finally {
+            if (synchronized(stateLock) { closed }) {
+                try {
+                    if (cleanupStarted.compareAndSet(false, true)) {
+                        try { abortSocket(socket) } catch (error: Throwable) {
+                            cleanupFailure = error
+                            throw error
+                        } finally { cleanupFinished.countDown() }
+                    } else cleanupFinished.await()
+                } catch (cleanupError: Throwable) {
+                    if (cleanupError is InterruptedException) Thread.currentThread().interrupt()
+                    if (primary == null) throw cleanupError
+                    if (primary !== cleanupError) primary.addSuppressed(cleanupError)
+                }
+            }
+        }
+    }
+
+    companion object {
+        /** Socket ownership transfers even on error; database and scheduler remain caller-owned. */
+        fun adopt(
+            socket: SSLSocket,
+            identity: Identity,
+            repository: LocalGroupRepository,
+            offers: ProtocolHandshakeOffers,
+            proof: GroupAdmissionProof,
+            issuerCertificates: Map<String, X509Certificate>,
+            selectedPeerIdentity: String,
+            selectedAtMillis: Long,
+            scheduler: ScheduledExecutorService,
+            nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+        ): GroupRootAdoptionConnection {
+            try {
+                require(issuerCertificates.size <= GroupAdmissionChainVerification.MAX_ADMISSIONS) { "Too many issuer certificates" }
+                require(issuerCertificates.keys.all(Wire::isFingerprint)) { "Invalid issuer certificate pin" }
+                val session = socket.session
+                require(session.protocol == "TLSv1.3") { "TLS 1.3 required" }
+                require(digest(session.localCertificates.single().encoded) == identity.id) { "Local root TLS identity mismatch" }
+                val peerCertificate = session.peerCertificates.single() as X509Certificate
+                val peerPin = digest(peerCertificate.encoded)
+                val certificates = issuerCertificates.toMap() + mapOf(identity.id to identity.certificate, peerPin to peerCertificate)
+                val verifier = GroupAdmissionCertificateVerifier(certificates::get)
+                val attempt = GroupRootAdoptionAttempt(offers, identity.id, selectedPeerIdentity,
+                    peerPin, proof, selectedAtMillis, nowMillis, verifier::verify,
+                    { bytes, signature -> verifier.verify(peerPin, bytes, signature) })
+                socket.setSoLinger(true, 0)
+                return GroupRootAdoptionConnection(socket, identity, repository, attempt).also { it.armDeadline(scheduler) }
+            } catch (error: Throwable) {
+                try { abortSocket(socket) } catch (cleanupError: Throwable) {
+                    if (cleanupError !== error) error.addSuppressed(cleanupError)
+                }
+                throw error
+            }
+        }
+
+        private fun abortSocket(socket: SSLSocket) {
+            if (socket.isClosed) return
+            var primary: Throwable? = null
+            try { socket.shutdownInput() } catch (_: SSLException) {
+                // Terminal abort: missing close_notify must not drain pending peer data.
+            } catch (error: Throwable) { primary = error }
+            try { socket.close() } catch (error: Throwable) {
+                val previous = primary
+                if (previous == null) primary = error else if (previous !== error) previous.addSuppressed(error)
+            }
+            primary?.let { throw it }
+        }
+    }
+}
