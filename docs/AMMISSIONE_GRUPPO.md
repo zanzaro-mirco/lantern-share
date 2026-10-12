@@ -1,5 +1,13 @@
 # Dichiarazione di ammissione al gruppo
 
+## Confine Kotlin/Swift del destinatario candidato — 12 ottobre 2026
+
+`IosGroupRootAdoption` espone il ciclo comune GroupRootAdoptionAttempt tramite snapshot finiti e ticket opachi, riusando framing/decoder. Solo il destinatario TLS delle offerte può costruirlo; identità corrente e radice locale assente sono controllate prima della prova. Un errore SQLite è rilanciato, non un gruppo vuoto. Buffer esposti sono difensivi, ticket firma/write sono legati all'istanza; la write deve essere riconosciuta soltanto dal futuro callback OS contentProcessed riuscito.
+
+Non è ancora l'owner Network.framework: nessuna connessione, timer OS, policy certificati o firma è sostituita da questa facciata. Il futuro owner serializza tutte le chiamate/cambi identità/gruppo/lifecycle sulla stessa coda fuori dalla UI, lega offerte/verificatori agli endpoint TLS selezionati, schedula la scadenza originale anche mentre inattivo e chiude la connessione su CLOSED. Mantiene IosPersistence vivo fino al termine dei callback. Il preflight DB è sincrono, senza promessa di cancellazione non bloccante del driver.
+
+Cancel/blocco/uscita/EOF/frame invalido/scadenza/duplicati revocano anche Confirmed e invalidano i callback tardivi. Nessun handoff al commit, salvataggio dell'appartenenza/trust o autorizzazione dei messaggi. Nessun caller servizio/UI. Verifica host sui sorgenti Kotlin effettivi con fixture del confine IosPersistence e JDBC/riapertura reali; crypto/clock sono test double, non nuove prove TLS o Apple. Otto XCTest predisposti; Native/export/Swift/runtime ancora da attestare. Prossimo blocco: owner Swift isolato con API/identità Apple già esistenti, prima del commit remoto recuperabile.
+
 ## Owner del confronto candidato JVM/Android — 12 ottobre 2026
 
 `GroupRootAdoptionConnection` possiede un singolo socket TLS 1.3 selezionato/autenticato reciprocamente durante il confronto del nuovo membro. Firma con Identity OS, verifica con la policy dei certificati e usa framing/decoder e GroupRootAdoptionAttempt comuni. Il pin/certificato del canale prevale sull'evidence; quella ricevuta non stabilisce automaticamente una radice fidata.
