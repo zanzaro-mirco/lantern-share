@@ -43,7 +43,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
                 root?.confirm(rootTicket.0)
                 issuer?.confirm(issuerTicket.0)
             }
-            issuer = try GroupAdmissionChannel(
+            let retainedIssuer = try GroupAdmissionChannel(
                 connection: pair.client, identity: pair.clientIdentity,
                 peerCertificate: XCTUnwrap(pair.clientTransport.certificate(for: pair.client)),
                 offers: offers.client, evidence: evidence, role: .issuer,
@@ -59,7 +59,10 @@ final class HandshakeV1ChannelTests: XCTestCase {
                     }
                 }, onComparison: { issuerTicket = ($0, $1); confirmBoth() }, onClosed: { _ in }
             )
-            self.groupChannels.append(try XCTUnwrap(issuer))
+            // The fixture owns the channel before exposing the weak callback reference.
+            // Assigning the constructor result straight to `issuer` destroys it immediately.
+            self.groupChannels.append(retainedIssuer)
+            issuer = retainedIssuer
             root = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
                 onSnapshot: { snapshot in
                     if snapshot.phase == .confirmed, !rootDone {

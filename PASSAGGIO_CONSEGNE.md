@@ -1,4 +1,4 @@
-# Passaggio di consegne — 12 ottobre 2026
+# Passaggio di consegne — 13 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,16 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Correzione corrente:** fixture XCTest del confronto root candidato, non produzione. In `testCandidateRootOwnerUsesActualTLSSignaturesAndReopenedDatabaseStaysEmpty`, GroupAdmissionChannel assegnato direttamente a weak veniva distrutto prima della raccolta proprietaria. Ora costante forte → groupChannels → riferimento weak, mantenendo callback senza ciclo e cleanup esistente. Nessun test/assert eliminato, schema/wire/versioni/workflow invariati. Tre file raggruppati, incluse le due note locali precedenti preservate sotto.
+
+**Evidenza precedente:** [iOS completo 38309864584](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38309864584) failure: framework/export, test Native e app/XCTest compilati; 134 XCTest eseguiti, due failure nello stesso metodo (weak nullo più aspettativa non attesa). Gli otto della facciata e gli altri cinque nuovi dell'owner passati. Percorso positivo/riapertura dell'owner NON attestato; bootstrap interop saltato. [PoC 38309866852](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38309866852) success solo stato/conclusione. Diagnosi da run conclusa, niente polling. Nuovo Swift non compilabile localmente su Windows; revisione e controlli statici non equivalgono al runtime.
+
+**Prossimo passo unico:** consegna coerente e un checkpoint iOS completo bootstrap_interop=false, poi leggere da concluso alla successiva richiesta. Cancellare eventuale duplicato soltanto con ID noto nella lettura unica post-push; nessun polling. Correggere ancora se fallisce; solo dopo checkpoint riuscito riprendere commit recuperabile remoto. Fase 1/hardware aperti, niente appartenenza o autorizzazione remota nuove.
+
+### Storico — consegna dell'owner Apple
+
+**Consegnato:** `aa4de7acde47ffe1552d8193918107124e089c0a`, unico commit/push dei sei file. [iOS completo 38309864584](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38309864584) avviato una volta con bootstrap_interop=false; [PoC 38309866852](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38309866852) e completo in_progress nella sola lettura post-push. Richiesta cancellazione del duplicato iOS push 38309866854, senza verificarne la conclusione/polling. Nuovo Swift/sei XCTest e runtime degli otto precedenti NON ancora attestati. Prossimo passo leggere il completo da concluso e correggere errori prima del commit remoto recuperabile. Nota locale con STATO da preservare/raggruppare, niente altro push solo Markdown.
 
 **Nuovo blocco:** GroupRootAdoptionChannel Swift, owner isolato del TLS del destinatario candidato; API/identità/policy Apple e facciata Kotlin esistenti riusate. Pin/endpoint della stessa connessione, identità corrente e gruppo locale controllati prima del confronto; timer originale anche inattivo, firma su coda separata, sent da contentProcessed, nessun callback tardivo dopo revoca. Errori originali/secondari conservati senza impedire cleanup. Nessun handover nuovo, servizio/UI, release/commit o trust remoto persistito. DB caller-owned; obblighi di serializzazione, ritiro owner precedente e drain espliciti. Dettagli in STATO.
 
