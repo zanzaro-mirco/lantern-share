@@ -1,5 +1,11 @@
 # Dichiarazione di ammissione al gruppo
 
+## Attestazioni prima del journal recuperabile — 13 ottobre 2026
+
+GroupAdmissionConfirmationReceipt conserva i byte difensivi del confronto e le due GroupAdmissionConfirmation direzionali, usando i codec esistenti. Il core trattiene la locale soltanto dal successo `sent` del ticket esatto, la remota soltanto dopo verifica e liveness; la snapshot interna richiede Confirmed vivo. Chiusura/revoca elimina le attestazioni dal tentativo. GroupRootAdoptionDraft le include nel rilascio monouso già esistente, senza nuova scrittura o autorizzazione.
+
+Una ricevuta trattenuta non resta un permesso valido dopo revoca e non attesta commit distribuito, appartenenza o consenso nuovo dopo riavvio. La firma locale proviene dal signer OS fidato; il journal futuro deve conservare anche offerte/bootstrap/evidence/certificati e richiederà verifica completa, binding e recovery, non il solo booleano Confirmed. Nessuna nuova serializzazione journal o migrazione introdotta qui; nessun caller owner/servizio/UI nuovo. Test mirati JVM/Android, P-256 e TLS/SQLite riusciti; nuovo Native/Swift/hardware non attestato. Il checkpoint Apple precedente 485f008 ha eseguito 134 XCTest senza fallimenti, non questo incremento. Evidenze correnti in STATO.
+
 ## Owner Apple del destinatario candidato — 12 ottobre 2026
 
 `GroupRootAdoptionChannel` possiede una NWConnection mutual-TLS pronta durante il confronto, usando IosGroupRootAdoption. Controlla identità del trasporto, certificato estratto da quella connessione e pin selezionato; il caller deve fornire offerte verificate sullo stesso canale dopo aver ritirato tutti gli I/O/timer dell'owner precedente. Nessun nuovo handover bootstrap/evidence è collegato al servizio. Policy DER/P-256 Apple, Keychain e firme esistenti riusate, certificati TLS reali prioritari; nessuna fiducia indipendente deriva dalla radice ricevuta.

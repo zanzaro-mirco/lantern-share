@@ -28,11 +28,10 @@ sealed interface GroupRootAdoptionState {
 class GroupRootAdoptionDraft internal constructor(
     val proof: GroupAdmissionProof,
     val memberIdentity: String,
-    comparisonBytes: ByteArray,
+    val confirmations: GroupAdmissionConfirmationReceipt,
 ) {
     val anchor: GroupTrustAnchor get() = proof.anchor
-    private val comparisonContent = comparisonBytes.copyOf()
-    fun comparisonBytes(): ByteArray = comparisonContent.copyOf()
+    fun comparisonBytes(): ByteArray = confirmations.comparisonBytes()
 }
 
 /**
@@ -117,9 +116,9 @@ class GroupRootAdoptionAttempt(
     fun releaseForCommit(currentIdentityId: String, repository: LocalGroupRepository): GroupRootAdoptionDraft? {
         if (readingLocalContext || !active() || confirmation.state != GroupAdmissionConfirmationState.Confirmed) return null
         if (!checkLocalContext(currentIdentityId, repository)) return null
-        val ticket = confirmation.comparison() ?: return null
+        val receipt = confirmation.receipt() ?: return null
         if (!active()) return null
-        val draft = GroupRootAdoptionDraft(proof, localIdentity, ticket.bytes)
+        val draft = GroupRootAdoptionDraft(proof, localIdentity, receipt)
         terminal = GroupRootAdoptionState.ReleasedForCommit
         return draft
     }

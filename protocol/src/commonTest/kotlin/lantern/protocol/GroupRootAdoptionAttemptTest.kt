@@ -56,6 +56,8 @@ class GroupRootAdoptionAttemptTest {
             assertEquals(anchor, draft.anchor)
             assertEquals(member, draft.memberIdentity)
             assertSame(proof, draft.proof)
+            assertEquals(GroupAdmissionConfirmation(member, founder, "cHJvb2Y="), draft.confirmations.local)
+            assertEquals(GroupAdmissionConfirmation(founder, member, "cHJvb2Y="), draft.confirmations.remote)
             assertContentEquals(context.comparisonBytes(), draft.comparisonBytes())
             draft.comparisonBytes().fill(0)
             assertContentEquals(context.comparisonBytes(), draft.comparisonBytes())

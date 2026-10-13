@@ -277,6 +277,100 @@ class GroupAdmissionConfirmationAttemptTest {
     }
 
     private fun prepared() = attempt().also { assertTrue(it.prepare()) }
+
+    @Test
+    fun receiptRequiresBothConfirmationsAndSuccessfulExactWriteInEitherOrder() {
+        val localSignature = "bG9jYWw="
+        val remoteSignature = "cmVtb3Rl"
+        for (remoteFirst in listOf(false, true)) {
+            val owner = attempt()
+            assertNull(owner.receipt())
+            assertTrue(owner.prepare())
+            assertNull(owner.receipt())
+            val sign = assertNotNull(owner.confirm(assertNotNull(owner.comparison())))
+            if (remoteFirst) assertTrue(owner.receive(issuer, member, remoteSignature))
+            assertNull(owner.receipt())
+            val send = assertNotNull(owner.signed(sign, localSignature))
+            assertNull(owner.receipt()) // Queued/signed is not a successful write.
+            val foreign = prepared()
+            val foreignSend = assertNotNull(foreign.signed(
+                assertNotNull(foreign.confirm(assertNotNull(foreign.comparison()))), "cHJvb2Y=",
+            ))
+            assertFalse(owner.sent(foreignSend))
+            assertNull(owner.receipt())
+            assertTrue(owner.sent(send))
+            if (!remoteFirst) {
+                assertNull(owner.receipt())
+                assertTrue(owner.receive(issuer, member, remoteSignature))
+            }
+            val receipt = assertNotNull(owner.receipt())
+            assertEquals(GroupAdmissionConfirmation(member, issuer, localSignature), receipt.local)
+            assertEquals(GroupAdmissionConfirmation(issuer, member, remoteSignature), receipt.remote)
+            assertContentEquals(context.comparisonBytes(), receipt.comparisonBytes())
+            receipt.comparisonBytes().fill(0)
+            assertContentEquals(context.comparisonBytes(), receipt.comparisonBytes())
+            assertEquals(receipt.local, GroupAdmissionConfirmationCodec.decode(GroupAdmissionConfirmationCodec.encode(receipt.local)))
+            assertEquals(receipt.remote, GroupAdmissionConfirmationCodec.decode(GroupAdmissionConfirmationCodec.encode(receipt.remote)))
+        }
+    }
+
+    @Test
+    fun lifecycleExpiryAndDuplicateRevokeReceiptAvailability() {
+        for (event in listOf<(GroupAdmissionConfirmationAttempt) -> Unit>(
+            { it.cancel() }, { it.block() }, { it.leaveGroup() }, { it.transportClosed() },
+            { now = 100 + GroupAdmissionConfirmationAttempt.TIMEOUT_MILLIS },
+            { assertFalse(receive(it)) },
+        )) {
+            now = 101
+            val owner = prepared()
+            val send = assertNotNull(owner.signed(assertNotNull(owner.confirm(assertNotNull(owner.comparison()))), "cHJvb2Y="))
+            assertTrue(owner.sent(send))
+            assertTrue(receive(owner))
+            assertNotNull(owner.receipt())
+            event(owner)
+            assertNull(owner.receipt())
+            assertTrue(owner.state is GroupAdmissionConfirmationState.Closed)
+        }
+    }
+
+    @Test
+    fun failedWriteAndInvalidRemoteSignatureCannotProduceReceipt() {
+        val failedWrite = prepared()
+        assertTrue(receive(failedWrite))
+        val send = assertNotNull(failedWrite.signed(
+            assertNotNull(failedWrite.confirm(assertNotNull(failedWrite.comparison()))), "cHJvb2Y=",
+        ))
+        assertTrue(failedWrite.operationFailed(send))
+        assertFalse(failedWrite.sent(send))
+        assertNull(failedWrite.receipt())
+        val invalidRemote = attempt(remoteVerifier = { _, _ -> false })
+        assertTrue(invalidRemote.prepare())
+        assertFalse(receive(invalidRemote))
+        assertNull(invalidRemote.receipt())
+    }
+
+    @Test
+    fun cancellationInsideRemoteVerifierAndReceiptClockCannotPublishAttestations() {
+        lateinit var reentrant: GroupAdmissionConfirmationAttempt
+        reentrant = attempt(remoteVerifier = { _, _ -> reentrant.block(); true })
+        assertTrue(reentrant.prepare())
+        assertFalse(receive(reentrant))
+        assertNull(reentrant.receipt())
+        var cancelFromClock = false
+        lateinit var owner: GroupAdmissionConfirmationAttempt
+        owner = GroupAdmissionConfirmationAttempt(context, member, issuer, issuer, 100, {
+            if (cancelFromClock) owner.cancel()
+            now
+        }, { _, _, _ -> true }, { _, _ -> true })
+        assertTrue(owner.prepare())
+        val send = assertNotNull(owner.signed(assertNotNull(owner.confirm(assertNotNull(owner.comparison()))), "cHJvb2Y="))
+        assertTrue(owner.sent(send))
+        assertTrue(receive(owner))
+        cancelFromClock = true
+        assertNull(owner.receipt())
+        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.Cancelled), owner.state)
+    }
+
     private fun receive(attempt: GroupAdmissionConfirmationAttempt) = attempt.receive(issuer, member, "cHJvb2Y=")
     private fun attempt(
         selected: String = issuer,

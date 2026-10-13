@@ -9,6 +9,8 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
@@ -86,7 +88,18 @@ class GroupRootAdoptionSignatureTest {
         assertTrue(candidate.receive(founder, member, sign(issuerKey, expected.approvalBytes(founder))))
         assertNull(candidate.releaseForCommit(member, repository))
         completeLocal(candidate)
-        assertNotNull(candidate.releaseForCommit(member, repository))
+        val draft = assertNotNull(candidate.releaseForCommit(member, repository))
+        val receipt = draft.confirmations
+        assertContentEquals(expected.comparisonBytes(), receipt.comparisonBytes())
+        // Existing wire codecs preserve the exact attestations for a future local journal.
+        val local = GroupAdmissionConfirmationCodec.decode(GroupAdmissionConfirmationCodec.encode(receipt.local))
+        val remote = GroupAdmissionConfirmationCodec.decode(GroupAdmissionConfirmationCodec.encode(receipt.remote))
+        assertEquals(member, local.sender)
+        assertEquals(founder, remote.sender)
+        assertTrue(verify(memberKey, expected.approvalBytes(member), local.signature))
+        assertTrue(verify(issuerKey, expected.approvalBytes(founder), remote.signature))
+        assertFalse(verify(memberKey, expected.approvalBytes(founder), local.signature))
+        assertFalse(verify(issuerKey, expected.approvalBytes(member), remote.signature))
         assertNull(candidate.releaseForCommit(member, repository))
         assertNull(repository.localGroup())
     }

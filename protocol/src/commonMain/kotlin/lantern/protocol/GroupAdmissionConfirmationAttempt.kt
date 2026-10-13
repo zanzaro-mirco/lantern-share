@@ -73,6 +73,8 @@ class GroupAdmissionConfirmationAttempt(
     private var operation: GroupAdmissionConfirmationOperation? = null
     private var remoteConfirmed = false
     private var localSent = false
+    private var localConfirmation: GroupAdmissionConfirmation? = null
+    private var remoteConfirmation: GroupAdmissionConfirmation? = null
     private var verifyingRemote = false
     private var lastObservedMillis = observedAtMillis
     private val peerIdentity: String
@@ -122,6 +124,16 @@ class GroupAdmissionConfirmationAttempt(
 
     fun comparison(): GroupAdmissionComparison? = if (isActive()) comparison else null
 
+    /** Snapshot only while this exact attempt is live and fully confirmed; not a release. */
+    internal fun receipt(): GroupAdmissionConfirmationReceipt? {
+        if (!isActive() || current != GroupAdmissionConfirmationState.Confirmed) return null
+        return GroupAdmissionConfirmationReceipt(
+            checkNotNull(comparison).bytes,
+            checkNotNull(localConfirmation),
+            checkNotNull(remoteConfirmation),
+        )
+    }
+
     /** Explicit user confirmation of this exact context; stale or foreign tickets do nothing. */
     fun confirm(ticket: GroupAdmissionComparison): GroupAdmissionConfirmationOperation.Sign? {
         if (!isActive() || comparison !== ticket || verifyingRemote ||
@@ -149,6 +161,7 @@ class GroupAdmissionConfirmationAttempt(
     /** Only an actual successful transport write callback, never queueing, advances local progress. */
     fun sent(request: GroupAdmissionConfirmationOperation.Send): Boolean {
         if (!isActive() || operation !== request || current !is GroupAdmissionConfirmationState.Sending) return false
+        localConfirmation = GroupAdmissionConfirmation(request.sender, request.recipient, request.signature)
         operation = null
         localSent = true
         updateProgress()
@@ -182,6 +195,7 @@ class GroupAdmissionConfirmationAttempt(
         if (result != GroupAdmissionConfirmationResult.VerifiedRemoteConfirmation) {
             return close(GroupAdmissionConfirmationFailure.InvalidRemoteConfirmation(result))
         }
+        remoteConfirmation = GroupAdmissionConfirmation(sender, recipient, signature)
         remoteConfirmed = true
         updateProgress()
         return true
@@ -222,6 +236,8 @@ class GroupAdmissionConfirmationAttempt(
         if (current !is GroupAdmissionConfirmationState.Closed) current = GroupAdmissionConfirmationState.Closed(reason)
         comparison = null
         operation = null
+        localConfirmation = null
+        remoteConfirmation = null
         return false
     }
 
