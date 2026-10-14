@@ -3,6 +3,7 @@ package lantern.persistence
 import app.cash.sqldelight.db.SqlDriver
 import lantern.domain.ChatLine
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.PendingGroupAdoption
 
 /** Shared SQLDelight operations. Platform repositories provide their own synchronization and lifecycle. */
 internal class SqliteDeviceStore(driver: SqlDriver) {
@@ -37,6 +38,30 @@ internal class SqliteDeviceStore(driver: SqlDriver) {
             queries.foundLocalGroup(anchor.groupId, anchor.founderId)
             queries.lastInsertCount().executeAsOne() == 1L
         }
+
+    fun pendingGroupAdoption(): PendingGroupAdoption? = queries.pendingAdoptionJournalRecord().executeAsOneOrNull()?.let {
+        check(it.singleton == 1L) { "Invalid staged adoption singleton" }
+        check(it.payload_type == "blob") { "Invalid staged adoption payload type" }
+        PendingGroupAdoption(it.attempt_id, it.local_identity, it.peer_identity,
+            GroupTrustAnchor(it.group_id, it.founder_id), it.payload)
+    }
+
+    fun stageGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean =
+        database.transactionWithResult {
+            require(record.localIdentity == currentIdentityId) { "Staged adoption identity changed" }
+            queries.stageGroupAdoption(record.attemptId, record.localIdentity, record.peerIdentity,
+                record.anchor.groupId, record.anchor.founderId, record.payload())
+            val inserted = queries.lastInsertCount().executeAsOne() == 1L
+            check(localGroup() == null) { "Cannot stage adoption while in a group" }
+            check(pendingGroupAdoption()?.sameRecord(record) == true) { "Conflicting staged adoption" }
+            inserted
+        }
+
+    fun removeGroupAdoption(record: PendingGroupAdoption): Boolean = database.transactionWithResult {
+        queries.removeGroupAdoption(record.attemptId, record.localIdentity, record.peerIdentity,
+            record.anchor.groupId, record.anchor.founderId, record.payload())
+        queries.lastInsertCount().executeAsOne() == 1L
+    }
 
     fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =
         database.transactionWithResult {

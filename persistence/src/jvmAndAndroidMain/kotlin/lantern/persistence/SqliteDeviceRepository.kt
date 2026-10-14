@@ -4,9 +4,11 @@ import app.cash.sqldelight.db.SqlDriver
 import lantern.domain.DeviceRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupRepository
+import lantern.domain.GroupAdoptionJournalRepository
+import lantern.domain.PendingGroupAdoption
 
 /** Owns an initialized driver. Close after all repository consumers stop. */
-class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, LocalGroupRepository, AutoCloseable {
+class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, LocalGroupRepository, GroupAdoptionJournalRepository, AutoCloseable {
     private val store = SqliteDeviceStore(driver)
 
     @Synchronized
@@ -30,6 +32,16 @@ class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, 
     @Synchronized
     override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
         store.foundLocalGroup(anchor, currentIdentityId)
+
+    @Synchronized
+    override fun pendingGroupAdoption(): PendingGroupAdoption? = store.pendingGroupAdoption()
+
+    @Synchronized
+    override fun stageGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean =
+        store.stageGroupAdoption(record, currentIdentityId)
+
+    @Synchronized
+    override fun removeGroupAdoption(record: PendingGroupAdoption): Boolean = store.removeGroupAdoption(record)
 
     @Synchronized
     override fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =

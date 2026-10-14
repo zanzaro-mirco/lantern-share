@@ -104,6 +104,62 @@ class GroupRootAdoptionSignatureTest {
         assertNull(repository.localGroup())
     }
 
+    @Test
+    fun journalRoundTripPreservesBothRealSignaturesButDoesNotVerifyThem() {
+        val journal = journal()
+        val decoded = GroupRootAdoptionJournalCodec.decode(GroupRootAdoptionJournalCodec.encode(journal))
+        val restored = decoded.comparisonContext()
+        assertContentEquals(context(proof, memberOffer).comparisonBytes(), restored.comparisonBytes())
+        assertTrue(verify(memberKey, restored.approvalBytes(member), decoded.localConfirmation.signature))
+        assertTrue(verify(issuerKey, restored.approvalBytes(founder), decoded.remoteConfirmation.signature))
+        assertFalse(verify(memberKey, restored.approvalBytes(founder), decoded.localConfirmation.signature))
+        assertFalse(verify(issuerKey, restored.approvalBytes(member), decoded.remoteConfirmation.signature))
+        assertFalse(verify(issuerKey, restored.approvalBytes(member), decoded.localConfirmation.signature))
+        assertEquals(GroupAdmissionChainResult.VerifiedChain,
+            GroupAdmissionChainVerification.verify(decoded.evidence.proof, anchor, member) { _, bytes, signature ->
+                verify(issuerKey, bytes, signature)
+            })
+    }
+
+    @Test
+    fun validlyEncodedJournalTamperingMustFailCryptographicContextChecks() {
+        val changedAnchor = GroupTrustAnchor("d".repeat(64), founder)
+        val changedClaim = claim.copy(groupId = changedAnchor.groupId)
+        val changedProof = GroupAdmissionProof(changedAnchor, listOf(
+            SignedGroupAdmission(changedClaim, sign(issuerKey, GroupAdmissionCodec.signedBytes(changedClaim))),
+        ))
+        val replacements = listOf(
+            journal(memberOffer = ProtocolHandshakeParticipant(member, "d".repeat(64), caps)),
+            journal(issuerOffer = ProtocolHandshakeParticipant(founder, "d".repeat(64), caps)),
+            journal(memberOffer = ProtocolHandshakeParticipant(member, memberOffer.nonce, ProtocolCapabilities(1, setOf("text")))),
+            journal(memberOffer = ProtocolHandshakeParticipant(member, memberOffer.nonce, ProtocolCapabilities(1, caps.supportedFeatures, setOf("text")))),
+            journal(proof = changedProof),
+            journal(proof = GroupAdmissionProof(GroupTrustAnchor(anchor.groupId, "d".repeat(64)), proof.admissions)),
+            journal(proof = GroupAdmissionProof(anchor, listOf(proof.admissions.single().copy(signature = "AAAA")))),
+        )
+        for (replacement in replacements) {
+            // All are syntactically legal. Decode grants no VerifiedChain/Confirmed/commit state.
+            val decoded = GroupRootAdoptionJournalCodec.decode(GroupRootAdoptionJournalCodec.encode(replacement))
+            val restored = decoded.comparisonContext()
+            assertFalse(verify(memberKey, restored.approvalBytes(member), decoded.localConfirmation.signature))
+            assertFalse(verify(issuerKey, restored.approvalBytes(founder), decoded.remoteConfirmation.signature))
+        }
+    }
+
+    private fun journal(
+        proof: GroupAdmissionProof = this.proof,
+        memberOffer: ProtocolHandshakeParticipant = this.memberOffer,
+        issuerOffer: ProtocolHandshakeParticipant = this.issuerOffer,
+    ): GroupRootAdoptionJournal {
+        val original = context(this.proof, this.memberOffer)
+        return GroupRootAdoptionJournal(
+            GroupAdmissionEvidence(proof, listOf(GroupAdmissionCertificate(founder, "AA=="))),
+            memberOffer, issuerOffer, GroupAdmissionCertificate(member, "AAA="),
+            GroupAdmissionConfirmation(member, founder, sign(memberKey, original.approvalBytes(member))),
+            GroupAdmissionConfirmation(founder, member, sign(issuerKey, original.approvalBytes(founder))),
+        )
+    }
+
     private fun owner(proof: GroupAdmissionProof, memberOffer: ProtocolHandshakeParticipant = this.memberOffer) =
         GroupRootAdoptionAttempt(ProtocolHandshakeOffers(memberOffer, issuerOffer, 200), member,
             founder, founder, proof, 100, { 200 },

@@ -1,4 +1,4 @@
-# Passaggio di consegne — 13 ottobre 2026
+# Passaggio di consegne — 14 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,18 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Checkpoint precedente:** 7a85f05 / [iOS 38471682643](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38471682643) e [PoC 38471682630](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38471682630) success, lettura una volta da concluse. iOS Native/export/app/XCTest compilati, NON runtime; Android/Windows test e compilazione riusciti. Ultimo runtime Apple 485f008 / 134 XCTest, non nuovo hardware.
+
+**Nuovo lavoro, due passi consecutivi senza push intermedio:** payload journal locale v1 completo/non autorizzante e deposito SQLDelight, schema 3 additivo. Domain conserva metadati e byte opachi bounded; repository JVM/Android/iOS riusano store e lock. Stage atomico senza sostituzione, retry soltanto esatto, rimozione sul record intero; nessuna appartenenza/trust/consenso derivati dal deposito. ADR 011 e AMMISSIONE_GRUPPO descrivono confini e formato. Nessun nuovo caller negli owner/servizio/UI o recovery automatico.
+
+**Verificato:** checkpoint integrato 33 s, dominio 23 JVM / 23 unit Android, SQLite 20 JVM, protocollo 345 JVM / 310 Android, connettività 167 JVM con un mDNS reale opt-in saltato: **887 test eseguiti/passati**, zero failure/error. APK Android e desktop aggiornati compilati; metadata comuni nei controlli mirati. Dopo l'ultimo helper DER di test ripetuti soltanto i due metodi integrazione, successo 4 s. Payload autentico depositato e riletto dopo riapertura SQLite con pin/catena/firme reali, gruppo/trust/storia candidato ancora assenti; sostituzioni/trailing DER rifiutati. Diff/whitespace e 12 test CI-plan OK; comandi in STATO. Tre nuovi Native test e fixture migrazione legacy aggiornati, NON compilati/eseguiti su Windows. Previsto un solo checkpoint iOS completo bootstrap_interop=false a questo traguardo, senza polling.
+
+**Prossimo incremento unico:** prima esito Apple concluso/correzioni, poi controllo di sola lettura del candidato depositato (metadati↔payload↔identità OS e verificatori esistenti). Non confondere stage/riscontro crittografico storico con consenso corrente o commit distribuito; root adoption attiva/recovery/caller/UI restano separati. Fase 1/hardware obbligatori aperti. Note precedenti preservate sotto.
+
+### Storico — attestazioni prima del journal
+
+**Consegnato:** `7a85f051fd563aea86fb583c39d1c04c5ac5255c`, dieci file, unico push. [iOS ordinario 38471682643](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38471682643) / [PoC 38471682630](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38471682630) in_progress nella sola lettura post-push. Nessun polling/dispatch, nessuna CI nuova dichiarata superata. Leggere da concluse alla ripresa prima del journal; runtime Native dei nuovi test rinviato al prossimo checkpoint coerente, ordinario compila soltanto. Questa nota e STATO restano locali per il prossimo incremento, niente push documentale aggiuntivo.
 
 **Checkpoint riuscito:** `485f008` / [iOS completo 38468156788](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38468156788), job iOS success, **134 XCTest zero fallimenti**, incluso percorso positivo corretto TLS/riapertura SQLite. Non hardware; non copre le nuove modifiche comuni qui sotto. Lettura da concluso, niente polling.
 

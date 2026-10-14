@@ -1,5 +1,26 @@
 # Dichiarazione di ammissione al gruppo
 
+## Payload locale del journal — 14 ottobre 2026
+
+`GroupRootAdoptionJournal` conserva materiale **non attendibile**, non uno stato di appartenenza o un ticket di consenso. È limitato al destinatario candidato: offerta locale del nuovo membro, offerta remota dell'ultimo emittente, evidence completa con i certificati di tutti gli emittenti, certificato pubblico del membro e due GROUP_CONFIRM direzionali. Le offerte sono copie difensive. `fromDraft` confronta prova canonica e byte completi del confronto con la bozza rilasciata; non verifica liveness, certificati o firme e non acquisisce ownership del trasporto. I certificati dei veri endpoint devono prevalere sull'evidence ricevuta prima della cattura.
+
+`GroupRootAdoptionJournalCodec` è esclusivamente un formato locale, separato dai frame di rete: header ASCII `LGRJ`, versione binaria `01`, sei campi in ordine fisso, ciascuno preceduto dalla lunghezza unsigned big-endian a quattro byte. Lunghezze controllate prima di conversioni/allocazioni; zero, overflow, troncamenti, byte residui e versioni ignote sono rifiutati. Budget totale **278901 byte**, derivato dai limiti dei codec riusati, non un nuovo limite dei frame.
+
+| Campo | Contenuto | Limite byte |
+|---|---|---:|
+| 1 | GROUP_EVIDENCE JSON esistente | 262144 |
+| 2 | HELLO del membro | 4608 |
+| 3 | HELLO dell'emittente | 4608 |
+| 4 | DER pubblico del membro, Base64 canonico | 5464 |
+| 5 | GROUP_CONFIRM locale | 1024 |
+| 6 | GROUP_CONFIRM remoto | 1024 |
+
+Le strutture JSON interne mantengono codec, normalizzazione, controllo duplicati e limiti preesistenti; non sono riparse come mappe che perderebbero campi duplicati. L'identità dichiarata del certificato membro è quella dell'offerta locale; soltanto l'adattatore OS può verificare che il DER produca davvero quel pin. Il contesto firmato viene ricostruito dalla prova e dalle offerte, non da un digest/booleano sostituibile. Non si serializzano clock monotoni, deadline, stato Confirmed, chiavi private o conferme di commit.
+
+**Decode non autorizza nulla:** DER/firme sintatticamente valide, catene incoerenti o un cambio di nonce correttamente codificato possono essere decodificati. Prima di ogni futuro recovery servono policy OS DER/pin/validità, intera catena e entrambe le firme sul contesto ricostruito, identità locale corrente, stato durevole e gestione esplicita di blocco/uscita/revoca. Anche tutte le firme valide attestano materiale storico, non una nuova selezione TLS, consenso corrente o commit distribuito. La radice decodificata resta candidata, non indipendentemente fidata.
+
+Dieci test comuni coprono binding/copie, ogni troncamento, limiti unsigned e massimi, input malformati/duplicati/UTF-8 e alterazioni legali non autorizzanti. Due regressioni P-256 verificano le firme rilette e rifiutano contesti alterati. Il test TLS esistente salva/rilegge il payload dal nuovo deposito SQLite e verifica pin/catena/entrambe le firme con certificati reali; SQLite riaperto ancora senza gruppo/trust/storia. Il deposito è descritto in [ADR 011](ADR-011-JOURNAL-ADOZIONE-LOCALE.md): non è commit di appartenenza o recovery di produzione. Evidenze correnti in STATO; nuovo Native/hardware non attestato.
+
 ## Attestazioni prima del journal recuperabile — 13 ottobre 2026
 
 GroupAdmissionConfirmationReceipt conserva i byte difensivi del confronto e le due GroupAdmissionConfirmation direzionali, usando i codec esistenti. Il core trattiene la locale soltanto dal successo `sent` del ticket esatto, la remota soltanto dopo verifica e liveness; la snapshot interna richiede Confirmed vivo. Chiusura/revoca elimina le attestazioni dal tentativo. GroupRootAdoptionDraft le include nel rilascio monouso già esistente, senza nuova scrittura o autorizzazione.
