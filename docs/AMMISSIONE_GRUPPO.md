@@ -1,5 +1,13 @@
 # Dichiarazione di ammissione al gruppo
 
+## Ispezione del candidato depositato — 17 ottobre 2026
+
+`GroupRootAdoptionJournalInspection` controlla uno snapshot senza modificarlo: decode completo, identità OS corrente ↔ metadati ↔ ruoli/radice del payload, intera catena e firme di membro/emittente sui byte canonici ricostruiti. Usa gli stessi certificati esatti dei pin dichiarati; il verificatore OS applica DER, curva, validità, autofirma e firma. Nessuna nuova codifica di rete o migrazione. L'ID tentativo non è autenticato dalle firme storiche.
+
+`HistoricalSignaturesValid` non è consenso corrente, fiducia indipendente nella radice o autorizzazione al commit. Non scavalca un gruppo già fondato, blocco o uscita; questi controlli e l'identità/lifecycle correnti appartengono al futuro owner. L'ispezione non ricostruisce deadline o selezioni TLS e non attiva alcun peer. Payload malformati/versioni ignote restano errori a diagnostica fissa, mai assenza o rimozione automatica; errori inattesi OS e cancellazioni propagano. Dettagli e responsabilità in [ADR 011](ADR-011-JOURNAL-ADOZIONE-LOCALE.md).
+
+Adattatore JVM/Android implementato con i verificatori esistenti, provato con firme P-256, certificati reali e SQLite riaperto. Ponte Kotlin/Swift di sola lettura e sette XCTest predisposti, non verificati localmente su Windows. Nessuna nuova orchestrazione UI/servizio o adozione. Le verifiche del journal precedente `ef3026c` sono riuscite anche nel checkpoint Native/simulatore iOS, ma non coprono il nuovo ponte di questo incremento; risultati correnti in STATO.
+
 ## Payload locale del journal — 14 ottobre 2026
 
 `GroupRootAdoptionJournal` conserva materiale **non attendibile**, non uno stato di appartenenza o un ticket di consenso. È limitato al destinatario candidato: offerta locale del nuovo membro, offerta remota dell'ultimo emittente, evidence completa con i certificati di tutti gli emittenti, certificato pubblico del membro e due GROUP_CONFIRM direzionali. Le offerte sono copie difensive. `fromDraft` confronta prova canonica e byte completi del confronto con la bozza rilasciata; non verifica liveness, certificati o firme e non acquisisce ownership del trasporto. I certificati dei veri endpoint devono prevalere sull'evidence ricevuta prima della cattura.

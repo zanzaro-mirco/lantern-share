@@ -24,6 +24,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.PendingGroupAdoption
 
 /**
  * Verify the actual public Apple test fixture with shared Kotlin and real JCA crypto.
@@ -71,6 +72,29 @@ class GroupAdmissionConfirmationJvmVectorTest {
         }
         assertFalse(verify(issuer, context.approvalBytes(issuer), vectors.getValue("wrongIssuerSignature")))
         assertTrue(verify(member, context.approvalBytes(issuer), vectors.getValue("wrongIssuerSignature")))
+    }
+
+    @Test
+    fun appleJournalFixtureUsesTheSameOriginalOffersAndHistoricalDirectionalSignatures() {
+        val journal = GroupRootAdoptionJournal(evidence,
+            ProtocolHandshakeParticipant(member, "2".repeat(64), caps),
+            ProtocolHandshakeParticipant(issuer, "1".repeat(64), caps),
+            GroupAdmissionCertificate(member, vectors.getValue("memberDer")),
+            GroupAdmissionConfirmation(member, issuer, vectors.getValue("memberSignature")),
+            GroupAdmissionConfirmation(issuer, member, vectors.getValue("issuerSignature")))
+        val record = PendingGroupAdoption("e".repeat(64), member, issuer, anchor, GroupRootAdoptionJournalCodec.encode(journal))
+        assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+            GroupRootAdoptionJournalInspection.inspect(record, member) { supplied, bytes, signature ->
+                assertContentEquals(certificates.getValue(supplied.identity).encoded, Base64.getDecoder().decode(supplied.der))
+                verify(supplied.identity, bytes, signature)
+            })
+        val alternate = GroupRootAdoptionJournal(alternative, journal.localOffer, journal.remoteOffer,
+            journal.memberCertificate, journal.localConfirmation, journal.remoteConfirmation)
+        assertEquals(GroupRootAdoptionJournalInspectionResult.InvalidLocalConfirmation,
+            GroupRootAdoptionJournalInspection.inspect(PendingGroupAdoption(record.attemptId, member, issuer, anchor,
+                GroupRootAdoptionJournalCodec.encode(alternate)), member) { supplied, bytes, signature ->
+                verify(supplied.identity, bytes, signature)
+            })
     }
 
     @Test

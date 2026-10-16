@@ -23,6 +23,11 @@ import platform.UIKit.UIViewController
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
     internal val localGroups: LocalGroupRepository get() = repository
 
+    /** Read-only untrusted snapshot; failures remain failures, never absence or automatic cleanup. */
+    @Throws(Exception::class)
+    fun pendingGroupAdoption(): IosGroupAdoptionJournalSnapshot? =
+        repository.pendingGroupAdoption()?.let(::IosGroupAdoptionJournalSnapshot)
+
     @Throws(Exception::class)
     fun localGroup(): IosLocalGroupAnchor? = repository.localGroup()?.let {
         IosLocalGroupAnchor(it.groupId, it.founderId)

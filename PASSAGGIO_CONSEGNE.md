@@ -1,4 +1,4 @@
-# Passaggio di consegne — 14 ottobre 2026
+# Passaggio di consegne — 17 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,20 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Ultimo checkpoint concluso verificato:** `ef3026c`, [iOS completo 38632423380](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38632423380) / [PoC 38632422811](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38632422811) success. Native dominio/protocollo/SQLite eseguiti, **134 XCTest zero fallimenti** in simulatore; opt-in bootstrap compilato, non eseguito. Android/Windows test e compilazione riusciti. Nessun polling. Copre il deposito precedente, non il nuovo ispettore Apple qui sotto.
+
+**Incremento corrente implementato:** ispezione non distruttiva del record depositato, core Kotlin condiviso con binding metadati↔payload↔identità OS, verifica di tutte le deleghe e due firme direzionali. `HistoricalSignaturesValid` non autorizza adozione, recovery o ripristino del consenso; ID tentativo non autenticato. Nessuna scrittura/cleanup automatico, appartenenza, root fidata, UI/servizio/caller nuovo. Adattatore JVM/Android sui verificatori esistenti; parser DER esatto riusato per il certificato membro. Errori decode a diagnostica fissa, errori inattesi/cancellazioni del verificatore invariati. ADR 011 e AMMISSIONE aggiornati, schema 3/wire/versioni invariati.
+
+**Verificato localmente:** checkpoint finale **47 s**, protocollo 356 JVM / 320 unit Android, connettività 174 JVM con un mDNS reale opt-in saltato: **849 eseguiti/passati**, zero failure/error; APK Android e classi desktop compilati. SQLite test suite precedente 20 casi UP-TO-DATE nel checkpoint di 40 s, non rieseguita. Firme/certificati reali, test TLS e riapertura SQLite, record preservati dopo errore e nessuna sovrascrittura di una fondazione successiva. Comandi ed evidenze in STATO. Dieci nuovi test comuni, sette OS JVM, una regressione sui vettori JVM usati da Apple.
+
+**Apple predisposto NON verificato localmente:** snapshot Kotlin/lettura repository con `@Throws`, adattatore Swift su `ApplePublicCertificate`, incluso in project.yml. Sette XCTest predisposti sui vettori pubblici esistenti e lettura SQLite; nessuna generazione credenziali o nuovo protocollo Swift. Callback Swift conserva/rilancia errori parser prima di pubblicare il risultato. Windows non compila Native/export/Swift; un checkpoint iOS completo previsto, bootstrap_interop=false, senza polling. Nessuna nuova API di stage/commit per Swift o orchestrazione attiva.
+
+**Prossimo incremento unico:** prima risultato Apple concluso/correzioni, poi handover revocabile dal confronto vivo al futuro owner di commit, preservando deadline originale e binding al record esatto. Il journal storico non ricrea permessi. Fase 1 e hardware residui obbligatori aperti. Conservare le note locali post-push; raggruppare modifiche prima di un unico push, niente attese/polling CI.
+
+### Storico — consegna del journal, 14 ottobre
+
+**Consegnato:** `ef3026c4347733a649dec694cb53fc4db6deacfd`, venti file, unico push. [iOS completo 38632423380](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38632423380) avviato bootstrap_interop=false / [PoC 38632422811](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38632422811), entrambi in_progress nella sola lettura post-push. Richiesta cancellazione duplicato iOS ordinario 38632422810, senza verificarne la conclusione. Nessun polling, nuovo runtime Native/Swift ancora non attestato. Riprendere dal risultato completo concluso prima del controllo del candidato. Nota locale con STATO da preservare/raggruppare, nessun push documentale aggiuntivo.
 
 **Checkpoint precedente:** 7a85f05 / [iOS 38471682643](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38471682643) e [PoC 38471682630](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38471682630) success, lettura una volta da concluse. iOS Native/export/app/XCTest compilati, NON runtime; Android/Windows test e compilazione riusciti. Ultimo runtime Apple 485f008 / 134 XCTest, non nuovo hardware.
 

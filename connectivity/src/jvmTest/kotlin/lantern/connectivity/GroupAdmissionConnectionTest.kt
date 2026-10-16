@@ -28,6 +28,7 @@ import lantern.protocol.GroupRootAdoptionAttempt
 import lantern.protocol.GroupRootAdoptionFailure
 import lantern.protocol.GroupRootAdoptionJournal
 import lantern.protocol.GroupRootAdoptionJournalCodec
+import lantern.protocol.GroupRootAdoptionJournalInspectionResult
 import lantern.protocol.GroupRootAdoptionState
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
@@ -42,7 +43,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.nio.file.Files
-import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.concurrent.CountDownLatch
@@ -79,7 +79,7 @@ class GroupAdmissionConnectionTest {
             openDesktopRepository(path).use { assertTrue(it.stageGroupAdoption(record, local)) }
             openDesktopRepository(path).use {
                 val pending = assertNotNull(it.pendingGroupAdoption())
-                assertFailsWith<IllegalArgumentException> { GroupRootAdoptionJournalCodec.decode(pending.payload()) }
+                assertFailsWith<IllegalArgumentException> { GroupRootAdoptionJournalInspector.inspect(pending, local) }
                 assertTrue(record.sameRecord(assertNotNull(it.pendingGroupAdoption())))
                 assertNull(it.localGroup())
                 assertTrue(it.trusted().isEmpty())
@@ -447,6 +447,8 @@ class GroupAdmissionConnectionTest {
                         val pending = PendingGroupAdoption(randomNonce(), member.id, founder.id, anchor,
                             GroupRootAdoptionJournalCodec.encode(journal))
                         assertTrue(memberStore.stageGroupAdoption(pending, member.id))
+                        assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                            GroupRootAdoptionJournalInspector.inspect(assertNotNull(memberStore.pendingGroupAdoption()), member.id))
                         staged = pending
                         val reopened = GroupRootAdoptionJournalCodec.decode(assertNotNull(memberStore.pendingGroupAdoption()).payload())
                         val reopenedVerifier = journalVerifier(reopened)
@@ -464,7 +466,11 @@ class GroupAdmissionConnectionTest {
                                 GroupAdmissionCertificate(member.id, Base64.getEncoder().encodeToString(invalidDer)),
                                 reopened.localConfirmation, reopened.remoteConfirmation)
                             val substituted = GroupRootAdoptionJournalCodec.decode(GroupRootAdoptionJournalCodec.encode(replacedMember))
-                            assertFailsWith<InvalidGroupAdmissionCertificateException> { journalVerifier(substituted) }
+                            val invalidRecord = PendingGroupAdoption(pending.attemptId, member.id, founder.id, anchor,
+                                GroupRootAdoptionJournalCodec.encode(substituted))
+                            assertFailsWith<InvalidGroupAdmissionCertificateException> {
+                                GroupRootAdoptionJournalInspector.inspect(invalidRecord, member.id)
+                            }
                         }
                         assertEquals(GroupRootAdoptionState.ReleasedForCommit, candidate.state())
                         assertNull(candidate.releaseForCommit(member.id, memberStore))
@@ -479,6 +485,13 @@ class GroupAdmissionConnectionTest {
                 assertTrue(it.history().isEmpty())
                 val pending = assertNotNull(it.pendingGroupAdoption())
                 assertTrue(assertNotNull(staged).sameRecord(pending))
+                assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                    GroupRootAdoptionJournalInspector.inspect(pending, member.id))
+                assertEquals(GroupRootAdoptionJournalInspectionResult.LocalIdentityMismatch,
+                    GroupRootAdoptionJournalInspector.inspect(pending, founder.id))
+                assertTrue(pending.sameRecord(assertNotNull(it.pendingGroupAdoption())))
+                assertNull(it.localGroup())
+                assertTrue(it.trusted().isEmpty())
                 val journal = GroupRootAdoptionJournalCodec.decode(pending.payload())
                 val context = journal.comparisonContext()
                 val verifier = journalVerifier(journal)
@@ -815,13 +828,7 @@ class GroupAdmissionConnectionTest {
 
     private fun journalVerifier(journal: GroupRootAdoptionJournal): GroupAdmissionCertificateVerifier {
         val certificates = GroupAdmissionEvidenceCertificates.decode(journal.evidence).toMutableMap().apply {
-            val der = Base64.getDecoder().decode(journal.memberCertificate.der)
-            val input = der.inputStream()
-            val certificate = CertificateFactory.getInstance("X.509").generateCertificate(input) as X509Certificate
-            if (input.available() != 0 || !certificate.encoded.contentEquals(der) || digest(der) != journal.memberCertificate.identity) {
-                throw InvalidGroupAdmissionCertificateException()
-            }
-            put(journal.memberCertificate.identity, certificate)
+            put(journal.memberCertificate.identity, GroupAdmissionEvidenceCertificates.decode(journal.memberCertificate))
         }
         return GroupAdmissionCertificateVerifier { certificates[it] }
     }

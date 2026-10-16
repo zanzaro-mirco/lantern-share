@@ -1,5 +1,6 @@
 package lantern.connectivity
 
+import lantern.protocol.GroupAdmissionCertificate
 import lantern.protocol.GroupAdmissionEvidence
 import java.io.ByteArrayInputStream
 import java.security.cert.CertificateException
@@ -13,26 +14,34 @@ internal object GroupAdmissionEvidenceCertificates {
         val factory = CertificateFactory.getInstance("X.509")
         val certificates = linkedMapOf<String, X509Certificate>()
         for (supplied in evidence.certificates) {
-            // The shared DTO already bounded and checked canonical Base64, before any OS parser.
-            val der = Base64.getDecoder().decode(supplied.der)
-            val input = ByteArrayInputStream(der)
-            val certificate = try {
-                factory.generateCertificate(input) as? X509Certificate ?: throw InvalidGroupAdmissionCertificateException()
-            } catch (_: CertificateException) {
-                throw InvalidGroupAdmissionCertificateException()
-            }
-            val encoded = try {
-                certificate.encoded
-            } catch (_: CertificateException) {
-                throw InvalidGroupAdmissionCertificateException()
-            }
-            // Reject PEM/normalization, a second certificate and trailing bytes. Identity is exact DER, not just key.
-            if (input.available() != 0 || !encoded.contentEquals(der) || digest(der) != supplied.identity) {
-                throw InvalidGroupAdmissionCertificateException()
-            }
-            certificates[supplied.identity] = certificate
+            certificates[supplied.identity] = decode(supplied, factory)
         }
         return certificates.toMap()
+    }
+
+    /** The same strict boundary also applies to the journal's separate member certificate. */
+    fun decode(supplied: GroupAdmissionCertificate): X509Certificate =
+        decode(supplied, CertificateFactory.getInstance("X.509"))
+
+    private fun decode(supplied: GroupAdmissionCertificate, factory: CertificateFactory): X509Certificate {
+        // The shared DTO already bounded and checked canonical Base64, before any OS parser.
+        val der = Base64.getDecoder().decode(supplied.der)
+        val input = ByteArrayInputStream(der)
+        val certificate = try {
+            factory.generateCertificate(input) as? X509Certificate ?: throw InvalidGroupAdmissionCertificateException()
+        } catch (_: CertificateException) {
+            throw InvalidGroupAdmissionCertificateException()
+        }
+        val encoded = try {
+            certificate.encoded
+        } catch (_: CertificateException) {
+            throw InvalidGroupAdmissionCertificateException()
+        }
+        // Reject PEM/normalization, a second certificate and trailing bytes. Identity is exact DER, not just key.
+        if (input.available() != 0 || !encoded.contentEquals(der) || digest(der) != supplied.identity) {
+            throw InvalidGroupAdmissionCertificateException()
+        }
+        return certificate
     }
 }
 

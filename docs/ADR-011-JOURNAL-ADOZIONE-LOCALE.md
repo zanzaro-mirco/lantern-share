@@ -1,6 +1,6 @@
 # ADR 011 — deposito locale dell'adozione candidata
 
-Data: 14 ottobre 2026. Stato: implementati formato e deposito; recovery e adozione non implementati.
+Data: 14 ottobre 2026; integrazione 17 ottobre. Stato: implementati formato, deposito e ispezione non distruttiva; recovery e adozione non implementati. Nuovo ponte Apple predisposto, non verificato su Windows.
 
 ## Contesto
 
@@ -44,10 +44,20 @@ I metadati del deposito non sono autenticati e il repository non garantisce che 
 
 Neppure il successo di tutti i controlli crittografici costituisce consenso corrente, selezione TLS o prova di commit distribuito. Non si ripristina la deadline monotona del vecchio processo e non si usa la radice ricevuta come trust indipendente. Nessun record abilita peer, messaggi, cronologia pregressa o sessioni.
 
+### Ispezione storica di sola lettura
+
+`GroupRootAdoptionJournalInspection` riceve uno snapshot `PendingGroupAdoption`, l'identità corrente letta dall'OS e un verificatore OS di certificati/firme. Prima decodifica bounded/versionata, poi incrocia identità locale, peer e radice dei metadati con i ruoli del payload. Prima di qualsiasi crittografia rifiuta mismatch; verifica quindi tutte le deleghe e le due approvazioni direzionali sui byte ricostruiti. L'ID tentativo resta metadato non autenticato, non è aggiunto ai byte firmati e non viene considerato prova di autenticità.
+
+Risultati tipizzati distinguono identità cambiata, metadati incoerenti, catena invalida, firma locale/remota invalida e `HistoricalSignaturesValid`. Quest'ultimo significa soltanto firme storiche valide sotto la policy OS corrente: non è `Confirmed`, ticket di commit o decisione di recovery. L'ispezione non legge il gruppo durevole, blocco o uscita e può avere esito crittografico positivo anche quando una fondazione successiva prevale sul candidato. Il futuro owner deve applicare tali controlli e ricontrollare il record esatto prima di qualsiasi modifica. Identità/lifecycle serializzati dal caller; nessuna validità continua dopo il ritorno della funzione.
+
+Errori di sintassi/versione/UTF-8 diventano `InvalidGroupRootAdoptionJournalException` con diagnostica fissa, senza contenuti o cause del parser. Non diventano assenza, cancellazione del record o semplice firma invalida. Il catch è limitato al decode: errori OS inattesi e cancellazioni del verificatore propagano invariati. DER/pin malformati restano errori dell'adattatore; certificati fuori policy o firme non valide restituiscono il fallimento crittografico. Nessuna transazione contiene callback crittografici.
+
+JVM/Android riusano `GroupAdmissionEvidenceCertificates` per il DER esatto anche del membro e `GroupAdmissionCertificateVerifier` per pin, validità, curva, autofirma e firma. Mappa di certificati soltanto per la singola chiamata, nessun risultato di validità conservato fra ispezioni. iOS usa `IosGroupAdoptionJournalSnapshot` opaco e `IosPersistence.pendingGroupAdoption()` con `@Throws`; `fromStoredRecord` importa metadati/byte non attendibili senza scritture. Swift riusa `ApplePublicCertificate`, non replica codec o regole. Poiché il callback Kotlin non può lanciare errori Swift, l'adattatore conserva l'errore originale e lo rilancia prima di pubblicare il risultato temporaneo. Il progetto Xcode include il nuovo sorgente; nessun caller di servizio/UI/owner lo esegue ancora.
+
 ## Verifica e conseguenze
 
 Test comuni di codec/binding/copie/limiti, firme P-256 reali, JDBC con riapertura, retry/conflitti fra connessioni, inserimento/rimozione falliti, storage corrotto/sola lettura e migrazioni 1→3/2→3. Integrazione TLS reale: firme raccolte sul canale, payload salvato in SQLite e riletto dopo chiusura/riapertura, pin/catena/entrambe le firme verificati; destinatario ancora senza gruppo/trust/storia. Una versione payload ignota rimane depositata dopo decode fallito.
 
 Tre test Native iOS predisposti per riapertura/retry/rimozione, migrazione 2→3 preservativa e rollback su errori prima/dopo INSERT e dopo DELETE. La fixture preesistente della migrazione 1→corrente rimuove entrambe le nuove tabelle per rappresentare davvero lo schema 1. Risultati e comandi effettivi in STATO; predisposizione non equivale a runtime Native o hardware.
 
-Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione. Nessun handover al commit, stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Il prossimo incremento è il controllo di sola lettura del candidato depositato e il suo binding ai verificatori OS esistenti, prima di progettare il completamento recuperabile.
+Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione. Nessun handover al commit, stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Nuove prove comuni, P-256/JCA e TLS/SQLite coprono l'ispezione; sette XCTest Apple predisposti, non eseguiti su Windows. Il prossimo incremento è il trasferimento revocabile dal confronto vivo al futuro owner di commit, preservando la deadline originale: il journal storico non può sostituire questo permesso. Prima leggere l'esito Apple concluso, senza polling.
