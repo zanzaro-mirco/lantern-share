@@ -2,7 +2,7 @@
 
 Documento operativo di Lantern, complementare a `PIANO_SVILUPPO.md`. Non sostituisce la specifica né amplia la roadmap. Revisione iniziale: 27 settembre 2026.
 
-Per le nuove chat, seguire `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`: incrementi piccoli, letture mirate, verifiche proporzionate e nessun polling CI ripetitivo. I risultati storici qui riportati vanno letti insieme alla sintesi corrente di `STATO_SVILUPPO.md`.
+Per le nuove chat, seguire `AGENTS.md` e `PASSAGGIO_CONSEGNE.md`: blocchi funzionali circoscritti, piccoli passi compilabili interni, letture mirate, verifiche proporzionate e nessun polling CI. Il metodo di esecuzione e la coda operativa aggiornati il 18 ottobre 2026 sono in `PIANO_SVILUPPO.md`, sezione 4. I risultati storici qui riportati vanno letti insieme alla sintesi corrente di `STATO_SVILUPPO.md`.
 
 ## 1. Ruolo e responsabilità
 
@@ -12,12 +12,12 @@ Come sviluppatore curo implementazione, nomenclatura, gestione degli errori, tes
 
 ## 2. Come procederò a ogni incremento
 
-1. Leggere specifica, istruzioni e stato reale; identificare comportamento atteso, rischi e target verificabili.
+1. Leggere specifica, istruzioni e stato reale; definire un blocco funzionale con risultato osservabile, utilizzatore, accettazione, esclusioni, rischi e target verificabili. Lavorare su un solo blocco attivo, non sull'intera roadmap.
 2. Individuare il componente proprietario della regola. Introdurre una nuova interfaccia solo quando isola I/O, una piattaforma o una responsabilità effettivamente distinta.
 3. Per una correzione significativa, aggiungere un test che riproduca il problema. Per un refactoring, proteggere prima i contratti esistenti e aggiungere test per i confini appena esplicitati.
-4. Modificare per passi compilabili; mantenere formato wire e dati esistenti, oppure introdurre esplicitamente versione e migrazione. Non confondere refactoring con nuove funzionalità.
+4. Modificare per passi compilabili, includendo gli adattatori e l'integrazione necessari senza richiedere conferme per ogni strato. Mantenere formato wire e dati esistenti, oppure richiedere una decisione esplicita su incompatibilità/versione/migrazione. Non confondere refactoring o prerequisiti tecnici con nuove funzionalità utilizzabili.
 5. Rivedere concorrenza, risorse, input non attendibile, autorizzazioni e gestione degli errori oltre al percorso positivo.
-6. Eseguire test e build pertinenti; aggiornare README, decisioni e `STATO_SVILUPPO.md` con risultati, limiti e prossimo passo. Nessun target è verificato solo perché dichiarato in Gradle.
+6. Eseguire test mirati durante il lavoro e una verifica integrata alla chiusura; consegnare raggruppato al checkpoint del blocco, riusando la selezione CI e senza run Apple duplicate o polling. Aggiornare solo la documentazione pertinente con evidenze e limiti, senza replicare lo storico. Le regressioni importanti devono essere versionate, non affidate soltanto a harness ignorati. Nessun target è verificato solo perché dichiarato in Gradle; nessuna integrazione è completa solo perché esiste una facciata.
 
 ## 3. Confini e dipendenze
 

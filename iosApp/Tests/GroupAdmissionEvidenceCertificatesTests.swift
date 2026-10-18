@@ -50,6 +50,13 @@ final class GroupAdmissionEvidenceCertificatesTests: XCTestCase {
         view.removeAll()
         XCTAssertEqual(evidence.certificates.count, 2)
         XCTAssertEqual(try GroupAdmissionEvidenceCertificates.decode(evidence).count, 2)
+        // The shared binding helper is not a certificate verifier and never changes other issuers.
+        let substituted = try evidence.withIssuerCertificate(identity: issuer.id, der: der(founder).base64EncodedString())
+        XCTAssertThrowsError(try GroupAdmissionEvidenceCertificates.decode(substituted))
+        let rebound = try substituted.withIssuerCertificate(identity: issuer.id, der: der(issuer).base64EncodedString())
+        let reboundCertificates = try GroupAdmissionEvidenceCertificates.decode(rebound)
+        XCTAssertEqual(SecCertificateCopyData(try XCTUnwrap(reboundCertificates[founder.id])) as Data, der(founder))
+        XCTAssertEqual(SecCertificateCopyData(try XCTUnwrap(reboundCertificates[issuer.id])) as Data, der(issuer))
     }
 
     func testAdvertisedPinCannotSubstituteAnotherCertificate() throws {

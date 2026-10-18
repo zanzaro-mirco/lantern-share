@@ -13,11 +13,14 @@ Lavora concretamente, con codice pulito e mantenibile. Riduci il consumo: lettur
 
 Aggiornamento dell'utente il 4 ottobre: **non utilizzare più il polling CI**. L'autorizzazione al polling leggero del 3 ottobre è revocata. È possibile leggere una run già conclusa per verificarne i risultati e recuperare una sola volta i link dopo il push, senza monitoraggio, attese ripetute o automazioni. Se la CI è pendente, riportare link e commit e fermarsi.
 
-- Completa un incremento piccolo e concreto alla volta. Prima di modificare, identifica risultato atteso, file coinvolti e verifica minima. Non estendere autonomamente l'incremento a tutta la roadmap.
+- Completa un blocco funzionale circoscritto alla volta, secondo il metodo e la coda operativa in `PIANO_SVILUPPO.md`. Prima di modificare, identifica risultato osservabile, utilizzatore, file/target coinvolti, accettazione, esclusioni e verifica minima. Piccoli passi compilabili interni non richiedono consegne o conferme separate. Non estendere il blocco all'intera roadmap.
+- Prosegui autonomamente nei passi necessari del blocco, inclusi adattatori e integrazione; non fermarti dopo ogni classe/facciata. Chiedi direzione per scelte di prodotto mancanti, incompatibilità o nuove autorizzazioni. Un prerequisito tecnico separato deve avere un utilizzatore e un criterio d'integrazione: non dichiararlo funzionalità completata.
 - Usa ricerche mirate (`rg`), leggi soltanto i sorgenti pertinenti, raggruppa letture indipendenti. Non rileggere log completi o tutti i documenti a ogni passaggio.
 - Non usare subagenti salvo richiesta esplicita. Evita refactoring generali, nuove librerie o aggiornamenti di versione non necessari.
 - Esegui prima i controlli locali pertinenti; ripetili soltanto dopo modifiche rilevanti o errori. Non rilanciare build complete per sole modifiche Markdown.
+- Mantieni le regressioni importanti in test versionati e riproducibili. Harness ignorati sono esplorativi, non sostituiscono i test mantenuti. Verifica le regole nel core e i rischi specifici negli adattatori, evitando duplicazioni senza valore.
 - Prepara e rivedi una modifica coerente prima di fare push: evitare molti push intermedi che avviano l'intera matrice CI.
+- Chiudi il blocco con una verifica integrata e una consegna raggruppata. Riusa la selezione CI esistente; checkpoint Apple runtime per integrazioni significative, senza duplicare run ordinarie/complete. Non modificare i workflow implicitamente e non eliminare verifiche necessarie.
 - Per CI remota, consulta uno stato compatto e i soli errori del job interessato. Non consumare il turno in cicli di attesa/polling ripetuti. Se la CI è ancora in corso e non resta lavoro utile indipendente, riporta link, commit e stato pendente; non chiamarla superata. Riprendila alla successiva richiesta dell'utente.
 - Non creare automazioni di monitoraggio senza richiesta. Non saltare test, sopprimere errori o indebolire la sicurezza per ottenere una CI verde.
 
@@ -32,4 +35,4 @@ Aggiornamento dell'utente il 4 ottobre: **non utilizzare più il polling CI**. L
 
 ## Chiusura dell'incremento
 
-Aggiorna la sintesi corrente in `STATO_SVILUPPO.md` e il passaggio di consegne se cambia il prossimo passo. Distingui sempre: implementato, compilato, testato in simulatore/CI, testato su dispositivo fisico. Riporta comandi effettivi, errori o limiti ancora aperti e un solo prossimo incremento concreto. Non promettere che l'intera app sia completa.
+Aggiorna in modo breve la sintesi corrente in `STATO_SVILUPPO.md` e il passaggio di consegne se cambia il prossimo passo; non duplicare resoconti storici o contenuti degli ADR. Conserva le evidenze esistenti, anche se archiviate con link. Distingui sempre: prerequisito tecnico, integrazione nell'app, implementato, compilato, testato in simulatore/CI, testato su dispositivo fisico. Riporta comandi effettivi, errori o limiti ancora aperti e un solo prossimo blocco concreto. Misura l'avanzamento per capacità e accettazione, non per classi/commit/build. Non promettere che l'intera app sia completa.

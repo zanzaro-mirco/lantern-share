@@ -27,6 +27,9 @@ final class HandshakeV1ChannelTests: XCTestCase {
         let (store, directory) = try rootStore()
         let confirmed = expectation(description: "both actual TLS owners confirmed candidate")
         confirmed.expectedFulfillmentCount = 2
+        let handedOver = expectation(description: "same owner handed over with a pending receive")
+        let drained = expectation(description: "root owner OS callbacks drained before database close")
+        var historical: IosGroupAdoptionJournalSnapshot?
         try queue.sync {
             weak var root: GroupRootAdoptionChannel?
             weak var issuer: GroupAdmissionChannel?
@@ -63,33 +66,236 @@ final class HandshakeV1ChannelTests: XCTestCase {
             // Assigning the constructor result straight to `issuer` destroys it immediately.
             self.groupChannels.append(retainedIssuer)
             issuer = retainedIssuer
-            root = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+            let hostileEndpoint = try evidence.withIssuerCertificate(identity: pair.clientIdentity.id,
+                der: (SecCertificateCopyData(pair.serverIdentity.certificate) as Data).base64EncodedString())
+            root = try rootOwner(pair, offers: offers.server, evidence: hostileEndpoint, persistence: store,
                 onSnapshot: { snapshot in
                     if snapshot.phase == .confirmed, !rootDone {
                         XCTAssertTrue(explicit)
                         rootDone = true
                         confirmed.fulfill()
+                        // No phase transfer from inside UI/I/O callbacks, even after confirmation.
+                        do { XCTAssertNil(try root?.handover(currentIdentity: pair.serverIdentity)) }
+                        catch { XCTFail("Reentrant handover threw: \(error)") }
+                        self.queue.async {
+                            defer { handedOver.fulfill() }
+                            do {
+                                let owner = try XCTUnwrap(root)
+                                historical = try XCTUnwrap(owner.handover(currentIdentity: pair.serverIdentity))
+                                XCTAssertNil(try owner.handover(currentIdentity: pair.serverIdentity))
+                                XCTAssertEqual(try GroupAdoptionJournalInspector.inspect(
+                                    XCTUnwrap(historical), currentIdentityID: pair.serverIdentity.id
+                                ).name, "HISTORICAL_SIGNATURES_VALID")
+                                XCTAssertNil(try store.pendingGroupAdoption())
+                            } catch { XCTFail("Live owner handover failed: \(error)") }
+                        }
                     }
                 }, onComparison: { rootTicket = ($0, $1); confirmBoth() })
             issuer?.start()
             root?.start(currentIdentity: pair.serverIdentity)
         }
-        wait(for: [confirmed], timeout: 10)
+        wait(for: [confirmed, handedOver], timeout: 10)
         try queue.sync {
             XCTAssertNil(try store.localGroup())
             XCTAssertEqual(try store.trusted(), [])
+            try XCTUnwrap(rootChannels.last).whenClosedAndDrained { drained.fulfill() }
             rootChannels.forEach { $0.cancel() }
-            rootChannels.removeAll()
             groupChannels.forEach { $0.cancel() }
             groupChannels.removeAll()
+        }
+        wait(for: [drained], timeout: 5)
+        try queue.sync {
+            var lateDrain = false
+            try XCTUnwrap(rootChannels.last).whenClosedAndDrained { lateDrain = true }
+            XCTAssertTrue(lateDrain)
+            XCTAssertEqual(try GroupAdoptionJournalInspector.inspect(
+                XCTUnwrap(historical), currentIdentityID: pair.serverIdentity.id
+            ).name, "HISTORICAL_SIGNATURES_VALID") // Historical material is not live consent.
+            rootChannels.removeAll()
             rootStores.removeAll { $0 === store }
             store.close()
             let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
             defer { reopened.close() }
             XCTAssertNil(try reopened.localGroup())
+            XCTAssertNil(try reopened.pendingGroupAdoption())
             XCTAssertEqual(try reopened.trusted(), [])
             XCTAssertEqual(try reopened.history().count, 0)
         }
+    }
+
+    func testCandidateRootHandoverKeepsPendingReceiveForEOFAndRejectsNewData() throws {
+        for extraData in [false, true] {
+            let pair = try readyPair()
+            let offers = try freezeRootOffers(pair)
+            let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+            let (store, _) = try rootStore()
+            let closed = expectation(description: "handover \(extraData ? "data" : "EOF") closes current phase")
+            let drained = expectation(description: "handover receive callback drained")
+            var historical: IosGroupAdoptionJournalSnapshot?
+            try confirmRoot(pair, offers: offers, evidence: evidence, store: store, onConfirmed: { owner in
+                do {
+                    historical = try XCTUnwrap(owner.handover(currentIdentity: pair.serverIdentity))
+                    owner.whenClosedAndDrained { drained.fulfill() }
+                    if extraData {
+                        // The receiver's typed rejection proves delivery. Its immediate close
+                        // may race the sender's completion; that completion is not acceptance.
+                        pair.client.send(content: Data([0]), completion: .contentProcessed { _ in })
+                    } else { pair.client.cancel() }
+                } catch { XCTFail("Handover failed: \(error)"); owner.cancel() }
+            }, onClosed: { failure in
+                if case .root(let reason, _) = failure {
+                    XCTAssertEqual(reason.name, extraData ? "INVALID_FRAME" : "TRANSPORT")
+                } else { XCTFail("Expected current-phase typed transport/frame failure") }
+                closed.fulfill()
+            })
+            wait(for: [closed, drained], timeout: 10)
+            try queue.sync {
+                XCTAssertEqual(try GroupAdoptionJournalInspector.inspect(
+                    XCTUnwrap(historical), currentIdentityID: pair.serverIdentity.id
+                ).name, "HISTORICAL_SIGNATURES_VALID")
+                XCTAssertNil(try store.pendingGroupAdoption())
+                XCTAssertNil(try store.localGroup())
+                XCTAssertEqual(try store.trusted(), [])
+            }
+        }
+    }
+
+    func testCandidateRootHandoverKeepsFirstLifecycleReason() throws {
+        for action in ["cancel", "block", "leave"] {
+            let pair = try readyPair()
+            let offers = try freezeRootOffers(pair)
+            let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+            let (store, _) = try rootStore()
+            let closed = expectation(description: "handover \(action) revokes continuation")
+            let drained = expectation(description: "handover \(action) drains receive")
+            var closeCount = 0
+            try confirmRoot(pair, offers: offers, evidence: evidence, store: store, onConfirmed: { owner in
+                do {
+                    XCTAssertNotNil(try owner.handover(currentIdentity: pair.serverIdentity))
+                    owner.whenClosedAndDrained { drained.fulfill() }
+                    switch action {
+                    case "cancel": owner.cancel()
+                    case "block": owner.block()
+                    default: owner.leaveGroup()
+                    }
+                    owner.cancel()
+                    owner.block()
+                    XCTAssertNil(try owner.handover(currentIdentity: pair.serverIdentity))
+                } catch { XCTFail("Handover lifecycle failed: \(error)"); owner.cancel() }
+            }, onClosed: { failure in
+                closeCount += 1
+                XCTAssertEqual(closeCount, 1)
+                if case .root(let reason, _) = failure {
+                    XCTAssertEqual(reason.name, action == "cancel" ? "CANCELLED" : (action == "block" ? "BLOCKED" : "LEFT_GROUP"))
+                } else { XCTFail("Expected first lifecycle reason") }
+                closed.fulfill()
+            })
+            wait(for: [closed, drained], timeout: 10)
+            try queue.sync {
+                XCTAssertEqual(closeCount, 1)
+                XCTAssertNil(try store.pendingGroupAdoption())
+                XCTAssertNil(try store.localGroup())
+            }
+        }
+    }
+
+    func testCandidateRootHandoverRechecksIdentityGroupAndStorage() throws {
+        for scenario in ["identity", "group", "storage"] {
+            let pair = try readyPair()
+            let offers = try freezeRootOffers(pair)
+            let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+            let (store, _) = try rootStore()
+            let closed = expectation(description: "handover preflight \(scenario)")
+            let drained = expectation(description: "failed handover drained")
+            try confirmRoot(pair, offers: offers, evidence: evidence, store: store, onConfirmed: { owner in
+                owner.whenClosedAndDrained { drained.fulfill() }
+                do {
+                    if scenario == "group" {
+                        let foundation = try IosLocalGroupFoundation.companion.create(identityId: pair.serverIdentity.id)
+                        let ticket = try XCTUnwrap(foundation.prepare(persistence: store,
+                            generateGroupId: { String(repeating: "d", count: 64) }))
+                        XCTAssertEqual(try foundation.commit(ticket: ticket,
+                            currentIdentityId: pair.serverIdentity.id, persistence: store).name, "COMMITTED")
+                    }
+                    if scenario == "storage" { store.close() }
+                    if scenario == "storage" {
+                        XCTAssertThrowsError(try owner.handover(currentIdentity: pair.serverIdentity))
+                    } else {
+                        XCTAssertNil(try owner.handover(currentIdentity:
+                            scenario == "identity" ? pair.clientIdentity : pair.serverIdentity))
+                    }
+                } catch { XCTFail("Preflight fixture failed: \(error)"); owner.cancel() }
+            }, onClosed: { failure in
+                if case .root(let reason, _) = failure {
+                    XCTAssertEqual(reason.name, scenario == "identity" ? "IDENTITY_CHANGED" :
+                        (scenario == "group" ? "ALREADY_IN_GROUP" : "STORAGE_FAILED"))
+                } else { XCTFail("Expected typed preflight failure") }
+                closed.fulfill()
+            })
+            wait(for: [closed, drained], timeout: 10)
+            if scenario != "storage" {
+                try queue.sync {
+                    XCTAssertNil(try store.pendingGroupAdoption())
+                    XCTAssertEqual(try store.trusted(), [])
+                    XCTAssertEqual(try store.localGroup() != nil, scenario == "group")
+                }
+            } else {
+                queue.sync { rootStores.removeAll { $0 === store } }
+            }
+        }
+    }
+
+    func testCandidateRootHandoverDoesNotPublishAfterReentrantBlock() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, _) = try rootStore()
+        let closed = expectation(description: "callback revokes before handover publication")
+        let drained = expectation(description: "reentrant block drains current receive")
+        let refused = expectation(description: "revoked snapshot is not returned")
+        var revoke = false
+        try confirmRoot(pair, offers: offers, evidence: evidence, store: store,
+            onSnapshot: { owner, snapshot in
+                if revoke, snapshot.phase == .confirmed { owner.block() }
+            }, onConfirmed: { owner in
+                owner.whenClosedAndDrained { drained.fulfill() }
+                revoke = true
+                do { XCTAssertNil(try owner.handover(currentIdentity: pair.serverIdentity)) }
+                catch { XCTFail("Lifecycle revocation must not become an adapter error") }
+                refused.fulfill()
+            }, onClosed: { failure in
+                if case .root(let reason, _) = failure { XCTAssertEqual(reason.name, "BLOCKED") }
+                else { XCTFail("Expected reentrant lifecycle reason") }
+                closed.fulfill()
+            })
+        wait(for: [closed, drained, refused], timeout: 10)
+        try queue.sync { XCTAssertNil(try store.pendingGroupAdoption()); XCTAssertNil(try store.localGroup()) }
+    }
+
+    func testCandidateRootHandoverTimerUsesOriginalSelectionDeadline() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, _) = try rootStore()
+        let transferred = expectation(description: "handover before original deadline")
+        let expired = expectation(description: "original timer expires after handover without UI reads")
+        let drained = expectation(description: "expiry drains pending receive")
+        // Enough time for real signing on CI, but a reset to 120 seconds cannot pass this test.
+        let selectedAt = HandshakeV1Channel.monotonicMillis() - 100_000
+        try confirmRoot(pair, offers: offers, evidence: evidence, store: store, selectedAt: selectedAt,
+            onConfirmed: { owner in
+                do {
+                    XCTAssertNotNil(try owner.handover(currentIdentity: pair.serverIdentity))
+                    owner.whenClosedAndDrained { drained.fulfill() }
+                    transferred.fulfill()
+                } catch { XCTFail("Deadline handover failed: \(error)"); owner.cancel() }
+            }, onClosed: { failure in
+                if case .root(let reason, _) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
+                else { XCTFail("Expected original deadline") }
+                expired.fulfill()
+            })
+        wait(for: [transferred, expired, drained], timeout: 25)
+        try queue.sync { XCTAssertNil(try store.localGroup()); XCTAssertNil(try store.pendingGroupAdoption()) }
     }
 
     func testCandidateRootIdleOwnerClosesAtOriginalDeadlineWithoutStart() throws {
@@ -98,21 +304,29 @@ final class HandshakeV1ChannelTests: XCTestCase {
         let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
         let (store, _) = try rootStore()
         let expired = expectation(description: "candidate idle deadline")
+        let drained = expectation(description: "idle owner drains without any OS operations")
         let eof = expectation(description: "actual peer sees idle owner close")
+        var closedHandlerActive = false
         try queue.sync {
             pair.client.receive(minimumIncompleteLength: 1, maximumLength: 1024) { _, _, complete, error in
                 XCTAssertTrue(complete || error != nil)
                 eof.fulfill()
             }
-            _ = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+            let owner = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
                 selectedAt: HandshakeV1Channel.monotonicMillis() - 119_500,
                 onComparison: { _, _ in XCTFail("Owner not started") }, onClosed: { failure in
+                    closedHandlerActive = true
+                    defer { closedHandlerActive = false }
                     if case .root(let reason, _) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
                     else { XCTFail("Expected original deadline") }
                     expired.fulfill()
                 })
+            owner.whenClosedAndDrained {
+                XCTAssertFalse(closedHandlerActive)
+                drained.fulfill()
+            }
         }
-        wait(for: [expired, eof], timeout: 5)
+        wait(for: [expired, eof, drained], timeout: 5)
     }
 
     func testCandidateRootLocalPreflightRejectsChangedIdentityExistingRootAndInvalidProof() throws {
@@ -158,7 +372,9 @@ final class HandshakeV1ChannelTests: XCTestCase {
         defer { gate.signal() }
         let blocked = expectation(description: "block while real OS signature is queued")
         let drained = expectation(description: "queued signature drained")
+        let ownerDrained = expectation(description: "all root OS operations drained after close")
         let eof = expectation(description: "peer sees blocked TLS close, no approval")
+        var notifiedDrain = false
         try queue.sync {
             weak var owner: GroupRootAdoptionChannel?
             pair.client.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, complete, error in
@@ -171,6 +387,8 @@ final class HandshakeV1ChannelTests: XCTestCase {
                     XCTAssertNotEqual(snapshot.phase.name, "CONFIRMED")
                 }, onComparison: { ticket, _ in
                     owner?.confirm(ticket)
+                    do { XCTAssertNil(try owner?.handover(currentIdentity: pair.serverIdentity)) }
+                    catch { XCTFail("Pending signature must refuse handover without throwing") }
                     // Let start() install its pending actual receive before revocation.
                     self.queue.async { owner?.block(); owner?.cancel() }
                 }, onClosed: { failure in
@@ -178,12 +396,18 @@ final class HandshakeV1ChannelTests: XCTestCase {
                     else { XCTFail("Expected first block reason") }
                     blocked.fulfill()
                 })
+            owner?.whenClosedAndDrained {
+                notifiedDrain = true
+                ownerDrained.fulfill()
+            }
+            XCTAssertNil(try owner?.handover(currentIdentity: pair.serverIdentity))
             owner?.start(currentIdentity: pair.serverIdentity)
         }
         wait(for: [blocked, eof], timeout: 5)
+        queue.sync { XCTAssertFalse(notifiedDrain) } // Signing queue still gated.
         gate.signal()
         cryptoQueue.async { self.queue.async { drained.fulfill() } }
-        wait(for: [drained], timeout: 5)
+        wait(for: [drained, ownerDrained], timeout: 5)
         try queue.sync { XCTAssertNil(try store.localGroup()); XCTAssertEqual(try store.trusted(), []) }
     }
 
@@ -1419,6 +1643,59 @@ final class HandshakeV1ChannelTests: XCTestCase {
         let store = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
         rootStores.append(store)
         return (store, directory)
+    }
+
+    /// Real TLS/OS signatures; only the explicit user comparison is driven by the fixture.
+    /// Enqueue onConfirmed so protocol/sign/write callback cleanup has finished before handover.
+    private func confirmRoot(
+        _ pair: Pair, offers: (client: IosHandshakeV1Offers, server: IosHandshakeV1Offers),
+        evidence: IosGroupAdmissionEvidence, store: IosPersistence, selectedAt: Int64? = nil,
+        onSnapshot: @escaping (GroupRootAdoptionChannel, IosGroupRootSnapshot) -> Void = { _, _ in },
+        onConfirmed: @escaping (GroupRootAdoptionChannel) -> Void,
+        onClosed: @escaping (GroupRootAdoptionChannelFailure) -> Void
+    ) throws {
+        try queue.sync {
+            weak var root: GroupRootAdoptionChannel?
+            weak var issuer: GroupAdmissionChannel?
+            var rootTicket: (IosGroupAdmissionComparison, String)?
+            var issuerTicket: (IosGroupAdmissionComparison, String)?
+            var explicit = false
+            var delivered = false
+            func confirmBoth() {
+                guard !explicit, let rootTicket, let issuerTicket else { return }
+                XCTAssertEqual(rootTicket.1, issuerTicket.1)
+                explicit = true
+                root?.confirm(rootTicket.0)
+                issuer?.confirm(issuerTicket.0)
+            }
+            let retainedIssuer = try GroupAdmissionChannel(
+                connection: pair.client, identity: pair.clientIdentity,
+                peerCertificate: XCTUnwrap(pair.clientTransport.certificate(for: pair.client)),
+                offers: offers.client, evidence: evidence, role: .issuer,
+                expectedGroup: String(repeating: "c", count: 64), expectedFounder: pair.clientIdentity.id,
+                evidenceCertificates: GroupAdmissionEvidenceCertificates.decode(evidence),
+                selectedAtMillis: selectedAt ?? pair.selectedAt, queue: queue,
+                signingQueue: .global(qos: .userInitiated), nowMillis: HandshakeV1Channel.monotonicMillis,
+                onSnapshot: { _ in }, onComparison: { issuerTicket = ($0, $1); confirmBoth() },
+                onClosed: { _ in }
+            )
+            groupChannels.append(retainedIssuer)
+            issuer = retainedIssuer
+            root = try rootOwner(pair, offers: offers.server, evidence: evidence, persistence: store,
+                selectedAt: selectedAt, onSnapshot: { snapshot in
+                    if let root { onSnapshot(root, snapshot) }
+                    if snapshot.phase == .confirmed, !delivered {
+                        delivered = true
+                        XCTAssertTrue(explicit)
+                        self.queue.async {
+                            guard let root else { XCTFail("Fixture lost root owner"); return }
+                            onConfirmed(root)
+                        }
+                    }
+                }, onComparison: { rootTicket = ($0, $1); confirmBoth() }, onClosed: onClosed)
+            issuer?.start()
+            root?.start(currentIdentity: pair.serverIdentity)
+        }
     }
 
     private func rootOwner(

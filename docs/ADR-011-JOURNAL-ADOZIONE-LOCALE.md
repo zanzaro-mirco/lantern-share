@@ -115,7 +115,7 @@ con offerte originali, firme conservate solo dopo sent/receive riusciti e stato 
 ancora revocabile. Richiede identità OS corrente, persistenza per il preflight, ID tentativo
 nuovo generato dall'OS, evidence completa con endpoint legati al TLS e DER del membro.
 Il core controlla proof/confronto/record esatti. La facciata non autentica certificati
-ricevuti: il futuro owner Apple deve fornire DER effettivi degli endpoint e verificatori OS.
+ricevuti: l'owner Apple deve fornire DER effettivi degli endpoint e verificatori OS.
 
 L'API restituisce soltanto `IosGroupAdoptionJournalSnapshot` opaco, ispezionabile ma senza
 scrittura, stage, commit o esposizione dei byte/record a Swift. Non introduce un secondo
@@ -124,10 +124,49 @@ Cancel/blocco/uscita/EOF/errori e deadline rimangono instradati alla continuazio
 ticket vecchi e confronto sono ritirati, decoder termina al confine e rifiuta dati ulteriori.
 
 Tutte le chiamate restano sulla medesima coda seriale non-UI. Handover è rifiutato durante
-chiamate rientranti o ticket firma/write pendenti. Questo non rileva i receive NWConnection
-pendenti: il futuro owner OS deve ritirarli/drainarli prima di chiamarlo, preservare il timer
-originale, proseguire l'osservazione EOF e mantenere DB vivo fino a close/drain. Tale owner
-Swift non è modificato in questo incremento. Metodi fallibili mantengono `@Throws`.
+chiamate rientranti o ticket firma/write pendenti. La facciata non rileva receive NWConnection:
+l'owner deve drainare i callback che trattengono vecchi ticket/decoder prima del passaggio.
+È ammessa una lettura OS pendente soltanto nello STESSO owner, con callback neutro rispetto
+alla fase che invoca accept/finish correnti sulla coda seriale: nessun riferimento al decoder
+ritirato, nessuna seconda lettura o finestra senza osservazione EOF. Timer originale e DB
+vivo fino a close/drain restano obbligatori. Metodi fallibili mantengono `@Throws`.
+
+### Owner Swift della continuazione — 18 ottobre
+
+`GroupRootAdoptionChannel.handover(currentIdentity:)` implementa il passaggio previsto da B1 nello
+stesso owner NWConnection. Non trasferisce risorse a un secondo oggetto e non interrompe
+la lettura per attendere nuovi dati: un receive idle non è cancellabile individualmente
+senza perdere il canale. Il callback già esistente usa soltanto la facciata corrente;
+eventuali byte accodati arrivano alla nuova fase e sono rifiutati, EOF/errori la revocano.
+Il decoder termina nel core prima di pubblicare materiale; una coda parziale non è scartata.
+Il timer rimane quello originale anche dopo il passaggio, senza nuovo budget.
+
+Sul serial executor il passaggio è monouso e rifiutato prima di start/conferme complete,
+durante callback in esecuzione, firma/write pendenti o handover rientrante. Da onSnapshot
+il caller accoda la richiesta, non la esegue inline. Il core ricontrolla identità OS e
+gruppo SQLite; il risultato non viene restituito se un callback lo revoca durante la
+pubblicazione. Errori/cancellazioni e prima causa restano conservati; gli NWError esposti
+dagli stati failed/waiting sono inoltrati anche nel controllo di readiness, non scartati.
+
+L'owner genera l'ID tentativo con 32 byte SecRandomCopyBytes. Il nuovo helper Kotlin
+`IosGroupAdmissionEvidence.withIssuerCertificate` sostituisce solo un emittente già
+presente, preservando proof, copertura e altri certificati; controlla sintassi, NON trust.
+Swift vi inserisce il DER dell'emittente TLS effettivo PRIMA del decode OS dell'evidence,
+per non autenticare né preferire un endpoint ricevuto. Gli altri emittenti sono verificati
+con il parser OS esistente; il DER membro proviene dall'identità locale effettiva.
+Codec, costruzione del journal e binding restano Kotlin, nessun JSON di produzione Swift.
+
+`whenClosedAndDrained` distingue chiusura logica da completamento di receive/sign/write e
+dei relativi callback, compresi i ritorni tardivi dopo cancel. Il caller trattiene owner e
+database fino alla notifica; nessuna attesa sulla coda seriale. Callback di stato/timer
+tardivi controllano closed e non accedono più al DB. Snapshot restituito solo storico,
+senza stage/commit/autorizzazione, nuovo caller Node/UI o modifica wire/schema/versioni.
+
+Riferimenti Apple consultati per questo confine: [receive, completion esattamente una volta](https://developer.apple.com/documentation/network/nwconnection/receive(minimumincompletelength:maximumlength:completion:)),
+[DTS su cancellazione e receive/send pendenti](https://developer.apple.com/forums/thread/809007),
+[DTS su queue, completion ed event handler durante teardown](https://developer.apple.com/forums/thread/839144).
+Il drain è una garanzia del nostro proprietario delle risorse, non un'attesa sincrona
+richiesta da Network.framework; non sospendere la coda che deve consegnare i completamenti.
 
 ## Verifica e conseguenze
 
@@ -135,4 +174,4 @@ Test comuni di codec/binding/copie/limiti, firme P-256 reali, JDBC con riapertur
 
 Tre test Native iOS predisposti per riapertura/retry/rimozione, migrazione 2→3 preservativa e rollback su errori prima/dopo INSERT e dopo DELETE. La fixture preesistente della migrazione 1→corrente rimuove entrambe le nuove tabelle per rappresentare davvero lo schema 1. Risultati e comandi effettivi in STATO; predisposizione non equivale a runtime Native o hardware.
 
-Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione, estesa al trasferimento/revoca della continuazione anche nell'owner JVM/Android. Nessuno stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Nuove prove comuni, P-256/JCA e TLS/SQLite coprono l'ispezione; i sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. La nuova facciata Kotlin iOS è verificata dal controllo host JVM/JDBC con boundary di test; quattro XCTest predisposti, non eseguiti su Windows. Il prossimo incremento collega il passaggio all'owner Swift preservando socket/timer e drain dei receive; nessun commit locale o collegamento Node/UI. Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.
+Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione. Handover/revoca sono ora collegati agli owner JVM/Android e Swift, non al servizio/UI o a un commit distribuito. I sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. La facciata precedente è compilata/exportata con i test Swift nella CI ordinaria 39128004873, non eseguita in simulatore. Il controllo host JVM/JDBC con boundary di test del nuovo binding è passato; cinque nuovi metodi XCTest TLS/lifecycle e uno della facciata, più prove esistenti estese a snapshot/riapertura/drain, sono predisposti ma non compilati/eseguiti su Windows. B1 attende il checkpoint Apple del nuovo owner; solo dopo si procede a B2 (garanzie di commit e interruzioni). Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.

@@ -1,6 +1,28 @@
 # Stato sviluppo — 18 ottobre 2026
 
-## Sintesi corrente — facciata iOS della continuazione
+## Organizzazione corrente — blocchi funzionali
+
+Piano, AGENTS e architettura aggiornati su richiesta dell'utente: un blocco circoscritto attivo, passi compilabili interni senza consegne per strato, test mirati e verifica integrata prima della consegna raggruppata, nessun polling CI. Accettazione e coda in PIANO_SVILUPPO, sezione 4: **B1 owner Apple integrato**, poi B2 adozione durevole/interruzioni, B3 servizio/UI nel rispetto del gate hardware. L'handover resta un prerequisito tecnico, non un'ammissione completa utilizzabile.
+
+**Intervento di pianificazione precedente:** solo documentazione, senza nuove build/CI/hardware. Il lavoro B1 successivo e le sue verifiche sono nella sintesi corrente sotto. Evidenze tecniche e note precedenti conservate, fase 0 chiusa, fase 1 e collaudi fisici obbligatori aperti. Sintesi future brevi con riferimenti, senza storico duplicato; nessuna archiviazione delle evidenze esistenti in questo intervento.
+
+## Sintesi corrente — B1, handover nell'owner Swift
+
+**Implementato, checkpoint Apple ancora da eseguire:** GroupRootAdoptionChannel.handover collega la facciata Kotlin nello stesso owner/socket/timer. ID tentativo casuale OS, evidence con DER dell'emittente TLS effettivo prevalente prima del decode, DER membro locale; codec/proof/journal restano Kotlin. Rifiuto durante callback/firma/write o passaggio rientrante, monouso, ricontrollo identità fornita dal caller e gruppo; nessuno snapshot restituito se un callback lo revoca. Nessun commit, recovery, nuovo caller Node/UI o cambio schema/wire/versioni/workflow.
+
+**Ownership:** receive pendente mantenuto SOLO come callback neutro di questo stesso owner verso accept/finish correnti; non usa ticket/decoder ritirati. EOF/errori revocano, dati ulteriori rifiutati, nessun gap o lettore duplicato. Timer originale non riparte. whenClosedAndDrained notifica dopo ritorno di receive/sign/write e callback, anche tardivi dopo cancel: caller tiene owner/DB vivi fino alla notifica. Decisione e confini in ADR 011.
+
+**Verificato localmente:** `& ./ui/build/foundation-portability/root-check.ps1` passato, ripetuto sul codice definitivo del binding: immutabilità/issuer sconosciuto/Base64 non canonico e regressioni esistenti di handover/revoche/riapertura. Sorgenti Kotlin reali su JVM, JDBC reale, IosPersistence/crypto/clock di test; harness ui/build ignorato, NON Native/export/Swift/TLS Apple. Nessun errore nel controllo; warning SLF4J provider assente preesistente. `python -B .github/scripts/test-ci-plan.py`: 12 test passati. Nessuna build Android/desktop estranea. Revisione e diff/whitespace effettuati, non equivalgono a esecuzione Swift.
+
+**Apple predisposto, NON compilato/eseguito qui:** cinque nuovi metodi XCTest TLS/Keychain/SQLite (EOF/dati, revoche/prima causa, identità/gruppo/storage, revoca rientrante prima della pubblicazione, timer originale senza getter UI); un nuovo test della facciata sul binding sintattico non autorizzante. Prove esistenti estese: endpoint ricevuto ostile sostituito dal DER TLS, ispezione reale dello snapshot e riapertura DB ancora senza gruppo/journal/trust/storia, drain prima della chiusura e con firma OS accodata, binding multi-emittente. Test mantenuti nel repository, non sostituiti dall'harness locale. Windows non dispone di Swift/Xcode/simulatore.
+
+**Checkpoint precedente ora letto da concluso:** 9ff58d5, [iOS ordinario 39128004873](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39128004873) success, framework/export/app/XCTest compilati; Native/runtime simulatore saltati. [PoC 39128004865](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39128004865) success per stato/conclusione. Una lettura, nessun polling. Questi esiti NON verificano l'owner nuovo. Ultimo runtime Apple attestato rimane e3080c9 / 141 XCTest; nessun nuovo hardware.
+
+**Chiusura/prossimo passo:** consegna raggruppata con il piano operativo già modificato, un checkpoint iOS completo bootstrap_interop=false, senza run duplicate/polling. B1 non attestato completo prima dell'esito Apple; correggere errori se presenti, poi B2: garanzie di commit durevole e interruzioni nell'ADR prima dell'implementazione integrata. Fase 0 chiusa; fase 1 e collaudi hardware obbligatori aperti. Le evidenze precedenti sono conservate sotto come storico, non replicate nella nuova sintesi.
+
+## Storico — facciata iOS della continuazione
+
+**Consegnato:** `9ff58d52e8575a9aa846df8afed6b8e0b841c54b`, cinque file, unico push. [iOS ordinario 39128004873](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39128004873) / [PoC 39128004865](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39128004865) in_progress nell'unica lettura post-push. Nessun dispatch completo, attesa o polling; nuovo export/Swift/runtime NON attestato. Leggere da concluse alla ripresa. Nota locale con PASSAGGIO da raggruppare nel prossimo incremento, niente push solo documentale.
 
 **Checkpoint precedente:** `866341f`, [PoC 39127227162](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227162) e [iOS ordinario 39127227075](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227075) completed/success per stato/conclusione, letti da conclusi senza polling. Nessun runtime Apple nuovo inferito; ultimo completo attestato e3080c9 / 141 XCTest simulatore, non hardware.
 

@@ -219,6 +219,46 @@ Totale indicativo: **19–29 settimane**, più un margine del 20–30%.
 
 La prova iniziale ha validato il percorso verticale su Android e Windows reali. La fase 1 deve completare le verifiche residue Android ↔ Windows e validare iOS e Mac su hardware reale prima dello sviluppo completo dell’interfaccia. Windows e Linux vengono verificati a ogni traguardo successivo.
 
+### Metodo di esecuzione — aggiornamento del 18 ottobre 2026
+
+L'unità di consegna è un **blocco funzionale circoscritto**, non una singola classe, facciata o piattaforma. Questa organizzazione sostituisce la frammentazione in consegne tecniche indipendenti: non modifica requisiti, fasi, contratti di sicurezza o criteri di collaudo. Le stime sopra restano indicative, non una previsione aggiornata né una promessa di accelerazione misurata.
+
+Prima di iniziare un blocco, definire in forma breve:
+
+- risultato osservabile e percorso reale che lo utilizzerà;
+- criteri di accettazione, compresi errori, cancellazione e riapertura quando pertinenti;
+- componenti e piattaforme coinvolti, esclusioni e dipendenze ancora aperte;
+- controlli locali e checkpoint remoti necessari a dimostrarlo.
+
+Mantenere un solo blocco attivo. All'interno procedere per piccoli passi compilabili, completando core condiviso, adattatori necessari e relativa integrazione senza chiedere conferma dopo ogni passaggio tecnico. Un prerequisito infrastrutturale può essere consegnato separatamente se necessario per rischio o verificabilità, ma deve avere un utilizzatore e un criterio d'integrazione espliciti: non equivale a una funzionalità di prodotto completata. Non estendere il blocco all'intera roadmap. Fermarsi per decisioni di prodotto non definite, incompatibilità di dati/protocollo, nuove autorizzazioni o blocchi effettivi; inviare aggiornamenti di avanzamento senza trasformarli in richieste di conferma.
+
+#### Verifiche e consegna
+
+1. Durante l'implementazione eseguire i test mirati delle regole e dei confini modificati; ripeterli solo dopo cambiamenti pertinenti o errori.
+2. Alla chiusura eseguire una verifica integrata sui target interessati e rivedere concorrenza, ownership, autorizzazioni, errori e persistenza. Un guasto nel codice interessato va corretto prima di ampliare il lavoro.
+3. Conservare le regressioni importanti nei test versionati ed eseguibili dal repository. Gli harness locali ignorati servono all'esplorazione, non sostituiscono evidenze riproducibili; test comuni per le regole condivise, test OS per adattatori e lifecycle, integrazioni reali per crittografia/rete/SQLite.
+4. Raggruppare le modifiche coerenti e fare un push al checkpoint del blocco, non uno per ogni strato. Riutilizzare la selezione CI per percorsi già presente. Non sopprimere controlli necessari per ridurre i tempi.
+5. Usare il checkpoint Apple completo quando occorre verificare runtime Native/simulatore di un'integrazione significativa. Evitare run ordinarie e complete duplicate sullo stesso checkpoint; se indispensabile un controllo intermedio di export/compilazione, dichiararne lo scopo senza chiamarlo runtime verificato. Nessuna modifica implicita ai workflow: eventuali interventi richiedono una modifica dedicata con test della selezione CI.
+6. Nessun polling o attesa della CI: leggere una run conclusa alla ripresa e recuperare una sola volta i link dopo il push. Se pendente, riportare commit/link e fermarsi, senza dichiarare il blocco verificato da remoto. Non lanciare build per sole modifiche documentali.
+
+#### Coda operativa immediata
+
+Questi blocchi ordinano il lavoro già previsto, non sostituiscono le fasi della roadmap. Solo il primo è attivo; il successivo inizia dopo la chiusura o l'esplicitazione del vincolo residuo del precedente.
+
+| Blocco | Risultato e accettazione | Confini e verifica |
+|---|---|---|
+| B1 — completare l'integrazione dell'handover Apple | Il confronto vivo passa alla continuazione nello stesso owner Swift con certificati degli endpoint TLS effettivi; callback pendenti gestiti, deadline originale e revoche preservate, nessun consenso ripristinato dal journal | Riusa core e facciate esistenti; integrazione TLS/lifecycle e checkpoint Apple, inclusi i test della facciata ancora da eseguire. Non comprende commit, recovery o UI. È un prerequisito tecnico, non un'ammissione completa utilizzabile |
+| B2 — adozione durevole e interruzioni | Completare il percorso integrato di ammissione previsto dalla specifica, con persistenza coerente, retry idempotente e comportamento definito in caso di arresto, riapertura o revoca; nessuna autorizzazione ricavata dalla sola verifica storica | Prima esplicitare nel relativo ADR le garanzie e i punti di commit mancanti; implementare insieme contratti, persistenza, orchestrazione e adattatori necessari, non altre API isolate. Test con TLS/firme/SQLite reali e interruzioni ai punti critici. Decisione esplicita se serve incompatibilità wire/schema; nessun nuovo protocollo distribuito assunto come già approvato |
+| B3 — percorso di gruppo nel servizio e nell'interfaccia | Collegare l'ammissione verificata agli ingressi dell'app e presentare stati, errori e appartenenza persistente; provarne uso e riapertura, non soltanto compilazione delle API | Riutilizzare l'orchestrazione del blocco precedente. Lo sviluppo completo della UI resta subordinato ai collaudi fisici di fase 1. Sessioni, riconnessione e collegamento manuale seguono come blocchi funzionali della fase 2, non come estensione automatica di B3 |
+
+I collaudi fisici restano una lista di accettazione aperta: residui Android ↔ Windows (incluse WAN disattivata, bidirezionalità, riavvio e regressione del blocco locale), iPhone e Mac Intel/Apple Silicon. L'assenza dell'hardware non impedisce il lavoro tecnico indipendente, ma non chiude la fase 1 né rimuove il vincolo sullo sviluppo completo della UI. Non ricominciare identità, SQLite o comunicazione già verificate.
+
+#### Stato e documentazione
+
+Misurare l'avanzamento per capacità utilizzabili e criteri di accettazione soddisfatti, non per numero di commit, classi, test o build. Distinguere sempre: prerequisito tecnico, integrazione nell'app, compilato, testato automaticamente, verificato su hardware.
+
+Mantenere breve la sezione corrente di `STATO_SVILUPPO.md`: capacità disponibile, evidenze con commit/comandi/link, limiti e un solo blocco successivo. `PASSAGGIO_CONSEGNE.md` contiene solo istruzioni di ripartenza e riferimenti alle evidenze; gli ADR ospitano le decisioni, senza ricopiarle in entrambi i file. Non aggiungere nuovi resoconti storici duplicati: quando si separa lo storico esistente, archiviarlo con link e senza perdere evidenze. La riorganizzazione documentale non deve diventare un prerequisito continuo allo sviluppo.
+
 ### Consegna specifica per Mac
 
 - Applicazione `.app` con runtime incluso.

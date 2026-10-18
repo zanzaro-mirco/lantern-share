@@ -23,6 +23,23 @@ class IosGroupAdmissionEvidence internal constructor(internal val evidence: Grou
         get() = evidence.certificates.map(::IosGroupAdmissionCertificate)
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES
 
+    /**
+     * Replaces only an existing issuer's public certificate with DER bound by the OS to TLS.
+     * Syntax/coverage remain shared; this does NOT authenticate DER or change the proof.
+     */
+    @Throws(Exception::class)
+    fun withIssuerCertificate(identity: String, der: String): IosGroupAdmissionEvidence {
+        val certificates = evidence.certificates
+        require(certificates.any { it.identity == identity }) { "Unknown evidence issuer" }
+        val replacement = GroupAdmissionCertificate(identity, der)
+        return IosGroupAdmissionEvidence(
+            GroupAdmissionEvidence(
+                proof = evidence.proof,
+                certificates = certificates.map { if (it.identity == identity) replacement else it },
+            ),
+        )
+    }
+
     /** Encoding only, not a completed OS write, signature check or ownership transfer. */
     @Throws(Exception::class)
     fun framedBytes(): ByteArray = GroupAdmissionEvidenceFraming.encode(evidence)

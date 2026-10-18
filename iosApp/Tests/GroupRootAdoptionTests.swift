@@ -292,6 +292,19 @@ final class GroupRootAdoptionTests: XCTestCase {
         XCTAssertEqual(try unavailable.snapshot().failure.name, "STORAGE_FAILED")
     }
 
+    func testBindingIssuerCertificatePreservesProofCoverageAndOriginalEvidence() throws {
+        let original = try evidence()
+        let bound = try original.withIssuerCertificate(identity: issuer, der: "AQ==")
+        XCTAssertEqual(original.certificates.map { $0.der }, ["AA=="])
+        XCTAssertEqual(bound.certificates.map { $0.identity }, [issuer])
+        XCTAssertEqual(bound.certificates.map { $0.der }, ["AQ=="])
+        XCTAssertTrue(try bound.verifyChain(expectedGroup: group, expectedFounder: issuer, expectedMember: member,
+            verifyCertificateSignature: { id, _, _ in KotlinBoolean(bool: id == self.issuer) }))
+        XCTAssertThrowsError(try original.withIssuerCertificate(identity: member, der: "AQ=="))
+        XCTAssertThrowsError(try original.withIssuerCertificate(identity: issuer, der: "AR=="))
+        XCTAssertEqual(original.certificates.map { $0.der }, ["AA=="])
+    }
+
     private func handover(_ local: IosGroupRootAdoption, _ store: IosPersistence) throws -> IosGroupAdoptionJournalSnapshot? {
         try local.handover(currentIdentityId: member, persistence: store,
             attemptId: String(repeating: "1", count: 64), boundEvidence: evidence(), memberCertificateDer: "AA==")

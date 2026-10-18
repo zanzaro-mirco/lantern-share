@@ -16,9 +16,9 @@ struct GroupRootAdoptionFailureContext: Error {
     let secondary: Error
 }
 
-/// Exclusive owner of the selected member's ready mutual-TLS connection during root comparison.
+/// Exclusive owner of the selected member's ready mutual-TLS connection and its continuation.
 /// Caller retires ALL previous socket readers/writers/timers before adopting on the same queue.
-/// Confirmed is revocable, not membership, a commit handoff or permission to send messages.
+/// Confirmed and handover remain revocable, never membership or permission to send messages.
 final class GroupRootAdoptionChannel {
     private let connection: NWConnection
     private let identity: AppleIdentity
@@ -26,6 +26,8 @@ final class GroupRootAdoptionChannel {
     private let queue: DispatchQueue
     private let signingQueue: DispatchQueue
     private let bridge: IosGroupRootAdoption
+    private let boundEvidence: IosGroupAdmissionEvidence
+    private let memberCertificateDer: String
     private let onSnapshot: (IosGroupRootSnapshot) -> Void
     private let onComparison: (IosGroupAdmissionComparison, String) -> Void
     private let onClosed: (GroupRootAdoptionChannelFailure) -> Void
@@ -33,6 +35,12 @@ final class GroupRootAdoptionChannel {
     private var started = false
     private var closed = false
     private var comparisonPublished = false
+    private var handedOver = false
+    private var handingOver = false
+    private var callbacksInProgress = 0
+    private var pendingOperations = 0
+    private var pendingSignaturesAndWrites = 0
+    private var drainCallbacks: [() -> Void] = []
 
     /// Takes socket ownership even on failure, but never closes the caller's database.
     /// Offers must have been verified on THIS connection; its bootstrap owner must be retired.
@@ -56,14 +64,21 @@ final class GroupRootAdoptionChannel {
                   offers.localIdentity == identity.id, offers.remoteIdentity == selectedPeerID else {
                 throw PublicCertificateError.invalid
             }
-            // Received DER is strictly decoded, never accepted as independent root trust.
-            var certificates = try GroupAdmissionEvidenceCertificates.decode(evidence)
+            // Bind before decoding received endpoint DER: only the actual TLS DER can win.
+            let endpointEvidence = try evidence.withIssuerCertificate(
+                identity: selectedPeerID,
+                der: (SecCertificateCopyData(peerCertificate) as Data).base64EncodedString()
+            )
+            // All other issuers still require strict OS decoding and exact pin checks.
+            var certificates = try GroupAdmissionEvidenceCertificates.decode(endpointEvidence)
             // Actual TLS endpoint certificates always win over received endpoint evidence.
             certificates[identity.id] = identity.certificate
             certificates[selectedPeerID] = peerCertificate
             let boundCertificates = certificates
+            self.boundEvidence = endpointEvidence
+            self.memberCertificateDer = (SecCertificateCopyData(identity.certificate) as Data).base64EncodedString()
             self.bridge = try IosGroupRootAdoption.companion.create(
-                offers: offers, evidence: evidence, authenticatedLocalIdentity: transport.localIdentityID,
+                offers: offers, evidence: endpointEvidence, authenticatedLocalIdentity: transport.localIdentityID,
                 selectedPeerIdentity: selectedPeerID, authenticatedPeerIdentity: AppleIdentity.fingerprint(peerCertificate),
                 selectedAtMillis: selectedAtMillis, nowMillis: { KotlinLong(longLong: nowMillis()) },
                 verifyAdmissionSignature: { issuer, bytes, signature in
@@ -94,18 +109,19 @@ final class GroupRootAdoptionChannel {
         armDeadline() // Original selection budget, including idle time before start().
     }
 
-    /// Current identity is rechecked at preflight; later identity/group changes must cancel us.
+    /// Identity is checked at start and handover; other identity/group changes must cancel us.
     func start(currentIdentity: AppleIdentity) {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !closed, !started else { return }
         started = true
-        guard case .ready = connection.state else { transportFailed(); return }
+        guard transportIsReady() else { return }
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             self.queue.async { [weak self] in
                 guard let self, !self.closed else { return }
                 switch state {
-                case .failed, .waiting, .cancelled: self.transportFailed()
+                case .failed(let cause), .waiting(let cause): self.transportFailed(cause)
+                case .cancelled: self.transportFailed()
                 default: break
                 }
             }
@@ -125,11 +141,16 @@ final class GroupRootAdoptionChannel {
             guard try observe() else { return } // Reentrant UI cancellation must precede OS work.
             let identity = self.identity
             let message = Self.data(signing.bytes)
+            pendingOperations += 1
+            pendingSignaturesAndWrites += 1
             signingQueue.async { [weak self] in
                 let result = Result { try identity.sign(message) }
                 guard let self else { return }
                 self.queue.async { [weak self] in
-                    guard let self, !self.closed else { return }
+                    guard let self else { return }
+                    self.callbacksInProgress += 1
+                    defer { self.completeOperation(signingOrWrite: true) }
+                    guard !self.closed else { return }
                     do {
                         switch result {
                         case .success(let signature):
@@ -151,6 +172,45 @@ final class GroupRootAdoptionChannel {
     func block() { lifecycle { try bridge.block() } }
     func leaveGroup() { lifecycle { try bridge.leaveGroup() } }
 
+    /// Call on the serial queue, outside callbacks (enqueue from onSnapshot).
+    /// A pending receive is phase-neutral: the SAME owner delivers it to the current bridge,
+    /// which rejects every post-handover byte and still observes EOF. No reader is replaced.
+    /// Null means not ready/retired; errors close this owner and preserve their original cause.
+    func handover(currentIdentity: AppleIdentity) throws -> IosGroupAdoptionJournalSnapshot? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !closed, started, !handedOver, !handingOver,
+              callbacksInProgress == 0, pendingSignaturesAndWrites == 0 else { return nil }
+        handingOver = true
+        defer { handingOver = false }
+        do {
+            guard transportIsReady() else { return nil }
+            guard try bridge.snapshot().phase == .confirmed else { _ = try observe(); return nil }
+            var nonce = [UInt8](repeating: 0, count: 32)
+            guard SecRandomCopyBytes(kSecRandomDefault, nonce.count, &nonce) == errSecSuccess else {
+                throw IdentityError.cryptography
+            }
+            let snapshot = try bridge.handover(
+                currentIdentityId: currentIdentity.id, persistence: persistence,
+                attemptId: nonce.map { String(format: "%02x", $0) }.joined(),
+                boundEvidence: boundEvidence, memberCertificateDer: memberCertificateDer
+            )
+            if snapshot != nil { handedOver = true }
+            guard try observe() else { return nil }
+            return snapshot
+        } catch {
+            adapterFailed(error)
+            throw error
+        }
+    }
+
+    /// Caller retains this owner and the database until close AND all OS work has returned.
+    /// onClosed alone is deliberately not a drain notification (a signature may still run).
+    func whenClosedAndDrained(_ completion: @escaping () -> Void) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        drainCallbacks.append(completion)
+        notifyDrained()
+    }
+
     private func lifecycle(_ event: () throws -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
         guard !closed else { return }
@@ -162,10 +222,15 @@ final class GroupRootAdoptionChannel {
 
     private func send(_ ticket: IosGroupRootWrite) {
         do { guard try observe() else { return } } catch { adapterFailed(error); return }
+        pendingOperations += 1
+        pendingSignaturesAndWrites += 1
         connection.send(content: Self.data(ticket.bytes), completion: .contentProcessed { [weak self] error in
             guard let self else { return }
             self.queue.async { [weak self] in
-                guard let self, !self.closed else { return }
+                guard let self else { return }
+                self.callbacksInProgress += 1
+                defer { self.completeOperation(signingOrWrite: true) }
+                guard !self.closed else { return }
                 do {
                     if let error {
                         _ = try self.bridge.writeFailed(ticket: ticket)
@@ -181,10 +246,14 @@ final class GroupRootAdoptionChannel {
 
     private func receiveNext() {
         do { guard try observe() else { return } } catch { adapterFailed(error); return }
+        pendingOperations += 1
         connection.receive(minimumIncompleteLength: 1, maximumLength: Int(bridge.maximumChunkBytes)) { [weak self] data, _, complete, error in
             guard let self else { return }
             self.queue.async { [weak self] in
-                guard let self, !self.closed else { return }
+                guard let self else { return }
+                self.callbacksInProgress += 1
+                defer { self.completeOperation(signingOrWrite: false) }
+                guard !self.closed else { return }
                 do {
                     if let error { self.transportFailed(error); return }
                     if let data, !data.isEmpty { _ = try self.bridge.accept(chunk: Self.bytes(data)) }
@@ -198,6 +267,11 @@ final class GroupRootAdoptionChannel {
     @discardableResult
     private func observe(cause: Error? = nil) throws -> Bool {
         guard !closed else { return false }
+        callbacksInProgress += 1
+        defer {
+            callbacksInProgress -= 1
+            notifyDrained()
+        }
         let snapshot = try bridge.snapshot()
         if snapshot.phase == .closed { terminate(.root(snapshot.failure, cause: cause)); return false }
         onSnapshot(snapshot)
@@ -231,6 +305,15 @@ final class GroupRootAdoptionChannel {
         } catch { adapterFailed(error) }
     }
 
+    private func transportIsReady() -> Bool {
+        switch connection.state {
+        case .ready: return true
+        case .failed(let cause), .waiting(let cause): transportFailed(cause)
+        default: transportFailed()
+        }
+        return false
+    }
+
     private func transportFailed(_ cause: Error? = nil) {
         do {
             // Do not overwrite an already reached timeout, clock or lifecycle failure.
@@ -253,6 +336,11 @@ final class GroupRootAdoptionChannel {
     private func terminate(_ failure: GroupRootAdoptionChannelFailure) {
         guard !closed else { return }
         closed = true
+        callbacksInProgress += 1
+        defer {
+            callbacksInProgress -= 1
+            notifyDrained()
+        }
         // A failing core callback must never prevent timer/socket cleanup or disappear.
         var terminalFailure = failure
         do { try bridge.cancel() } catch {
@@ -263,6 +351,20 @@ final class GroupRootAdoptionChannel {
         connection.stateUpdateHandler = nil
         connection.cancel()
         onClosed(terminalFailure)
+    }
+
+    private func completeOperation(signingOrWrite: Bool) {
+        callbacksInProgress -= 1
+        pendingOperations -= 1
+        if signingOrWrite { pendingSignaturesAndWrites -= 1 }
+        notifyDrained()
+    }
+
+    private func notifyDrained() {
+        guard closed, pendingOperations == 0, callbacksInProgress == 0 else { return }
+        let callbacks = drainCallbacks
+        drainCallbacks.removeAll()
+        callbacks.forEach { $0() }
     }
 
     deinit {

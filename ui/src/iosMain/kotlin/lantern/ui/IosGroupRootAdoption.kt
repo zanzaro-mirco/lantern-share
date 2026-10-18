@@ -198,10 +198,12 @@ class IosGroupRootAdoption private constructor(
 
     /**
      * In-place continuation only, NOT stage/commit or a new socket owner. The native caller
-     * drains old receive/sign/write callbacks before calling on its non-UI serial queue,
+     * drains protocol callbacks/sign/write work before calling on its non-UI serial queue,
      * preserves the original timer and supplies OS-bound endpoint evidence/member DER and
      * a fresh OS-generated attempt ID. Evidence must describe this exact live proof.
      * Returned immutable material cannot restore consent after revocation or restart.
+     * The SAME OS owner may retain a pending phase-neutral receive only if it serially calls
+     * this facade's current accept/finish (never an old decoder/ticket) and keeps monitoring EOF.
      */
     @Throws(Exception::class)
     fun handover(

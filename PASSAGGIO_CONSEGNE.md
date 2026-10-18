@@ -8,6 +8,18 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**Metodo aggiornato il 18 ottobre:** seguire i blocchi funzionali e l'accettazione in PIANO_SVILUPPO, sezione 4. Un solo blocco attivo, passi interni senza conferme/consegne per classe, test mirati e checkpoint integrato raggruppato; nessun polling CI. AGENTS e ARCHITETTURA allineati; modifiche del piano da consegnare insieme al codice coerente, note precedenti preservate.
+
+**Blocco attivo B1 implementato, non ancora verificato su Apple:** handover in-place in GroupRootAdoptionChannel, endpoint effettivi TLS e ID OS, timer originale, revoche e drain esplicito. Receive già pendente mantenuto nello stesso owner come callback neutro alla fase corrente (EOF/dati), non ceduto a un altro decoder; callback in esecuzione/firma/write impediscono il passaggio. Caller conserva owner/DB fino a whenClosedAndDrained. ADR 011 e sintesi STATO contengono evidenze e limiti, nessun commit/Node/UI nuovo.
+
+**Verifica:** root-check.ps1 locale riuscito, Kotlin/JVM+JDBC con boundary di test, non Apple. Sei nuovi metodi XCTest mantenuti e prove esistenti ampliate per TLS reale, binding, riapertura e callback/drain; NON compilati/eseguiti su Windows. CI precedente 9ff58d5 ora letta da conclusa: iOS 39128004873 success (framework/export/app/test compilati, runtime saltato), PoC 39128004865 success per conclusione. Nessun polling/nuovo hardware; ultimo runtime Apple attestato e3080c9 / 141 XCTest.
+
+**Prossimo passo:** consegna unica con il piano, checkpoint iOS completo bootstrap_interop=false senza ordinario duplicato. Leggere da concluso/correggere prima di attestare B1; poi solo B2 (garanzie di commit e interruzioni), B3 resta coda e hardware fase 1/gate UI invariati. Non ricominciare le basi verificate. Conservare i risultati storici sotto; non aggiungere resoconti duplicati.
+
+### Storico — consegna della facciata iOS
+
+**Consegnato:** `9ff58d52e8575a9aa846df8afed6b8e0b841c54b`, cinque file, unico push. [iOS ordinario 39128004873](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39128004873) / [PoC 39128004865](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39128004865) in_progress nella sola lettura post-push. Nessun dispatch/polling o nuovo Apple attestato, leggere da concluse alla ripresa. Questa nota con STATO resta locale da preservare/raggruppare, niente secondo push documentale.
+
 **Checkpoint precedente:** `866341f`, [PoC 39127227162](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227162) / [iOS ordinario 39127227075](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227075) success per stato/conclusione, letti da conclusi senza polling. Ultimo runtime Apple attestato e3080c9 / 141 XCTest simulatore, non hardware.
 
 **Incremento corrente:** IosGroupRootAdoption.handover mantiene la continuazione nella stessa facciata Kotlin. Journal da offerte/firme vive + evidence/DER endpoint forniti dal caller OS, core verifica binding/preflight; ritorno snapshot opaco senza stage/commit/byte pubblici. Revoche/deadline originali instradate al core, vecchi ticket inerti, frame parziale e nuovi dati rifiutati. Null su reentrancy o ticket firma/write pendente, @Throws preservati. Nessun cambio schema/wire/versioni/workflow/UI o owner Swift attivo.
