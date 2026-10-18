@@ -46,7 +46,7 @@ class IosGroupRootWrite internal constructor(
  * The native owner binds OS crypto/offers to that connection, schedules the ORIGINAL deadline,
  * closes transport on CLOSED and keeps persistence alive until all pending callbacks finish.
  * All calls, identity/group changes and lifecycle events must use its same non-UI serial queue.
- * SQLite preflight is synchronous; this facade neither closes the driver nor exposes commit.
+ * SQLite preflight and policy-A local commit are synchronous, never on UI; the driver is caller-owned.
  */
 class IosGroupRootAdoption private constructor(
     private val attempt: GroupRootAdoptionAttempt,
@@ -234,19 +234,42 @@ class IosGroupRootAdoption private constructor(
         if (active()) IosGroupAdoptionJournalSnapshot(record) else null
     }
 
-    private fun active() = observe().phase != IosGroupAdmissionPhase.CLOSED
+    /** Same serial executor as every lifecycle event; storage must never call back into us. */
+    @Throws(Exception::class)
+    fun commitLocal(currentIdentityId: String, persistence: IosPersistence): Boolean =
+        commitLocal(currentIdentityId, persistence, null)
+
+    /** Explicit retry after a NEW live comparison; the old snapshot only selects exact cleanup. */
+    @Throws(Exception::class)
+    fun retryLocalCommit(
+        currentIdentityId: String, persistence: IosPersistence,
+        replacingInterrupted: IosGroupAdoptionJournalSnapshot,
+    ): Boolean = commitLocal(currentIdentityId, persistence, replacingInterrupted.record)
+
+    private fun commitLocal(
+        currentIdentityId: String, persistence: IosPersistence, replacingInterrupted: PendingGroupAdoption?,
+    ): Boolean = guarded {
+        if (callsInProgress != 1 || !active() || signing != null || writing != null) return@guarded false
+        val next = continuation ?: return@guarded false
+        val committed = next.commitLocal(currentIdentityId, persistence.groupAdoptions, replacingInterrupted)
+        observe()
+        committed
+    }
+
+    private fun active() = observe().phase.let {
+        it != IosGroupAdmissionPhase.CLOSED && it != IosGroupAdmissionPhase.COMMITTED &&
+            it != IosGroupAdmissionPhase.COMMIT_OUTCOME_UNKNOWN
+    }
     private fun comparing() = active() && continuation == null
 
     private fun observe(): IosGroupRootSnapshot {
         terminal?.let { return it }
         val previous = attempt.state()
-        val state = continuation?.let {
-            when (val continued = it.state()) {
-                is GroupAdmissionConfirmationState.Closed -> GroupRootAdoptionState.Closed(GroupRootAdoptionFailure.Confirmation(continued.reason))
-                else -> GroupRootAdoptionState.Active(continued)
-            }
-        } ?: previous
+        val state = continuation?.rootState() ?: previous
         return when (state) {
+            GroupRootAdoptionState.Committed -> view(IosGroupAdmissionPhase.COMMITTED)
+            GroupRootAdoptionState.CommitOutcomeUnknown ->
+                IosGroupRootSnapshot(IosGroupAdmissionPhase.COMMIT_OUTCOME_UNKNOWN, IosGroupRootFailure.STORAGE_FAILED, false)
             is GroupRootAdoptionState.Closed -> close(when (val reason = state.reason) {
                 GroupRootAdoptionFailure.IdentityChanged -> IosGroupRootFailure.IDENTITY_CHANGED
                 GroupRootAdoptionFailure.AlreadyInGroup -> IosGroupRootFailure.ALREADY_IN_GROUP
@@ -291,10 +314,12 @@ class IosGroupRootAdoption private constructor(
             return action()
         } catch (original: Throwable) {
             // Preserve a storage/cancellation/core failure before the generic adapter fallback.
-            try { observe() } catch (secondary: Throwable) {
+            var observed: IosGroupRootSnapshot? = null
+            try { observed = observe() } catch (secondary: Throwable) {
                 if (secondary !== original) original.addSuppressed(secondary)
             }
-            close(IosGroupRootFailure.ADAPTER)
+            if (observed?.phase != IosGroupAdmissionPhase.COMMIT_OUTCOME_UNKNOWN &&
+                observed?.phase != IosGroupAdmissionPhase.COMMITTED) close(IosGroupRootFailure.ADAPTER)
             throw original
         } finally {
             callsInProgress--

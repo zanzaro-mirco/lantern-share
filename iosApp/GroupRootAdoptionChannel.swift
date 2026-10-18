@@ -19,6 +19,7 @@ struct GroupRootAdoptionFailureContext: Error {
 /// Exclusive owner of the selected member's ready mutual-TLS connection and its continuation.
 /// Caller retires ALL previous socket readers/writers/timers before adopting on the same queue.
 /// Confirmed and handover remain revocable, never membership or permission to send messages.
+/// A separate successful local commit retires transport; it still does not authorize traffic.
 final class GroupRootAdoptionChannel {
     private let connection: NWConnection
     private let identity: AppleIdentity
@@ -37,6 +38,7 @@ final class GroupRootAdoptionChannel {
     private var comparisonPublished = false
     private var handedOver = false
     private var handingOver = false
+    private var committing = false
     private var callbacksInProgress = 0
     private var pendingOperations = 0
     private var pendingSignaturesAndWrites = 0
@@ -197,6 +199,45 @@ final class GroupRootAdoptionChannel {
             if snapshot != nil { handedOver = true }
             guard try observe() else { return nil }
             return snapshot
+        } catch {
+            adapterFailed(error)
+            throw error
+        }
+    }
+
+    /// Policy A: local atomic commit, not an acknowledgement from the issuer.
+    /// Invoke outside callbacks on this same non-UI queue with a fresh OS identity.
+    /// Pending phase-neutral receive is cancelled only AFTER the durable commit succeeds.
+    func commitLocal(currentIdentity: AppleIdentity, replacingInterrupted: IosGroupAdoptionJournalSnapshot? = nil) throws -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !closed, handedOver, !handingOver, !committing,
+              callbacksInProgress == 0, pendingSignaturesAndWrites == 0 else { return false }
+        committing = true
+        defer { committing = false }
+        do {
+            guard transportIsReady() else { return false }
+            let committed: Bool
+            if let replacingInterrupted {
+                committed = try bridge.retryLocalCommit(currentIdentityId: currentIdentity.id,
+                    persistence: persistence, replacingInterrupted: replacingInterrupted)
+            } else {
+                committed = try bridge.commitLocal(currentIdentityId: currentIdentity.id, persistence: persistence)
+            }
+            if committed {
+                // Retire transport without turning a durable success into a cancellation error.
+                closed = true
+                timer?.cancel()
+                timer = nil
+                connection.stateUpdateHandler = nil
+                connection.cancel()
+                callbacksInProgress += 1
+                defer {
+                    callbacksInProgress -= 1
+                    notifyDrained()
+                }
+                onSnapshot(try bridge.snapshot())
+            } else { _ = try observe() }
+            return committed
         } catch {
             adapterFailed(error)
             throw error

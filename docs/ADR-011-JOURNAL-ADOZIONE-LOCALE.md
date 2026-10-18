@@ -1,6 +1,6 @@
 # ADR 011 — deposito locale dell'adozione candidata
 
-Data: 14 ottobre 2026; integrazioni 17–18 ottobre. Stato: implementati formato, deposito, ispezione non distruttiva e continuazione viva revocabile nel core; recovery e adozione non implementati. Ponte Apple dell'ispezione verificato nella CI e nel simulatore, non su hardware.
+Data: 14 ottobre 2026; integrazioni 17–18 ottobre. Stato: implementati formato, deposito, ispezione non distruttiva e continuazione viva revocabile nel core e negli owner OS. Ponte e owner Apple verificati nella CI e nel simulatore, non su hardware. Commit locale successivo: [ADR 012](ADR-012-COMMIT-E-INTERRUZIONI-AMMISSIONE.md), politica A confermata dall'utente e implementata negli owner isolati, ancora da verificare sul nuovo checkpoint Apple. Nessun servizio/UI o recovery distribuito attivo.
 
 ## Contesto
 
@@ -17,6 +17,10 @@ Separare tre responsabilità:
 Il futuro owner deve generare un nuovo ID tentativo OS da 256 bit, rappresentato con 64 hex minuscoli, senza riciclare un ID precedente. È un identificatore di operazione, non un nuovo pin o una modifica alle identità esistenti. La sua generazione non è introdotta dal deposito.
 
 ### Schema 3, migrazione additiva
+
+Questa sezione descrive l'introduzione del deposito. Lo schema corrente è ora 4:
+3.sqm aggiunge il marker durevole separato di ADR 012 senza modificare formato/dati
+del journal. Lo stage resta non autorizzante; non promuovere record all'avvio.
 
 `2.sqm` aggiunge `group_adoption_journal`. Il singleton ammette un solo candidato pendente per installazione. Metadati obbligatori, payload BLOB fra 1 e 524288 byte. Questo è un budget di storage, non la versione/il limite del payload protocollo (v1, massimo 278901 byte). Nome, trust PoC, messaggi, ricevute e fondazione preesistenti non vengono riscritti.
 
@@ -174,4 +178,4 @@ Test comuni di codec/binding/copie/limiti, firme P-256 reali, JDBC con riapertur
 
 Tre test Native iOS predisposti per riapertura/retry/rimozione, migrazione 2→3 preservativa e rollback su errori prima/dopo INSERT e dopo DELETE. La fixture preesistente della migrazione 1→corrente rimuove entrambe le nuove tabelle per rappresentare davvero lo schema 1. Risultati e comandi effettivi in STATO; predisposizione non equivale a runtime Native o hardware.
 
-Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione. Handover/revoca sono ora collegati agli owner JVM/Android e Swift, non al servizio/UI o a un commit distribuito. I sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. La facciata precedente è compilata/exportata con i test Swift nella CI ordinaria 39128004873, non eseguita in simulatore. Il controllo host JVM/JDBC con boundary di test del nuovo binding è passato; cinque nuovi metodi XCTest TLS/lifecycle e uno della facciata, più prove esistenti estese a snapshot/riapertura/drain, sono predisposti ma non compilati/eseguiti su Windows. B1 attende il checkpoint Apple del nuovo owner; solo dopo si procede a B2 (garanzie di commit e interruzioni). Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.
+Handover/revoca sono collegati agli owner JVM/Android e Swift, non al servizio/UI o a un commit distribuito. Checkpoint completo `ea25221` / [39141932749](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39141932749) concluso e letto: Native, framework/export/app compilati e **151 XCTest riusciti**, inclusi i nuovi test di facciata/owner, binding, revoche, drain, timer e riapertura. Bootstrap interop compilato soltanto, esecuzione opt-in saltata; nessun nuovo hardware. B1 verificato automaticamente. Il commit B2 successivo usa ora il deposito negli stessi owner secondo ADR 012, non dalla sola ispezione: test locali riusciti, nuovo Apple pendente, nessun caller attivo nell'app. Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.

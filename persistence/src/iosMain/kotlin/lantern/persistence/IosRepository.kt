@@ -4,15 +4,14 @@ import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import lantern.domain.ChatLine
 import lantern.domain.DeviceRepository
 import lantern.domain.GroupTrustAnchor
-import lantern.domain.LocalGroupRepository
-import lantern.domain.GroupAdoptionJournalRepository
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.GroupAdoptionRepository
 import platform.Foundation.NSLock
 
 /** Owns the native SQLDelight driver. Call [close] after all consumers stop. */
 class IosDeviceRepository internal constructor(
     private val driver: NativeSqliteDriver,
-) : DeviceRepository, LocalGroupRepository, GroupAdoptionJournalRepository {
+) : DeviceRepository, GroupAdoptionRepository {
     private val lock = NSLock()
     private val store = SqliteDeviceStore(driver)
 
@@ -37,6 +36,9 @@ class IosDeviceRepository internal constructor(
     override fun stageGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean =
         locked { store.stageGroupAdoption(record, currentIdentityId) }
     override fun removeGroupAdoption(record: PendingGroupAdoption): Boolean = locked { store.removeGroupAdoption(record) }
+    override fun committedGroupAdoption(): PendingGroupAdoption? = locked(store::committedGroupAdoption)
+    override fun commitGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean =
+        locked { store.commitGroupAdoption(record, currentIdentityId) }
     override fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =
         locked { store.save(id, sender, session, body, signature) }
     override fun history(): List<ChatLine> = locked(store::history)

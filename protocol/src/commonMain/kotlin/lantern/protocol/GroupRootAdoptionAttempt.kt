@@ -16,11 +16,15 @@ sealed interface GroupRootAdoptionState {
     data class Active(val confirmation: GroupAdmissionConfirmationState) : GroupRootAdoptionState
     /** Ownership transferred, not persisted membership or authorization. */
     data object ReleasedForCommit : GroupRootAdoptionState
+    /** Local SQLite commit only; not a remote acknowledgement or application authorization. */
+    data object Committed : GroupRootAdoptionState
+    /** A commit call failed; inspect durable storage, never retry this consent automatically. */
+    data object CommitOutcomeUnknown : GroupRootAdoptionState
     data class Closed(val reason: GroupRootAdoptionFailure) : GroupRootAdoptionState
 }
 
 /**
- * Frozen result of this live comparison and both confirmations. Only a future recoverable
+ * Frozen result of this live comparison and both confirmations. Only its serial
  * commit owner may use it, after rechecking identity, empty membership, block and liveness.
  * It is not a reusable authorization ticket and cannot be passed to foundLocalGroup.
  * Transport/timer ownership and their original deadline must accompany the handoff separately;

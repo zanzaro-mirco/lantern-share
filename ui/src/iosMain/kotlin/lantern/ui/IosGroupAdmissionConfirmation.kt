@@ -44,6 +44,7 @@ class IosGroupAdmissionContext private constructor(
 
 enum class IosGroupAdmissionPhase {
     AWAITING_START, AWAITING_CONFIRMATION, SIGNING, SENDING, AWAITING_REMOTE_CONFIRMATION, CONFIRMED, CLOSED,
+    COMMITTED, COMMIT_OUTCOME_UNKNOWN,
 }
 
 enum class IosGroupAdmissionFailure {

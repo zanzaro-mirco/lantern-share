@@ -15,6 +15,75 @@ final class GroupRootAdoptionTests: XCTestCase {
         super.tearDown()
     }
 
+    func testLocalCommitIsDurableMonouseAndIndependentOfRetiredConsent() throws {
+        let location = try directory()
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: location.path)
+        var closed = false
+        defer { if !closed { store.close() } }
+        let local = try owner()
+        XCTAssertFalse(try local.commitLocal(currentIdentityId: member, persistence: store))
+        try complete(local, store)
+        XCTAssertNotNil(try handover(local, store))
+        XCTAssertTrue(try local.commitLocal(currentIdentityId: member, persistence: store))
+        XCTAssertEqual(try local.snapshot().phase.name, "COMMITTED")
+        try local.cancel()
+        try local.block()
+        try local.finish()
+        XCTAssertEqual(try local.snapshot().phase.name, "COMMITTED")
+        XCTAssertNil(try local.remainingMillis())
+        XCTAssertFalse(try local.commitLocal(currentIdentityId: member, persistence: store))
+        store.close()
+        closed = true
+        let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: location.path)
+        defer { reopened.close() }
+        XCTAssertNil(try reopened.pendingGroupAdoption())
+        XCTAssertNotNil(try reopened.committedGroupAdoption())
+        XCTAssertEqual(try reopened.localGroup()?.groupId, group)
+        XCTAssertEqual(try reopened.localGroup()?.founderId, issuer)
+        XCTAssertEqual(try reopened.trusted(), [])
+        XCTAssertEqual(try reopened.history().count, 0)
+    }
+
+    func testLocalCommitCannotUseChangedIdentityOrRevokedHandover() throws {
+        for changed in [false, true] {
+            let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+            defer { store.close() }
+            let local = try owner()
+            try complete(local, store)
+            XCTAssertNotNil(try handover(local, store))
+            if !changed { try local.block() }
+            XCTAssertFalse(try local.commitLocal(currentIdentityId: changed ? issuer : member, persistence: store))
+            XCTAssertEqual(try local.snapshot().failure.name, changed ? "IDENTITY_CHANGED" : "BLOCKED")
+            XCTAssertNil(try store.committedGroupAdoption())
+            XCTAssertNil(try store.localGroup())
+            XCTAssertNil(try store.pendingGroupAdoption())
+        }
+    }
+
+    func testInterruptedStageNeedsFreshComparisonAndExplicitSnapshotReplacement() throws {
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        defer { store.close() }
+        // Test clock expires only AFTER the real SQLite stage returned; never inside its lock.
+        let interrupted = try owner(clock: { (try? store.pendingGroupAdoption()) != nil ? 120_000 : 17 })
+        try complete(interrupted, store)
+        let old = try XCTUnwrap(handover(interrupted, store))
+        XCTAssertFalse(try interrupted.commitLocal(currentIdentityId: member, persistence: store))
+        XCTAssertEqual(try interrupted.snapshot().failure.name, "EXPIRED")
+        XCTAssertNotNil(try store.pendingGroupAdoption())
+        XCTAssertNil(try store.localGroup())
+
+        let retry = try owner(fresh: true)
+        XCTAssertFalse(try retry.retryLocalCommit(currentIdentityId: member, persistence: store, replacingInterrupted: old))
+        try complete(retry, store, fresh: true)
+        XCTAssertNotNil(try handover(retry, store, attempt: "5"))
+        XCTAssertTrue(try retry.retryLocalCommit(currentIdentityId: member, persistence: store, replacingInterrupted: old))
+        XCTAssertEqual(try retry.snapshot().phase.name, "COMMITTED")
+        XCTAssertNil(try store.pendingGroupAdoption())
+        XCTAssertNotNil(try store.committedGroupAdoption())
+        try interrupted.cancel()
+        XCTAssertEqual(try store.localGroup()?.groupId, group)
+    }
+
     func testBothConfirmationsAndSuccessfulWriteStillLeaveReopenedDatabaseEmpty() throws {
         let directory = try directory()
         let store = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
@@ -305,13 +374,13 @@ final class GroupRootAdoptionTests: XCTestCase {
         XCTAssertEqual(original.certificates.map { $0.der }, ["AA=="])
     }
 
-    private func handover(_ local: IosGroupRootAdoption, _ store: IosPersistence) throws -> IosGroupAdoptionJournalSnapshot? {
+    private func handover(_ local: IosGroupRootAdoption, _ store: IosPersistence, attempt: String = "1") throws -> IosGroupAdoptionJournalSnapshot? {
         try local.handover(currentIdentityId: member, persistence: store,
-            attemptId: String(repeating: "1", count: 64), boundEvidence: evidence(), memberCertificateDer: "AA==")
+            attemptId: String(repeating: attempt, count: 64), boundEvidence: evidence(), memberCertificateDer: "AA==")
     }
 
-    private func complete(_ local: IosGroupRootAdoption, _ store: IosPersistence) throws {
-        let remote = try issuerOwner()
+    private func complete(_ local: IosGroupRootAdoption, _ store: IosPersistence, fresh: Bool = false) throws {
+        let remote = try issuerOwner(fresh: fresh)
         defer { remote.cancel() }
         XCTAssertTrue(try local.prepare(currentIdentityId: member, persistence: store))
         XCTAssertTrue(try remote.prepare())
@@ -323,9 +392,9 @@ final class GroupRootAdoptionTests: XCTestCase {
         XCTAssertTrue(try local.sent(ticket: write))
     }
 
-    private func owner(clock: @escaping () -> Int64 = { 17 }, proof: @escaping () -> Bool = { true }) throws -> IosGroupRootAdoption {
+    private func owner(clock: @escaping () -> Int64 = { 17 }, proof: @escaping () -> Bool = { true }, fresh: Bool = false) throws -> IosGroupRootAdoption {
         try IosGroupRootAdoption.companion.create(
-            offers: offers(local: member, peer: issuer, nonce: "2", peerNonce: "1"), evidence: evidence(),
+            offers: offers(local: member, peer: issuer, nonce: fresh ? "4" : "2", peerNonce: fresh ? "3" : "1"), evidence: evidence(),
             authenticatedLocalIdentity: member, selectedPeerIdentity: issuer, authenticatedPeerIdentity: issuer,
             selectedAtMillis: 0, nowMillis: { KotlinLong(longLong: clock()) },
             verifyAdmissionSignature: { _, _, _ in KotlinBoolean(bool: proof()) },
@@ -333,9 +402,9 @@ final class GroupRootAdoptionTests: XCTestCase {
         )
     }
 
-    private func issuerOwner() throws -> IosGroupAdmissionConfirmation {
+    private func issuerOwner(fresh: Bool = false) throws -> IosGroupAdmissionConfirmation {
         let context = try IosGroupAdmissionContext.companion.create(
-            offers: offers(local: issuer, peer: member, nonce: "1", peerNonce: "2"),
+            offers: offers(local: issuer, peer: member, nonce: fresh ? "3" : "1", peerNonce: fresh ? "4" : "2"),
             expectedGroup: group, expectedFounder: issuer, evidence: evidence(), role: .issuer
         )
         return try IosGroupAdmissionConfirmation.companion.create(

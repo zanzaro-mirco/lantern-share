@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.ComposeUIViewController
 import lantern.domain.ContentLimits
 import lantern.domain.LocalGroupRepository
+import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Reconnection
 import lantern.persistence.IosDeviceRepository
 import lantern.persistence.openIosRepository
@@ -22,6 +23,12 @@ import platform.UIKit.UIViewController
 
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
     internal val localGroups: LocalGroupRepository get() = repository
+    internal val groupAdoptions: GroupAdoptionRepository get() = repository
+
+    /** Durable local marker; inspect with the current OS identity before using its proof. */
+    @Throws(Exception::class)
+    fun committedGroupAdoption(): IosGroupAdoptionJournalSnapshot? =
+        repository.committedGroupAdoption()?.let(::IosGroupAdoptionJournalSnapshot)
 
     /** Read-only untrusted snapshot; failures remain failures, never absence or automatic cleanup. */
     @Throws(Exception::class)

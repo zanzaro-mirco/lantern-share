@@ -25,6 +25,15 @@ CREATE TABLE message (
   signature TEXT NOT NULL,
   received INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE group_adoption (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  attempt_id TEXT NOT NULL CHECK (length(attempt_id) = 64),
+  local_identity TEXT NOT NULL CHECK (length(local_identity) = 64),
+  peer_identity TEXT NOT NULL CHECK (length(peer_identity) = 64),
+  group_id TEXT NOT NULL CHECK (length(group_id) = 64),
+  founder_id TEXT NOT NULL CHECK (length(founder_id) = 64),
+  payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) BETWEEN 1 AND 524288)
+);
 peers:
 SELECT * FROM trusted;
 trust:
@@ -36,10 +45,12 @@ SELECT value FROM setting WHERE key = ?;
 putSetting:
 INSERT OR REPLACE INTO setting VALUES (?, ?);
 localGroup:
-SELECT group_id, founder_id FROM local_group WHERE singleton = 1;
+SELECT group_id, founder_id FROM local_group WHERE singleton = 1
+UNION ALL SELECT group_id, founder_id FROM group_adoption;
 foundLocalGroup:
 INSERT INTO local_group(singleton, group_id, founder_id)
-SELECT 1, ?, ? WHERE NOT EXISTS (SELECT 1 FROM local_group);
+SELECT 1, ?, ? WHERE NOT EXISTS (SELECT 1 FROM local_group)
+AND NOT EXISTS (SELECT 1 FROM group_adoption);
 lastInsertCount:
 SELECT changes();
 pendingAdoptionJournalRecord:
@@ -49,10 +60,21 @@ stageGroupAdoption:
 INSERT INTO group_adoption_journal(singleton, attempt_id, local_identity, peer_identity, group_id, founder_id, payload)
 SELECT 1, ?, ?, ?, ?, ?, ?
 WHERE NOT EXISTS (SELECT 1 FROM group_adoption_journal)
-AND NOT EXISTS (SELECT 1 FROM local_group);
+AND NOT EXISTS (SELECT 1 FROM local_group)
+AND NOT EXISTS (SELECT 1 FROM group_adoption);
 removeGroupAdoption:
 DELETE FROM group_adoption_journal WHERE singleton = 1 AND attempt_id = ? AND local_identity = ?
 AND peer_identity = ? AND group_id = ? AND founder_id = ? AND payload = ?;
+committedAdoptionRecord:
+SELECT singleton, attempt_id, local_identity, peer_identity, group_id, founder_id, typeof(payload) AS payload_type, payload
+FROM group_adoption;
+commitGroupAdoption:
+INSERT INTO group_adoption(singleton, attempt_id, local_identity, peer_identity, group_id, founder_id, payload)
+SELECT singleton, attempt_id, local_identity, peer_identity, group_id, founder_id, payload
+FROM group_adoption_journal WHERE singleton = 1 AND attempt_id = ? AND local_identity = ?
+AND peer_identity = ? AND group_id = ? AND founder_id = ? AND payload = ?
+AND NOT EXISTS (SELECT 1 FROM local_group)
+AND NOT EXISTS (SELECT 1 FROM group_adoption);
 getMessage:
 SELECT * FROM message WHERE id = ?;
 insertMessage:

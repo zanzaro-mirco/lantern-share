@@ -2,6 +2,7 @@ package lantern.connectivity
 
 import lantern.domain.LocalGroupRepository
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.GroupAdoptionRepository
 import lantern.protocol.GroupAdmissionCertificate
 import lantern.protocol.GroupAdmissionChainVerification
 import lantern.protocol.GroupAdmissionComparison
@@ -39,7 +40,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * Handover keeps the SAME socket/timer owner and routes lifecycle to the live continuation;
  * no resource is released to an unguarded caller. Reads after handover observe EOF/failure
  * only; additional data is rejected, not interpreted as a new protocol or commit message.
- * No Node caller, durable membership, message authorization or database write is exposed.
+ * Local commit uses policy A; no Node caller or application traffic is enabled here.
  */
 internal class GroupRootAdoptionConnection private constructor(
     private val socket: SSLSocket,
@@ -190,6 +191,19 @@ internal class GroupRootAdoptionConnection private constructor(
         }
     }
 
+    /** Call after handover, with joined I/O and current OS identity, on the lifecycle worker. */
+    fun commitLocal(currentIdentity: Identity, replacingInterrupted: PendingGroupAdoption? = null): Boolean = guarded {
+        synchronized(stateLock) {
+            if (ioInFlight != 0 || !activeLocked()) return@synchronized false
+            val next = continuation ?: return@synchronized false
+            val store = repository as? GroupAdoptionRepository
+                ?: error("Root owner needs a durable adoption repository")
+            val committed = next.commitLocal(currentIdentity.id, store, replacingInterrupted)
+            snapshotLocked()
+            committed
+        }
+    }
+
     override fun close() = lifecycle({ attempt.cancel() }, { it.cancel() })
     fun block() = lifecycle({ attempt.block() }, { it.block() })
     fun leaveGroup() = lifecycle({ attempt.leaveGroup() }, { it.leaveGroup() })
@@ -217,13 +231,9 @@ internal class GroupRootAdoptionConnection private constructor(
         // A trusted clock callback may reenter handover during attempt.state(). Observe
         // the installed continuation AFTER that callback, never publish a stale phase.
         val previous = attempt.state()
-        val current = continuation?.let {
-            when (val state = it.state()) {
-                is GroupAdmissionConfirmationState.Closed -> GroupRootAdoptionState.Closed(GroupRootAdoptionFailure.Confirmation(state.reason))
-                else -> GroupRootAdoptionState.Active(state)
-            }
-        } ?: previous
-        if (current is GroupRootAdoptionState.Closed) {
+        val current = continuation?.rootState() ?: previous
+        if (current is GroupRootAdoptionState.Closed || current == GroupRootAdoptionState.Committed ||
+            current == GroupRootAdoptionState.CommitOutcomeUnknown) {
             closed = true
             localConfirmation = null
             remoteConfirmation = null

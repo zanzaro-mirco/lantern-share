@@ -12,7 +12,7 @@ enum class IosGroupAdoptionJournalStatus {
 }
 
 /** Opaque immutable stored snapshot, never a live confirmation or recoverable commit ticket. */
-class IosGroupAdoptionJournalSnapshot internal constructor(private val record: PendingGroupAdoption) {
+class IosGroupAdoptionJournalSnapshot internal constructor(internal val record: PendingGroupAdoption) {
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES
 
     /**

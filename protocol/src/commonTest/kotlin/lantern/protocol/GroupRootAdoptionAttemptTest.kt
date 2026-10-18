@@ -4,6 +4,7 @@ import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupRepository
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.GroupAdoptionRepository
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -493,6 +494,154 @@ class GroupRootAdoptionAttemptTest {
             owner.handover(member, repository(), record, evidence, GroupAdmissionCertificate(member, "AQ=="))
         }
         assertNotNull(handover(owner, record))
+    }
+
+    @Test
+    fun localCommitIsMonouseAndLaterTransportOrDeadlineCannotUndoIt() {
+        val next = assertNotNull(handover(confirmed(), stagedRecord()))
+        val store = AdoptionStore()
+        assertTrue(next.commitLocal(member, store))
+        assertEquals(GroupRootAdoptionState.Committed, next.rootState())
+        assertNull(store.pending)
+        assertTrue(next.record.sameRecord(assertNotNull(store.committed)))
+        next.transportClosed()
+        next.cancel()
+        next.block()
+        next.leaveGroup()
+        now = Long.MAX_VALUE
+        assertEquals(GroupRootAdoptionState.Committed, next.rootState())
+        assertNull(next.remainingMillis())
+        assertFalse(next.matchesRecord(next.record))
+        assertFalse(next.commitLocal(member, store))
+        assertEquals(1, store.commits)
+    }
+
+    @Test
+    fun revokedOrChangedIdentityCannotStartCommit() {
+        val revoked = assertNotNull(handover(confirmed(), stagedRecord()))
+        revoked.block()
+        val store = AdoptionStore()
+        assertFalse(revoked.commitLocal(member, store))
+        assertEquals(0, store.stages)
+        val changed = assertNotNull(handover(confirmed(), stagedRecord()))
+        assertFalse(changed.commitLocal(other, store))
+        assertEquals(closed(GroupRootAdoptionFailure.IdentityChanged), changed.rootState())
+        assertEquals(0, store.stages)
+    }
+
+    @Test
+    fun stageCannotRestoreConsentRevokedOrExpiredWhileSaving() {
+        for (expiry in listOf(false, true)) {
+            now = 200
+            val next = assertNotNull(handover(confirmed(), stagedRecord()))
+            val store = AdoptionStore(onStage = {
+                if (expiry) now = 120_100 else next.block()
+            })
+            assertFalse(next.commitLocal(member, store))
+            assertEquals(0, store.commits)
+            assertNotNull(store.pending)
+            assertNull(store.committed)
+            val reason = if (expiry) GroupAdmissionConfirmationFailure.Expired else GroupAdmissionConfirmationFailure.Blocked
+            assertEquals(confirmationClosed(reason), next.rootState())
+        }
+    }
+
+    @Test
+    fun commitReentryIsRefusedAndStageFailurePreservesItsCause() {
+        val next = assertNotNull(handover(confirmed(), stagedRecord()))
+        lateinit var store: AdoptionStore
+        store = AdoptionStore(onStage = { assertFalse(next.commitLocal(member, store)) })
+        assertTrue(next.commitLocal(member, store))
+        assertEquals(1, store.stages)
+        assertEquals(1, store.commits)
+
+        val failed = assertNotNull(handover(confirmed(), stagedRecord()))
+        val cause = CancellationException("Test stage cancelled")
+        val unavailable = AdoptionStore(onStage = { failed.block(); throw cause })
+        assertSame(cause, assertFailsWith<CancellationException> { failed.commitLocal(member, unavailable) })
+        assertEquals(confirmationClosed(GroupAdmissionConfirmationFailure.Blocked), failed.rootState())
+        assertEquals(0, unavailable.commits)
+    }
+
+    @Test
+    fun ambiguousCommitFailureNeverReplaysAndDurableMarkerSurvives() {
+        for (afterWrite in listOf(false, true)) {
+            val next = assertNotNull(handover(confirmed(), stagedRecord()))
+            val cause = IllegalStateException("Test lost commit response")
+            val store = AdoptionStore(onCommit = { if (!afterWrite) throw cause }, afterCommit = { throw cause })
+            assertSame(cause, assertFailsWith<IllegalStateException> { next.commitLocal(member, store) })
+            assertEquals(GroupRootAdoptionState.CommitOutcomeUnknown, next.rootState())
+            next.cancel()
+            assertFalse(next.commitLocal(member, store))
+            assertEquals(1, store.commits)
+            if (afterWrite) assertTrue(next.record.sameRecord(assertNotNull(store.committed)))
+            else { assertNull(store.committed); assertNotNull(store.pending) }
+        }
+    }
+
+    @Test
+    fun explicitRetryRemovesOnlyTheExactInterruptedRecordAfterFreshConsent() {
+        val prior = stagedRecord(attemptId = other)
+        val store = AdoptionStore().also { it.pending = prior }
+        val revoked = assertNotNull(handover(confirmed(), stagedRecord()))
+        revoked.cancel()
+        assertFalse(revoked.commitLocal(member, store, prior))
+        assertSame(prior, store.pending)
+        val current = assertNotNull(handover(confirmed(), stagedRecord()))
+        assertTrue(current.commitLocal(member, store, prior))
+        assertTrue(current.record.sameRecord(assertNotNull(store.committed)))
+        assertNull(store.pending)
+    }
+
+    @Test
+    fun retryCannotDeleteDifferentPendingRecordOrRecycleAttemptId() {
+        for (previous in listOf(stagedRecord(), stagedRecord(attemptId = other, payload = byteArrayOf(9)))) {
+            val stored = stagedRecord(attemptId = other)
+            val store = AdoptionStore().also { it.pending = stored }
+            val current = assertNotNull(handover(confirmed(), stagedRecord()))
+            if (previous.attemptId == current.record.attemptId) {
+                assertFailsWith<IllegalArgumentException> { current.commitLocal(member, store, previous) }
+            } else {
+                assertFailsWith<IllegalStateException> { current.commitLocal(member, store, previous) }
+            }
+            assertSame(stored, store.pending)
+            assertNull(store.committed)
+            assertEquals(0, store.commits)
+        }
+    }
+
+    private class AdoptionStore(
+        val onStage: () -> Unit = {}, val onCommit: () -> Unit = {}, val afterCommit: () -> Unit = {},
+    ) : GroupAdoptionRepository {
+        var pending: PendingGroupAdoption? = null
+        var committed: PendingGroupAdoption? = null
+        var stages = 0
+        var commits = 0
+        override fun localGroup() = committed?.anchor
+        override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean = error("Not foundation")
+        override fun pendingGroupAdoption() = pending
+        override fun committedGroupAdoption() = committed
+        override fun stageGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean {
+            stages++
+            check(pending == null || pending?.sameRecord(record) == true)
+            pending = record
+            onStage()
+            return true
+        }
+        override fun commitGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean {
+            commits++
+            onCommit()
+            check(pending?.sameRecord(record) == true)
+            committed = record
+            pending = null
+            afterCommit()
+            return true
+        }
+        override fun removeGroupAdoption(record: PendingGroupAdoption): Boolean {
+            if (pending?.sameRecord(record) != true) return false
+            pending = null
+            return true
+        }
     }
 
     private val evidence get() = GroupAdmissionEvidence(proof, listOf(GroupAdmissionCertificate(founder, "AA==")))

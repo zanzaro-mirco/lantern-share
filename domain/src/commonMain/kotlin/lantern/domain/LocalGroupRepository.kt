@@ -1,8 +1,8 @@
 package lantern.domain
 
-/** Durable local foundation only; not remote admission, session state or peer authorization. */
+/** Durable local root, whether founded or adopted; not session state or peer authorization. */
 interface LocalGroupRepository {
-    /** Null means no foundation. Corrupt/unreadable storage must fail, not look like absence. */
+    /** Null means neither foundation nor adoption. Corrupt/unreadable storage must fail. */
     fun localGroup(): GroupTrustAnchor?
 
     /**

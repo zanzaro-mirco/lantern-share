@@ -243,7 +243,7 @@ Mantenere un solo blocco attivo. All'interno procedere per piccoli passi compila
 
 #### Coda operativa immediata
 
-Questi blocchi ordinano il lavoro già previsto, non sostituiscono le fasi della roadmap. Solo il primo è attivo; il successivo inizia dopo la chiusura o l'esplicitazione del vincolo residuo del precedente.
+Questi blocchi ordinano il lavoro già previsto, non sostituiscono le fasi della roadmap. Un solo blocco è attivo; il successivo inizia dopo la chiusura o l'esplicitazione del vincolo residuo del precedente. Aggiornamento: B1 verificato automaticamente nel checkpoint iOS completo `ea25221` / 39141932749 (151 XCTest riusciti, non hardware). B2: politica A di [ADR 012](docs/ADR-012-COMMIT-E-INTERRUZIONI-AMMISSIONE.md) confermata dall'utente e implementata negli owner isolati, verificata localmente JVM/Android; nuovo checkpoint Apple necessario prima della chiusura. Commit locale atomico, nuovo confronto prima di riprovare un'interruzione pre-commit, gruppo conservato dopo commit. Nessun nuovo protocollo distribuito o percorso già attivo nel servizio/UI.
 
 | Blocco | Risultato e accettazione | Confini e verifica |
 |---|---|---|

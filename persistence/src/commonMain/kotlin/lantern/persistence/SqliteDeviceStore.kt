@@ -26,8 +26,9 @@ internal class SqliteDeviceStore(driver: SqlDriver) {
         queries.putSetting("name", name)
     }
 
-    fun localGroup(): GroupTrustAnchor? = queries.localGroup().executeAsOneOrNull()?.let {
-        GroupTrustAnchor(it.group_id, it.founder_id)
+    fun localGroup(): GroupTrustAnchor? {
+        committedGroupAdoption() // Corrupt durable metadata/blob must not become a trusted root.
+        return queries.localGroup().executeAsOneOrNull()?.let { GroupTrustAnchor(it.group_id, it.founder_id) }
     }
 
     fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
@@ -62,6 +63,29 @@ internal class SqliteDeviceStore(driver: SqlDriver) {
             record.anchor.groupId, record.anchor.founderId, record.payload())
         queries.lastInsertCount().executeAsOne() == 1L
     }
+
+    fun committedGroupAdoption(): PendingGroupAdoption? = queries.committedAdoptionRecord().executeAsOneOrNull()?.let {
+        check(it.singleton == 1L && it.payload_type == "blob") { "Invalid committed adoption storage" }
+        PendingGroupAdoption(it.attempt_id, it.local_identity, it.peer_identity,
+            GroupTrustAnchor(it.group_id, it.founder_id), it.payload)
+    }
+
+    fun commitGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean =
+        database.transactionWithResult {
+            require(record.localIdentity == currentIdentityId) { "Adoption commit identity changed" }
+            // Conditional write arbitrates independent connections before any read/decision.
+            queries.commitGroupAdoption(record.attemptId, record.localIdentity, record.peerIdentity,
+                record.anchor.groupId, record.anchor.founderId, record.payload())
+            val inserted = queries.lastInsertCount().executeAsOne() == 1L
+            check(committedGroupAdoption()?.sameRecord(record) == true) { "Conflicting or unstaged adoption commit" }
+            check(localGroup() == record.anchor) { "Conflicting local root" }
+            if (inserted) {
+                check(pendingGroupAdoption()?.sameRecord(record) == true) { "Adoption journal changed" }
+                check(removeGroupAdoption(record)) { "Adoption journal not removed" }
+            }
+            check(pendingGroupAdoption() == null) { "Unexpected journal after adoption commit" }
+            inserted
+        }
 
     fun save(id: String, sender: String, session: String, body: String, signature: String): Boolean =
         database.transactionWithResult {

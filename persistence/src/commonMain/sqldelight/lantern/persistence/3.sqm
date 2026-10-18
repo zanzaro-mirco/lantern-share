@@ -1,0 +1,9 @@
+CREATE TABLE group_adoption (
+  singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+  attempt_id TEXT NOT NULL CHECK (length(attempt_id) = 64),
+  local_identity TEXT NOT NULL CHECK (length(local_identity) = 64),
+  peer_identity TEXT NOT NULL CHECK (length(peer_identity) = 64),
+  group_id TEXT NOT NULL CHECK (length(group_id) = 64),
+  founder_id TEXT NOT NULL CHECK (length(founder_id) = 64),
+  payload BLOB NOT NULL CHECK (typeof(payload) = 'blob' AND length(payload) BETWEEN 1 AND 524288)
+);

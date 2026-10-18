@@ -4,6 +4,7 @@ import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupRepository
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.GroupAdoptionRepository
 import lantern.persistence.openDesktopRepository
 import lantern.protocol.GroupAdmissionBridgeFailure
 import lantern.protocol.GroupAdmissionBridgeState
@@ -68,6 +69,254 @@ import kotlin.test.assertTrue
 
 /** Real TLS/certificates/JCA. Test-only explicit UI clicks, injected clocks and I/O failures. */
 class GroupAdmissionConnectionTest {
+    @Test
+    fun rootLocalCommitExceptionCannotInferRollbackOrReplay() {
+        for (afterCommit in listOf(false, true)) {
+            val directory = Files.createTempDirectory("lantern-root-unknown-outcome-")
+            val path = directory.resolve("member.db")
+            try {
+                openDesktopRepository(path).use { store ->
+                    withFixture { fixture ->
+                        var attempts = 0
+                        val failure = IOException("Test commit response lost")
+                        val uncertain = object : GroupAdoptionRepository by store {
+                            override fun commitGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean {
+                                attempts++
+                                if (afterCommit) store.commitGroupAdoption(record, currentIdentityId)
+                                throw failure
+                            }
+                        }
+                        fixture.rootOwner(uncertain).use { member ->
+                            fixture.clientOwner().use { issuer ->
+                                confirmRoot(fixture, member, issuer)
+                                assertNotNull(member.handover(fixture.member, randomNonce()))
+                                assertSame(failure, assertFailsWith<IOException> { member.commitLocal(fixture.member) })
+                                assertEquals(GroupRootAdoptionState.CommitOutcomeUnknown, member.state)
+                                assertTrue(fixture.serverSocket.isClosed)
+                                assertFalse(member.commitLocal(fixture.member))
+                                assertEquals(1, attempts)
+                            }
+                        }
+                    }
+                }
+                openDesktopRepository(path).use {
+                    val saved = if (afterCommit) assertNotNull(it.committedGroupAdoption())
+                        else assertNotNull(it.pendingGroupAdoption())
+                    assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                        GroupRootAdoptionJournalInspector.inspect(saved, saved.localIdentity))
+                    if (afterCommit) { assertEquals(saved.anchor, it.localGroup()); assertNull(it.pendingGroupAdoption()) }
+                    else { assertNull(it.localGroup()); assertNull(it.committedGroupAdoption()) }
+                }
+            } finally { Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
+        }
+    }
+
+    @Test
+    fun interruptedJournalNeedsFreshTlsComparisonAndExplicitExactReplacement() {
+        val directory = Files.createTempDirectory("lantern-root-retry-")
+        val path = directory.resolve("member.db")
+        val peers = Peers()
+        var interrupted: PendingGroupAdoption? = null
+        try {
+            openDesktopRepository(path).use { store ->
+                withFixture(peers) { fixture ->
+                    fixture.rootOwner(store).use { member ->
+                        fixture.clientOwner().use { issuer ->
+                            confirmRoot(fixture, member, issuer)
+                            interrupted = assertNotNull(member.handover(fixture.member, randomNonce()))
+                            assertTrue(store.stageGroupAdoption(assertNotNull(interrupted), fixture.member.id))
+                            member.block()
+                            assertFalse(member.commitLocal(fixture.member, interrupted))
+                        }
+                    }
+                }
+            }
+            openDesktopRepository(path).use { store ->
+                val previous = assertNotNull(store.pendingGroupAdoption())
+                assertTrue(assertNotNull(interrupted).sameRecord(previous))
+                assertNull(store.localGroup())
+                withFixture(peers) { fixture ->
+                    fixture.rootOwner(store).use { member ->
+                        fixture.clientOwner().use { issuer ->
+                            assertFalse(member.commitLocal(fixture.member, previous)) // Historical snapshot is no consent.
+                            confirmRoot(fixture, member, issuer) // New TLS, fresh nonces and two explicit clicks.
+                            val current = assertNotNull(member.handover(fixture.member, randomNonce()))
+                            assertFalse(current.sameRecord(previous))
+                            assertTrue(member.commitLocal(fixture.member, previous))
+                            assertTrue(current.sameRecord(assertNotNull(store.committedGroupAdoption())))
+                            assertNull(store.pendingGroupAdoption())
+                        }
+                    }
+                }
+            }
+            openDesktopRepository(path).use { assertEquals(peers.anchor, it.localGroup()) }
+        } finally { Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
+    }
+
+    @Test
+    fun rootLocalCommitPersistsActualTlsEvidenceAndSurvivesOwnerRetirement() {
+        val directory = Files.createTempDirectory("lantern-root-local-commit-")
+        val path = directory.resolve("member.db")
+        var saved: PendingGroupAdoption? = null
+        try {
+            openDesktopRepository(path).use { store ->
+                withFixture { fixture ->
+                    fixture.rootOwner(store).use { member ->
+                        fixture.clientOwner().use { issuer ->
+                            assertFalse(member.commitLocal(fixture.member))
+                            confirmRoot(fixture, member, issuer)
+                            assertFalse(member.commitLocal(fixture.member)) // No live handover yet.
+                            saved = assertNotNull(member.handover(fixture.member, randomNonce()))
+                            assertTrue(member.commitLocal(fixture.member))
+                            assertEquals(GroupRootAdoptionState.Committed, member.state)
+                            assertTrue(fixture.serverSocket.isClosed)
+                            assertNull(store.pendingGroupAdoption())
+                            member.close()
+                            member.block()
+                            member.leaveGroup()
+                            assertEquals(GroupRootAdoptionState.Committed, member.state)
+                            assertFalse(member.commitLocal(fixture.member))
+                            assertTrue(assertNotNull(saved).sameRecord(assertNotNull(store.committedGroupAdoption())))
+                        }
+                    }
+                }
+            }
+            openDesktopRepository(path).use {
+                val record = assertNotNull(it.committedGroupAdoption())
+                assertTrue(assertNotNull(saved).sameRecord(record))
+                assertEquals(record.anchor, it.localGroup())
+                assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                    GroupRootAdoptionJournalInspector.inspect(record, record.localIdentity))
+                assertNull(it.pendingGroupAdoption())
+                assertTrue(it.trusted().isEmpty())
+                assertTrue(it.history().isEmpty())
+            }
+        } finally { Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
+    }
+
+    @Test
+    fun rootLocalCommitRefusesRevocationChangedIdentityOrConcurrentFoundation() {
+        for (scenario in 0..2) {
+            val directory = Files.createTempDirectory("lantern-root-refused-commit-")
+            val path = directory.resolve("member.db")
+            try {
+                openDesktopRepository(path).use { store ->
+                    withFixture { fixture ->
+                        fixture.rootOwner(store).use { member ->
+                            fixture.clientOwner().use { issuer ->
+                                confirmRoot(fixture, member, issuer)
+                                val record = assertNotNull(member.handover(fixture.member, randomNonce()))
+                                when (scenario) {
+                                    0 -> {
+                                        member.block()
+                                        assertFalse(member.commitLocal(fixture.member))
+                                    }
+                                    1 -> assertFalse(member.commitLocal(fixture.issuer))
+                                    else -> {
+                                        assertTrue(store.foundLocalGroup(GroupTrustAnchor(randomNonce(), fixture.member.id), fixture.member.id))
+                                        assertFailsWith<IllegalStateException> { member.commitLocal(fixture.member) }
+                                    }
+                                }
+                                assertNull(store.committedGroupAdoption())
+                                assertTrue(fixture.serverSocket.isClosed)
+                                assertFalse(member.commitLocal(fixture.member))
+                                assertTrue(store.trusted().isEmpty())
+                                // The exact earlier snapshot cannot start a commit on its own.
+                                assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                                    GroupRootAdoptionJournalInspector.inspect(record, record.localIdentity))
+                            }
+                        }
+                    }
+                }
+                openDesktopRepository(path).use { assertNull(it.committedGroupAdoption()) }
+            } finally { Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
+        }
+    }
+
+    @Test
+    fun rootConfirmedDoesNotProveIssuerCompletionAndJournalCannotResumeConsent() {
+        val directory = Files.createTempDirectory("lantern-asymmetric-adoption-")
+        val path = directory.resolve("member.db")
+        var staged: PendingGroupAdoption? = null
+        try {
+            openDesktopRepository(path).use { store ->
+                withFixture { fixture ->
+                    val flushed = CountDownLatch(1)
+                    val release = CountDownLatch(1)
+                    val output = object : FilterOutputStream(fixture.clientSocket.outputStream) {
+                        override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                            out.write(bytes, offset, length)
+                        }
+
+                        override fun flush() {
+                            super.flush() // Real TLS bytes reach the member before the issuer's sent callback.
+                            flushed.countDown()
+                            check(release.await(5, TimeUnit.SECONDS))
+                        }
+                    }
+                    fixture.rootOwner(store).use { member ->
+                        fixture.clientOwner(socket = WrappedSocket(fixture.clientSocket, output = output)).use { issuer ->
+                            assertTrue(member.prepare(fixture.member))
+                            assertTrue(issuer.prepare())
+                            val comparison = assertNotNull(member.comparison())
+                            val issuerComparison = assertNotNull(issuer.comparison())
+                            assertContentEquals(issuerComparison.bytes, comparison.bytes)
+                            assertTrue(member.confirm(comparison))
+                            assertTrue(issuer.readChunk())
+
+                            val writer = Executors.newSingleThreadExecutor()
+                            try {
+                                val sending = writer.submit<Boolean> { issuer.confirm(issuerComparison) }
+                                assertTrue(flushed.await(5, TimeUnit.SECONDS))
+                                val confirmed = GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed)
+                                var chunks = 0
+                                while (member.state != confirmed) {
+                                    check(++chunks <= GroupAdmissionConfirmationFrameDecoder.MAX_CHUNK_BYTES)
+                                    assertTrue(member.readChunk())
+                                }
+                                assertEquals(active(GroupAdmissionConfirmationState.Sending(true)), issuer.state)
+
+                                val pending = assertNotNull(member.handover(fixture.member, randomNonce()))
+                                staged = pending
+                                assertTrue(store.stageGroupAdoption(pending, fixture.member.id))
+                                assertNull(store.localGroup())
+                                assertTrue(store.trusted().isEmpty())
+
+                                // Remote revocation wins even though the member already has both signatures.
+                                issuer.block()
+                                release.countDown()
+                                assertFalse(sending.get(5, TimeUnit.SECONDS))
+                                assertClosed(issuer, GroupAdmissionConfirmationFailure.Blocked)
+                                // JSSE may report EOF or a reset for the aborted real TLS connection.
+                                val received = try { member.readChunk() } catch (_: IOException) { false }
+                                assertFalse(received)
+                                assertRootClosed(member, GroupAdmissionConfirmationFailure.TransportClosed)
+                                assertNull(member.handover(fixture.member, randomNonce()))
+                                assertTrue(pending.sameRecord(assertNotNull(store.pendingGroupAdoption())))
+                            } finally {
+                                release.countDown()
+                                issuer.close()
+                                writer.shutdownNow()
+                                assertTrue(writer.awaitTermination(5, TimeUnit.SECONDS))
+                            }
+                        }
+                    }
+                }
+            }
+            openDesktopRepository(path).use { reopened ->
+                val pending = assertNotNull(reopened.pendingGroupAdoption())
+                assertTrue(assertNotNull(staged).sameRecord(pending))
+                assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                    GroupRootAdoptionJournalInspector.inspect(pending, pending.localIdentity))
+                assertNull(reopened.localGroup())
+                assertTrue(reopened.trusted().isEmpty())
+                assertTrue(reopened.history().isEmpty())
+            }
+        } finally {
+            Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
+        }
+    }
+
     @Test
     fun unknownStagedJournalVersionSurvivesFailedDecodeWithoutAuthorization() {
         val directory = Files.createTempDirectory("lantern-unknown-journal-")

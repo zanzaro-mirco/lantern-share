@@ -20,6 +20,79 @@ final class HandshakeV1ChannelTests: XCTestCase {
     private var listeners: [NWListener] = []
     private var namespaces: [String] = []
 
+    func testCandidateRootLocalCommitClosesAndDrainsTransportButKeepsReopenedMembership() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, directory) = try rootStore()
+        let committed = expectation(description: "local durable commit published")
+        let drained = expectation(description: "pending TLS receive drained after successful commit")
+        try confirmRoot(pair, offers: offers, evidence: evidence, store: store,
+            onSnapshot: { owner, snapshot in
+                if snapshot.phase == .confirmed {
+                    XCTAssertFalse(try owner.commitLocal(currentIdentity: pair.serverIdentity)) // No reentrant commit.
+                }
+                if snapshot.phase == .committed { committed.fulfill() }
+            }, onConfirmed: { owner in
+                do {
+                    XCTAssertNotNil(try owner.handover(currentIdentity: pair.serverIdentity))
+                    owner.whenClosedAndDrained { drained.fulfill() }
+                    XCTAssertTrue(try owner.commitLocal(currentIdentity: pair.serverIdentity))
+                    XCTAssertFalse(try owner.commitLocal(currentIdentity: pair.serverIdentity))
+                    owner.cancel()
+                    owner.block() // Retiring the owner is not durable group deletion/revocation.
+                    XCTAssertNil(try store.pendingGroupAdoption())
+                    XCTAssertNotNil(try store.committedGroupAdoption())
+                } catch { XCTFail("Local commit failed: \(error)") }
+            }, onClosed: { _ in XCTFail("Durable commit must not publish a cancellation failure") })
+        wait(for: [committed, drained], timeout: 10)
+        try queue.sync {
+            store.close()
+            rootStores.removeAll { $0 === store }
+            let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+            defer { reopened.close() }
+            XCTAssertNil(try reopened.pendingGroupAdoption())
+            let saved = try XCTUnwrap(reopened.committedGroupAdoption())
+            XCTAssertEqual(try GroupAdoptionJournalInspector.inspect(saved,
+                currentIdentityID: pair.serverIdentity.id).name, "HISTORICAL_SIGNATURES_VALID")
+            XCTAssertEqual(try reopened.localGroup()?.founderId, pair.clientIdentity.id)
+            XCTAssertEqual(try reopened.localGroup()?.groupId, String(repeating: "c", count: 64))
+            XCTAssertEqual(try reopened.trusted(), [])
+            XCTAssertEqual(try reopened.history().count, 0)
+        }
+    }
+
+    func testCandidateRootRevocationBeforeLocalCommitLeavesReopenedMembershipEmpty() throws {
+        let pair = try readyPair()
+        let offers = try freezeRootOffers(pair)
+        let evidence = try groupEvidence(issuer: pair.clientIdentity, member: pair.serverIdentity.id)
+        let (store, directory) = try rootStore()
+        let rejected = expectation(description: "block before commit rejected")
+        let drained = expectation(description: "revoked root owner drained")
+        try confirmRoot(pair, offers: offers, evidence: evidence, store: store, onConfirmed: { owner in
+            do {
+                XCTAssertNotNil(try owner.handover(currentIdentity: pair.serverIdentity))
+                owner.whenClosedAndDrained { drained.fulfill() }
+                owner.block()
+                XCTAssertFalse(try owner.commitLocal(currentIdentity: pair.serverIdentity))
+                rejected.fulfill()
+            } catch { XCTFail("Fixture handover failed: \(error)") }
+        }, onClosed: { failure in
+            guard case .root(let reason, _) = failure else { XCTFail("Missing typed block"); return }
+            XCTAssertEqual(reason.name, "BLOCKED")
+        })
+        wait(for: [rejected, drained], timeout: 10)
+        try queue.sync {
+            store.close()
+            rootStores.removeAll { $0 === store }
+            let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+            defer { reopened.close() }
+            XCTAssertNil(try reopened.localGroup())
+            XCTAssertNil(try reopened.committedGroupAdoption())
+            XCTAssertEqual(try reopened.trusted(), [])
+        }
+    }
+
     func testCandidateRootOwnerUsesActualTLSSignaturesAndReopenedDatabaseStaysEmpty() throws {
         let pair = try readyPair()
         let offers = try freezeRootOffers(pair)
