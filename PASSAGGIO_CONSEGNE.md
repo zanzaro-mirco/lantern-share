@@ -8,6 +8,18 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**Checkpoint precedente:** `866341f`, [PoC 39127227162](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227162) / [iOS ordinario 39127227075](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227075) success per stato/conclusione, letti da conclusi senza polling. Ultimo runtime Apple attestato e3080c9 / 141 XCTest simulatore, non hardware.
+
+**Incremento corrente:** IosGroupRootAdoption.handover mantiene la continuazione nella stessa facciata Kotlin. Journal da offerte/firme vive + evidence/DER endpoint forniti dal caller OS, core verifica binding/preflight; ritorno snapshot opaco senza stage/commit/byte pubblici. Revoche/deadline originali instradate al core, vecchi ticket inerti, frame parziale e nuovi dati rifiutati. Null su reentrancy o ticket firma/write pendente, @Throws preservati. Nessun cambio schema/wire/versioni/workflow/UI o owner Swift attivo.
+
+**Verificato/predisposto:** controllo host root-check.ps1 passato: Kotlin reale compilato/eseguito JVM con JDBC reale e IosPersistence/crypto di test, riapertura e scenari handover/revoche/deadline/binding/pending-frame. Variabile duplicata nella fixture locale corretta dopo un primo fallimento compile test. Harness ui/build ignorato, non Native/export/Swift/TLS/hardware. Quattro nuovi XCTest mantenuti nella fixture Apple esistente, NON compilati/eseguiti su Windows; nessun build Android/desktop estraneo. Dettagli in STATO/ADR 011.
+
+**Prossimo incremento unico:** owner Swift GroupRootAdoptionChannel, handover in-place con endpoint TLS effettivi, callback receive pendenti/drain e timer originale. La facciata non può rilevare NW receive: caller seriale non-UI responsabile del ritiro e di mantenere DB vivo. Prima esito iOS ordinario concluso/correzioni, poi checkpoint runtime Apple raggruppato con owner; niente dispatch completo duplicato/polling. Commit/recovery/UI separati, fase 1/hardware obbligatori aperti.
+
+### Storico — consegna dell'owner JVM/Android
+
+**Consegnato:** `866341f3443354bf0f71346635f77c00cd03e528`, cinque file, unico push. [PoC 39127227162](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227162) / [iOS ordinario 39127227075](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227075) in_progress nell'unica lettura post-push; nessun dispatch/polling/attesa o esito attestato. Leggere da concluse alla ripresa. Questa nota con STATO resta locale da preservare/raggruppare, niente secondo push solo documentale.
+
 **Checkpoint precedente:** `46e2847`, [PoC 39124809079](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809079) / [iOS ordinario 39124809090](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809090) success per stato/conclusione, letti da conclusi senza polling. Nessun nuovo runtime Apple inferito: ultimo completo e3080c9 / 141 XCTest simulatore, non hardware.
 
 **Incremento corrente:** GroupRootAdoptionConnection JVM/Android passa alla continuazione nello STESSO owner socket/timer: nessun gap di ownership, revoche e timer instradati al core nuovo, confronto precedente inerte. Nessun nuovo oggetto proprietario del socket. Null se I/O/firma/guard ancora pendenti, senza attendere sotto lock; caller deve joinare prima del retry. Journal dai messaggi realmente inviati/verificati/offerte/certificati TLS; rifiuto del frame parziale al confine e di qualsiasi dato successivo. EOF osservato dal read loop, timer autonomo originale. Nessuna scrittura/stage o autorizzazione implicita. Identità/gruppo serializzati dal caller, DB/scheduler caller-owned fino a close/join; ID nuovo OS fornito esternamente.

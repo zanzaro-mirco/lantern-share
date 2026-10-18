@@ -191,6 +191,125 @@ final class GroupRootAdoptionTests: XCTestCase {
         XCTAssertEqual(try store.trusted(), [])
     }
 
+    func testLiveHandoverIsMonouseReadOnlyAndRetiresComparison() throws {
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        defer { store.close() }
+        let local = try owner()
+        defer { try? local.cancel() }
+        try complete(local, store)
+        let historical = try XCTUnwrap(handover(local, store))
+        XCTAssertNil(try handover(local, store))
+        XCTAssertNil(try local.comparison())
+        XCTAssertFalse(try local.prepare(currentIdentityId: member, persistence: store))
+        XCTAssertEqual(try local.snapshot().phase.name, "CONFIRMED")
+        XCTAssertNil(try store.pendingGroupAdoption())
+        XCTAssertNil(try store.localGroup())
+        // Test verifier double only, not Apple DER/crypto evidence.
+        XCTAssertEqual(try historical.inspect(currentIdentityId: member,
+            verifyCertificateSignature: { _, _, _ in KotlinBoolean(bool: true) }).name, "HISTORICAL_SIGNATURES_VALID")
+        try local.block()
+        try local.cancel()
+        XCTAssertEqual(try local.snapshot().failure.name, "BLOCKED")
+        XCTAssertEqual(try historical.inspect(currentIdentityId: member,
+            verifyCertificateSignature: { _, _, _ in KotlinBoolean(bool: true) }).name, "HISTORICAL_SIGNATURES_VALID")
+        XCTAssertEqual(try store.trusted(), [])
+        XCTAssertEqual(try store.history().count, 0)
+    }
+
+    func testHandoverRetainsDeadlineAndAllRevocations() throws {
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        defer { store.close() }
+        var now: Int64 = 17
+        let expiring = try owner(clock: { now })
+        try complete(expiring, store)
+        now = 119_999
+        XCTAssertNotNil(try handover(expiring, store))
+        XCTAssertEqual(try expiring.remainingMillis()?.int64Value, 1)
+        now = 120_000
+        XCTAssertEqual(try expiring.snapshot().failure.name, "EXPIRED")
+        XCTAssertNil(try expiring.remainingMillis())
+        let actions: [(String, (IosGroupRootAdoption) throws -> Void)] = [
+            ("CANCELLED", { try $0.cancel() }), ("BLOCKED", { try $0.block() }),
+            ("LEFT_GROUP", { try $0.leaveGroup() }), ("TRANSPORT", { try $0.finish() }),
+        ]
+        for (reason, action) in actions {
+            let local = try owner()
+            try complete(local, store)
+            XCTAssertNotNil(try handover(local, store))
+            try action(local)
+            try local.cancel()
+            XCTAssertEqual(try local.snapshot().failure.name, reason)
+        }
+    }
+
+    func testHandoverRejectsPartialOrNewInputAndNeverStages() throws {
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        defer { store.close() }
+        let partial = try owner()
+        try complete(partial, store)
+        XCTAssertTrue(try partial.accept(chunk: KotlinByteArray(size: 1)))
+        XCTAssertThrowsError(try handover(partial, store))
+        XCTAssertEqual(try partial.snapshot().failure.name, "INVALID_FRAME")
+        let local = try owner()
+        try complete(local, store)
+        XCTAssertNotNil(try handover(local, store))
+        XCTAssertTrue(try local.accept(chunk: KotlinByteArray(size: 0)))
+        XCTAssertThrowsError(try local.accept(chunk: KotlinByteArray(size: 1)))
+        XCTAssertEqual(try local.snapshot().failure.name, "INVALID_FRAME")
+        XCTAssertNil(try store.pendingGroupAdoption())
+    }
+
+    func testHandoverRefusesBeforeWriteAndRechecksIdentityAndDatabase() throws {
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: try directory().path)
+        var closed = false
+        defer { if !closed { store.close() } }
+        let early = try owner()
+        XCTAssertNil(try handover(early, store))
+        XCTAssertTrue(try early.prepare(currentIdentityId: member, persistence: store))
+        let sign = try XCTUnwrap(early.confirm(ticket: try XCTUnwrap(early.comparison())))
+        XCTAssertNil(try handover(early, store))
+        let write = try XCTUnwrap(early.signed(ticket: sign, signature: "cHJvb2Y="))
+        XCTAssertNil(try handover(early, store))
+        try early.cancel()
+        XCTAssertFalse(try early.sent(ticket: write))
+        let changed = try owner()
+        try complete(changed, store)
+        XCTAssertNil(try changed.handover(currentIdentityId: issuer, persistence: store,
+            attemptId: String(repeating: "1", count: 64), boundEvidence: evidence(), memberCertificateDer: "AA=="))
+        XCTAssertEqual(try changed.snapshot().failure.name, "IDENTITY_CHANGED")
+        let unavailable = try owner()
+        try complete(unavailable, store)
+        let grouped = try owner()
+        try complete(grouped, store)
+        let foundation = try IosLocalGroupFoundation.companion.create(identityId: member)
+        let draft = try XCTUnwrap(foundation.prepare(persistence: store, generateGroupId: { self.group }))
+        XCTAssertEqual(try foundation.commit(ticket: draft, currentIdentityId: member, persistence: store).name, "COMMITTED")
+        XCTAssertNil(try handover(grouped, store))
+        XCTAssertEqual(try grouped.snapshot().failure.name, "ALREADY_IN_GROUP")
+        store.close()
+        closed = true
+        XCTAssertThrowsError(try handover(unavailable, store))
+        XCTAssertEqual(try unavailable.snapshot().failure.name, "STORAGE_FAILED")
+    }
+
+    private func handover(_ local: IosGroupRootAdoption, _ store: IosPersistence) throws -> IosGroupAdoptionJournalSnapshot? {
+        try local.handover(currentIdentityId: member, persistence: store,
+            attemptId: String(repeating: "1", count: 64), boundEvidence: evidence(), memberCertificateDer: "AA==")
+    }
+
+    private func complete(_ local: IosGroupRootAdoption, _ store: IosPersistence) throws {
+        let remote = try issuerOwner()
+        defer { remote.cancel() }
+        XCTAssertTrue(try local.prepare(currentIdentityId: member, persistence: store))
+        XCTAssertTrue(try remote.prepare())
+        let sign = try XCTUnwrap(local.confirm(ticket: try XCTUnwrap(local.comparison())))
+        let write = try XCTUnwrap(local.signed(ticket: sign, signature: "cHJvb2Y="))
+        let remoteSign = try XCTUnwrap(remote.confirm(ticket: try XCTUnwrap(remote.comparison())))
+        let remoteWrite = try XCTUnwrap(remote.signed(ticket: remoteSign, signature: "cHJvb2Y="))
+        XCTAssertTrue(try local.accept(chunk: remoteWrite.bytes))
+        XCTAssertTrue(try local.sent(ticket: write))
+    }
+
     private func owner(clock: @escaping () -> Int64 = { 17 }, proof: @escaping () -> Bool = { true }) throws -> IosGroupRootAdoption {
         try IosGroupRootAdoption.companion.create(
             offers: offers(local: member, peer: issuer, nonce: "2", peerNonce: "1"), evidence: evidence(),

@@ -108,10 +108,31 @@ non interpretato come conferma/commit/testo. Per osservare EOF il caller deve co
 le letture; il timer originale rimane attivo anche senza I/O/UI. Lo stesso close revoca
 la continuazione: non esiste una nuova proprietà pubblica del socket o un handle non custodito.
 
+### Facciata Kotlin iOS — 18 ottobre
+
+`IosGroupRootAdoption.handover` mantiene la continuazione dentro la facciata esistente,
+con offerte originali, firme conservate solo dopo sent/receive riusciti e stato CONFIRMED
+ancora revocabile. Richiede identità OS corrente, persistenza per il preflight, ID tentativo
+nuovo generato dall'OS, evidence completa con endpoint legati al TLS e DER del membro.
+Il core controlla proof/confronto/record esatti. La facciata non autentica certificati
+ricevuti: il futuro owner Apple deve fornire DER effettivi degli endpoint e verificatori OS.
+
+L'API restituisce soltanto `IosGroupAdoptionJournalSnapshot` opaco, ispezionabile ma senza
+scrittura, stage, commit o esposizione dei byte/record a Swift. Non introduce un secondo
+owner socket. Snapshot trattenuto e `HistoricalSignaturesValid` non ricreano consenso.
+Cancel/blocco/uscita/EOF/errori e deadline rimangono instradati alla continuazione;
+ticket vecchi e confronto sono ritirati, decoder termina al confine e rifiuta dati ulteriori.
+
+Tutte le chiamate restano sulla medesima coda seriale non-UI. Handover è rifiutato durante
+chiamate rientranti o ticket firma/write pendenti. Questo non rileva i receive NWConnection
+pendenti: il futuro owner OS deve ritirarli/drainarli prima di chiamarlo, preservare il timer
+originale, proseguire l'osservazione EOF e mantenere DB vivo fino a close/drain. Tale owner
+Swift non è modificato in questo incremento. Metodi fallibili mantengono `@Throws`.
+
 ## Verifica e conseguenze
 
 Test comuni di codec/binding/copie/limiti, firme P-256 reali, JDBC con riapertura, retry/conflitti fra connessioni, inserimento/rimozione falliti, storage corrotto/sola lettura e migrazioni 1→3/2→3. Integrazione TLS reale: firme raccolte sul canale, payload salvato in SQLite e riletto dopo chiusura/riapertura, pin/catena/entrambe le firme verificati; destinatario ancora senza gruppo/trust/storia. Una versione payload ignota rimane depositata dopo decode fallito.
 
 Tre test Native iOS predisposti per riapertura/retry/rimozione, migrazione 2→3 preservativa e rollback su errori prima/dopo INSERT e dopo DELETE. La fixture preesistente della migrazione 1→corrente rimuove entrambe le nuove tabelle per rappresentare davvero lo schema 1. Risultati e comandi effettivi in STATO; predisposizione non equivale a runtime Native o hardware.
 
-Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione, estesa al trasferimento/revoca della continuazione anche nell'owner JVM/Android. Nessuno stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Nuove prove comuni, P-256/JCA e TLS/SQLite coprono l'ispezione; i sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. Il prossimo incremento è la facciata Kotlin iOS della continuazione; nessun commit locale o collegamento Node/UI. Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.
+Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione, estesa al trasferimento/revoca della continuazione anche nell'owner JVM/Android. Nessuno stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Nuove prove comuni, P-256/JCA e TLS/SQLite coprono l'ispezione; i sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. La nuova facciata Kotlin iOS è verificata dal controllo host JVM/JDBC con boundary di test; quattro XCTest predisposti, non eseguiti su Windows. Il prossimo incremento collega il passaggio all'owner Swift preservando socket/timer e drain dei receive; nessun commit locale o collegamento Node/UI. Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.

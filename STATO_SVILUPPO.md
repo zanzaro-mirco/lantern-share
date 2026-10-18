@@ -1,6 +1,22 @@
 # Stato sviluppo — 18 ottobre 2026
 
-## Sintesi corrente — continuazione nell'owner JVM/Android
+## Sintesi corrente — facciata iOS della continuazione
+
+**Checkpoint precedente:** `866341f`, [PoC 39127227162](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227162) e [iOS ordinario 39127227075](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227075) completed/success per stato/conclusione, letti da conclusi senza polling. Nessun runtime Apple nuovo inferito; ultimo completo attestato e3080c9 / 141 XCTest simulatore, non hardware.
+
+**Implementato:** IosGroupRootAdoption.handover nella facciata Kotlin esistente. Conserva offerte originali e messaggi solo dopo sent/receive riusciti, costruisce journal col materiale endpoint OS fornito, core verifica record/proof/confronto e identità/gruppo correnti. Restituisce snapshot opaco non autorizzante, senza byte pubblici/stage/commit. Continua a custodire lo stesso motore revocabile: deadline/watermark, cancel/blocco/uscita/EOF/errori; ticket/confronto precedenti ritirati, frame parziale al confine e dati successivi rifiutati. Null per chiamate rientranti/ticket firma-write pendenti. API fallibili @Throws; nessun nuovo owner socket/DB, wire/schema/versione/dependency/workflow o caller UI.
+
+**Contratto OS esplicito:** coda seriale non-UI per tutte le chiamate e cambi identità/gruppo. ID tentativo nuovo generato dall'OS, evidence con certificati effettivi TLS e DER membro forniti dal futuro caller. Facciata non rileva receive NWConnection pendenti: l'owner Apple deve ritirare/drainare callback prima dell'handover, preservare timer originale/osservazione EOF e mantenere DB vivo fino a chiusura/drain. GroupRootAdoptionChannel Swift NON modificato e non chiama ancora l'API. Snapshot storico conservato dopo revoca non ripristina il vivo.
+
+**Verificato su questo host:** `& ./ui/build/foundation-portability/root-check.ps1`, successo dopo aver rinominato una variabile duplicata nella sola fixture host (primo tentativo fallito in compilazione del test, non produzione). Compilazione/esecuzione JVM dei sorgenti reali della facciata con boundary IosPersistence di test, SQLite/JDBC reale e firme/clock double confinati al test. Nuovi scenari monouso/snapshot storico distinto, assenza stage/gruppo/trust/storia, lifecycle e EOF, deadline originale, frame parziale/dati extra, identità cambiata, rifiuto handover rientrante da clock; controlli preesistenti callback/framing/errori e riapertura SQLite ancora passati. Controllo host e fixture in ui/build sono locali ignorati, NON artefatti di produzione o test Native. Nessuna build Android/desktop ripetuta per modifiche soltanto iosMain/Swift-test/documenti. Whitespace riuscito.
+
+**Apple predisposto NON verificato:** quattro XCTest aggiunti alla fixture GroupRootAdoptionTests esistente: monouso/nessuna scrittura, deadline/revoche, frame parziale/dati extra, rifiuto prima del write e ricontrolli identità/gruppo/DB chiuso. Boundary con SQLite reale quando eseguito su Apple, firme DER/crypto volutamente double, non prova TLS/Keychain. Windows non compila Native/export/Swift né esegue simulatore; nessun nuovo runtime/hardware dichiarato.
+
+**Prossimo incremento unico:** collegare handover a GroupRootAdoptionChannel Swift nello stesso owner di risorse, con evidence endpoint effettivi, gestione receive pendente/drain e timer originale. Prima leggere esito iOS ordinario da concluso e correggere eventuale export/compilazione. Runtime Apple delle nuove prove al checkpoint coerente con owner, non dispatch completo duplicato ora. Nessun commit SQLite/recovery/adozione distribuita/UI completato. Fase 0 chiusa, fase 1 e hardware obbligatori residui aperti.
+
+## Storico — owner JVM/Android, 18 ottobre
+
+**Consegnato:** `866341f3443354bf0f71346635f77c00cd03e528`, cinque file, unico push. [PoC 39127227162](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227162) e [iOS ordinario 39127227075](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39127227075) in_progress nell'unica lettura post-push. Nessun dispatch manuale, attesa o polling; nuova CI non attestata riuscita. Leggere da concluse alla ripresa. Nota locale con PASSAGGIO da includere nella prossima consegna coerente, nessun push documentale aggiuntivo.
 
 **Checkpoint precedente:** `46e2847`, [PoC 39124809079](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809079) e [iOS ordinario 39124809090](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809090) completed/success, letti una volta da conclusi per stato/conclusione. Nessun polling o nuovo runtime Apple inferito. Ultimo runtime Apple attestato resta e3080c9 / 141 XCTest nel simulatore; nessun hardware nuovo.
 

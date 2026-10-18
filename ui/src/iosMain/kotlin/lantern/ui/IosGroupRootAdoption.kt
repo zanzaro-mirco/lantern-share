@@ -1,5 +1,8 @@
 package lantern.ui
 
+import lantern.domain.PendingGroupAdoption
+import lantern.protocol.GroupAdmissionCertificate
+import lantern.protocol.GroupAdmissionConfirmation
 import lantern.protocol.GroupAdmissionConfirmationFailure
 import lantern.protocol.GroupAdmissionConfirmationFrameDecoder
 import lantern.protocol.GroupAdmissionConfirmationOperation
@@ -7,6 +10,10 @@ import lantern.protocol.GroupAdmissionConfirmationState
 import lantern.protocol.GroupRootAdoptionAttempt
 import lantern.protocol.GroupRootAdoptionFailure
 import lantern.protocol.GroupRootAdoptionState
+import lantern.protocol.GroupRootAdoptionHandover
+import lantern.protocol.GroupRootAdoptionJournal
+import lantern.protocol.GroupRootAdoptionJournalCodec
+import lantern.protocol.ProtocolHandshakeOffers
 
 enum class IosGroupRootFailure {
     NONE, IDENTITY_CHANGED, ALREADY_IN_GROUP, STORAGE_FAILED,
@@ -41,12 +48,19 @@ class IosGroupRootWrite internal constructor(
  * All calls, identity/group changes and lifecycle events must use its same non-UI serial queue.
  * SQLite preflight is synchronous; this facade neither closes the driver nor exposes commit.
  */
-class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdoptionAttempt) {
+class IosGroupRootAdoption private constructor(
+    private val attempt: GroupRootAdoptionAttempt,
+    private val offers: ProtocolHandshakeOffers,
+) {
     private val decoder = GroupAdmissionConfirmationFrameDecoder()
     private var prepared = false
     private var terminal: IosGroupRootSnapshot? = null
     private var signing: IosGroupRootSign? = null
     private var writing: IosGroupRootWrite? = null
+    private var continuation: GroupRootAdoptionHandover? = null
+    private var localConfirmation: GroupAdmissionConfirmation? = null
+    private var remoteConfirmation: GroupAdmissionConfirmation? = null
+    private var callsInProgress = 0
 
     val maximumChunkBytes: Int get() = GroupAdmissionConfirmationFrameDecoder.MAX_CHUNK_BYTES
 
@@ -56,13 +70,15 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
     @Throws(Exception::class)
     fun remainingMillis(): Long? = guarded {
         if (!active()) return@guarded null
-        val remaining = attempt.remainingMillis()
+        val previous = attempt.remainingMillis()
+        val next = continuation
+        val remaining = if (next == null) previous else next.remainingMillis()
         if (active()) remaining else null
     }
 
     @Throws(Exception::class)
     fun prepare(currentIdentityId: String, persistence: IosPersistence): Boolean = guarded {
-        if (!active() || prepared) return@guarded false
+        if (!comparing() || prepared) return@guarded false
         val accepted = attempt.prepare(currentIdentityId, persistence.localGroups)
         val alive = active() // A false result may have closed the core.
         prepared = accepted && alive
@@ -71,12 +87,12 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
 
     @Throws(Exception::class)
     fun comparison(): IosGroupAdmissionComparison? = guarded {
-        if (prepared && active()) attempt.comparison()?.let(::IosGroupAdmissionComparison) else null
+        if (prepared && comparing()) attempt.comparison()?.let(::IosGroupAdmissionComparison) else null
     }
 
     @Throws(Exception::class)
     fun confirm(ticket: IosGroupAdmissionComparison): IosGroupRootSign? = guarded {
-        if (!prepared || !active()) return@guarded null
+        if (!prepared || !comparing()) return@guarded null
         val request = attempt.confirm(ticket.ticket)
         if (!active() || request == null) return@guarded null
         IosGroupRootSign(request).also { signing = it }
@@ -99,6 +115,7 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
         if (!active() || writing !== ticket) return@guarded false
         writing = null
         val accepted = attempt.sent(ticket.request)
+        if (accepted) localConfirmation = GroupAdmissionConfirmation(ticket.request.sender, ticket.request.recipient, ticket.request.signature)
         val alive = active()
         accepted && alive
     }
@@ -122,6 +139,11 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
     fun accept(chunk: ByteArray): Boolean = guarded {
         if (!active()) return@guarded false
         check(prepared) { "Candidate root has not passed local preflight and proof verification" }
+        if (continuation != null) {
+            if (chunk.isEmpty()) return@guarded active()
+            close(IosGroupRootFailure.INVALID_FRAME)
+            throw IllegalArgumentException("Unexpected data after root adoption handover")
+        }
         val confirmations = try {
             decoder.accept(chunk)
         } catch (invalid: IllegalArgumentException) {
@@ -132,6 +154,7 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
             val accepted = attempt.receive(confirmation.sender, confirmation.recipient, confirmation.signature)
             val alive = active()
             if (!accepted || !alive) return@guarded false
+            remoteConfirmation = confirmation
         }
         active()
     }
@@ -140,13 +163,14 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
     fun finish(): Unit = guarded {
         if (!active()) return@guarded
         try {
-            decoder.finish()
+            if (continuation == null) decoder.finish()
         } catch (invalid: IllegalArgumentException) {
             close(IosGroupRootFailure.INVALID_FRAME)
             throw invalid
         } finally {
             if (terminal == null) {
-                attempt.transportClosed()
+                val next = continuation
+                if (next == null) attempt.transportClosed() else next.transportClosed()
                 observe()
             }
         }
@@ -154,17 +178,17 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
 
     @Throws(Exception::class)
     fun cancel(): Unit = guarded {
-        attempt.cancel()
+        continuation?.cancel() ?: attempt.cancel()
         observe()
     }
     @Throws(Exception::class)
     fun block(): Unit = guarded {
-        attempt.block()
+        continuation?.block() ?: attempt.block()
         observe()
     }
     @Throws(Exception::class)
     fun leaveGroup(): Unit = guarded {
-        attempt.leaveGroup()
+        continuation?.leaveGroup() ?: attempt.leaveGroup()
         observe()
     }
     @Throws(Exception::class)
@@ -172,18 +196,62 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
         if (active()) close(IosGroupRootFailure.TRANSPORT)
     }
 
+    /**
+     * In-place continuation only, NOT stage/commit or a new socket owner. The native caller
+     * drains old receive/sign/write callbacks before calling on its non-UI serial queue,
+     * preserves the original timer and supplies OS-bound endpoint evidence/member DER and
+     * a fresh OS-generated attempt ID. Evidence must describe this exact live proof.
+     * Returned immutable material cannot restore consent after revocation or restart.
+     */
+    @Throws(Exception::class)
+    fun handover(
+        currentIdentityId: String,
+        persistence: IosPersistence,
+        attemptId: String,
+        boundEvidence: IosGroupAdmissionEvidence,
+        memberCertificateDer: String,
+    ): IosGroupAdoptionJournalSnapshot? = guarded {
+        if (callsInProgress != 1 || !prepared || !comparing() || signing != null || writing != null) return@guarded null
+        if (attempt.state() != GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed)) return@guarded null
+        val memberCertificate = GroupAdmissionCertificate(offers.local.identity, memberCertificateDer)
+        val journal = GroupRootAdoptionJournal(boundEvidence.evidence, offers.local, offers.remote,
+            memberCertificate, checkNotNull(localConfirmation), checkNotNull(remoteConfirmation))
+        val record = PendingGroupAdoption(attemptId, offers.local.identity, offers.remote.identity,
+            boundEvidence.evidence.proof.anchor, GroupRootAdoptionJournalCodec.encode(journal))
+        val next = attempt.handover(currentIdentityId, persistence.localGroups, record, boundEvidence.evidence, memberCertificate)
+            ?: return@guarded null
+        continuation = next
+        try {
+            decoder.finish() // Never discard a buffered partial confirmation at the boundary.
+        } catch (invalid: IllegalArgumentException) {
+            close(IosGroupRootFailure.INVALID_FRAME)
+            throw invalid
+        }
+        localConfirmation = null
+        remoteConfirmation = null
+        if (active()) IosGroupAdoptionJournalSnapshot(record) else null
+    }
+
     private fun active() = observe().phase != IosGroupAdmissionPhase.CLOSED
+    private fun comparing() = active() && continuation == null
 
     private fun observe(): IosGroupRootSnapshot {
         terminal?.let { return it }
-        return when (val state = attempt.state()) {
+        val previous = attempt.state()
+        val state = continuation?.let {
+            when (val continued = it.state()) {
+                is GroupAdmissionConfirmationState.Closed -> GroupRootAdoptionState.Closed(GroupRootAdoptionFailure.Confirmation(continued.reason))
+                else -> GroupRootAdoptionState.Active(continued)
+            }
+        } ?: previous
+        return when (state) {
             is GroupRootAdoptionState.Closed -> close(when (val reason = state.reason) {
                 GroupRootAdoptionFailure.IdentityChanged -> IosGroupRootFailure.IDENTITY_CHANGED
                 GroupRootAdoptionFailure.AlreadyInGroup -> IosGroupRootFailure.ALREADY_IN_GROUP
                 GroupRootAdoptionFailure.StorageFailed -> IosGroupRootFailure.STORAGE_FAILED
                 is GroupRootAdoptionFailure.Confirmation -> failure(reason.reason)
             })
-            GroupRootAdoptionState.ReleasedForCommit -> error("This boundary never releases commit ownership")
+            GroupRootAdoptionState.ReleasedForCommit -> error("Missing live root adoption continuation")
             is GroupRootAdoptionState.Active -> when (val confirmation = state.confirmation) {
                 GroupAdmissionConfirmationState.AwaitingProof, GroupAdmissionConfirmationState.VerifyingProof ->
                     view(IosGroupAdmissionPhase.AWAITING_START)
@@ -205,22 +273,30 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
         if (terminal == null) {
             terminal = IosGroupRootSnapshot(IosGroupAdmissionPhase.CLOSED, reason, false)
             attempt.cancel()
+            continuation?.cancel()
             decoder.close()
             signing = null
             writing = null
+            localConfirmation = null
+            remoteConfirmation = null
         }
         return checkNotNull(terminal)
     }
 
-    private inline fun <T> guarded(action: () -> T): T = try {
-        action()
-    } catch (original: Throwable) {
-        // Preserve a storage/cancellation/core failure before the generic adapter fallback.
-        try { observe() } catch (secondary: Throwable) {
-            if (secondary !== original) original.addSuppressed(secondary)
+    private inline fun <T> guarded(action: () -> T): T {
+        callsInProgress++
+        try {
+            return action()
+        } catch (original: Throwable) {
+            // Preserve a storage/cancellation/core failure before the generic adapter fallback.
+            try { observe() } catch (secondary: Throwable) {
+                if (secondary !== original) original.addSuppressed(secondary)
+            }
+            close(IosGroupRootFailure.ADAPTER)
+            throw original
+        } finally {
+            callsInProgress--
         }
-        close(IosGroupRootFailure.ADAPTER)
-        throw original
     }
 
     private fun failure(reason: GroupAdmissionConfirmationFailure): IosGroupRootFailure = when (reason) {
@@ -255,7 +331,7 @@ class IosGroupRootAdoption private constructor(private val attempt: GroupRootAdo
             return IosGroupRootAdoption(GroupRootAdoptionAttempt(
                 offers.offers, offers.localIdentity, selectedPeerIdentity, authenticatedPeerIdentity,
                 evidence.evidence.proof, selectedAtMillis, nowMillis, verifyAdmissionSignature, verifyRemoteSignature,
-            ))
+            ), offers.offers)
         }
     }
 }
