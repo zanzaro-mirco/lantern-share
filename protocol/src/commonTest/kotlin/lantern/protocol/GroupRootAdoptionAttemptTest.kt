@@ -3,6 +3,7 @@ package lantern.protocol
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupRepository
+import lantern.domain.PendingGroupAdoption
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -362,6 +363,153 @@ class GroupRootAdoptionAttemptTest {
         assertEquals(confirmationClosed(GroupAdmissionConfirmationFailure.Cancelled), owner.state())
         assertNull(owner.releaseForCommit(member, repository { error("Closed request cannot read") }))
     }
+
+    @Test
+    fun handoverIsMonouseAndKeepsTheOriginalDeadlineAndRecord() {
+        val owner = confirmed()
+        val record = stagedRecord()
+        now = 1_000
+        val next = assertNotNull(handover(owner, record))
+        assertSame(record, next.record)
+        assertTrue(next.matchesRecord(stagedRecord()))
+        assertContentEquals(context.comparisonBytes(), next.draft.comparisonBytes())
+        assertEquals(GroupRootAdoptionState.ReleasedForCommit, owner.state())
+        assertNull(handover(owner, record))
+        assertNull(owner.releaseForCommit(member, repository()))
+        owner.cancel() // Lifecycle routing has moved to the receiving owner.
+        assertFalse(receive(owner)) // Retired transport callbacks cannot mutate the new owner.
+        assertEquals(GroupAdmissionConfirmationState.Confirmed, next.state())
+        assertEquals(GroupAdmissionConfirmationAttempt.TIMEOUT_MILLIS - 900, next.remainingMillis())
+        now = 100 + GroupAdmissionConfirmationAttempt.TIMEOUT_MILLIS
+        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.Expired), next.state())
+        assertFalse(next.matchesRecord(record))
+        assertNull(next.remainingMillis())
+    }
+
+    @Test
+    fun handoverRevocationIsTerminalAndPreservesFirstReason() {
+        val events: List<Pair<(GroupRootAdoptionHandover) -> Unit, GroupAdmissionConfirmationFailure>> = listOf(
+            { next: GroupRootAdoptionHandover -> next.cancel() } to GroupAdmissionConfirmationFailure.Cancelled,
+            { next: GroupRootAdoptionHandover -> next.block() } to GroupAdmissionConfirmationFailure.Blocked,
+            { next: GroupRootAdoptionHandover -> next.leaveGroup() } to GroupAdmissionConfirmationFailure.LeftGroup,
+            { next: GroupRootAdoptionHandover -> next.transportClosed() } to GroupAdmissionConfirmationFailure.TransportClosed,
+        )
+        for ((event, reason) in events) {
+            val next = assertNotNull(handover(confirmed(), stagedRecord()))
+            event(next)
+            next.cancel()
+            next.block()
+            assertEquals(GroupAdmissionConfirmationState.Closed(reason), next.state())
+            assertFalse(next.matchesRecord(stagedRecord()))
+            assertNull(next.remainingMillis())
+        }
+    }
+
+    @Test
+    fun mismatchedJournalDoesNotConsumeTheLiveAttempt() {
+        val variants = listOf(
+            stagedRecord(local = other), stagedRecord(peer = other),
+            stagedRecord(root = GroupTrustAnchor(other, founder)), stagedRecord(payload = byteArrayOf(1)),
+            stagedRecord(payload = GroupRootAdoptionJournalCodec.encode(journal(localSignature = "b3RoZXI="))),
+        )
+        for (record in variants) {
+            val owner = confirmed()
+            assertFailsWith<IllegalArgumentException> { handover(owner, record) }
+            val next = assertNotNull(handover(owner, stagedRecord()))
+            assertFalse(next.matchesRecord(record))
+            assertFalse(next.matchesRecord(stagedRecord(attemptId = other)))
+        }
+    }
+
+    @Test
+    fun handoverRequiresLiveConfirmationsAndFreshEmptyLocalContext() {
+        assertNull(handover(owner(), stagedRecord()))
+        val changed = confirmed()
+        assertNull(handover(changed, stagedRecord(), identity = other))
+        assertEquals(closed(GroupRootAdoptionFailure.IdentityChanged), changed.state())
+        val grouped = confirmed()
+        assertNull(handover(grouped, stagedRecord(), store = repository { anchor }))
+        assertEquals(closed(GroupRootAdoptionFailure.AlreadyInGroup), grouped.state())
+        val revoked = confirmed()
+        assertNull(handover(revoked, stagedRecord(), store = repository {
+            revoked.block()
+            null
+        }))
+        assertEquals(confirmationClosed(GroupAdmissionConfirmationFailure.Blocked), revoked.state())
+    }
+
+    @Test
+    fun handoverRetainsWatermarkAndPropagatesClockFailureWithoutResurrection() {
+        val next = assertNotNull(handover(confirmed(), stagedRecord()))
+        now = 199
+        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.ClockMovedBackwards), next.state())
+        now = 200
+        assertFalse(next.matchesRecord(stagedRecord()))
+
+        var fail = false
+        val failure = IllegalStateException("Test clock unavailable")
+        val owner = GroupRootAdoptionAttempt(ProtocolHandshakeOffers(memberOffer, issuerOffer, 200),
+            member, founder, founder, proof, 100, { if (fail) throw failure else now },
+            { _, _, _ -> true }, { _, _ -> true })
+        assertTrue(owner.prepare(member, repository()))
+        complete(owner)
+        val transferred = assertNotNull(handover(owner, stagedRecord()))
+        fail = true
+        assertSame(failure, assertFailsWith<IllegalStateException> { transferred.state() })
+        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.AdapterFailed), transferred.state())
+    }
+
+    @Test
+    fun handoverReadFailureAndReentryCannotLeakOrDuplicateAContinuation() {
+        val owner = confirmed()
+        val record = stagedRecord()
+        val failure = IllegalStateException("Test read failure")
+        assertSame(failure, assertFailsWith<IllegalStateException> {
+            handover(owner, record, store = repository {
+                assertNull(handover(owner, record))
+                throw failure
+            })
+        })
+        assertEquals(closed(GroupRootAdoptionFailure.StorageFailed), owner.state())
+        assertNull(handover(owner, record))
+
+        val expired = confirmed()
+        assertNull(handover(expired, record, store = repository {
+            now = 100 + GroupAdmissionConfirmationAttempt.TIMEOUT_MILLIS
+            null
+        }))
+        assertEquals(confirmationClosed(GroupAdmissionConfirmationFailure.Expired), expired.state())
+    }
+
+    @Test
+    fun substitutedEvidenceOrMemberCertificateCannotBindTheOriginalRecord() {
+        val owner = confirmed()
+        val record = stagedRecord()
+        val alteredEvidence = GroupAdmissionEvidence(proof, listOf(GroupAdmissionCertificate(founder, "AQ==")))
+        assertFailsWith<IllegalArgumentException> {
+            owner.handover(member, repository(), record, alteredEvidence, memberCertificate)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            owner.handover(member, repository(), record, evidence, GroupAdmissionCertificate(member, "AQ=="))
+        }
+        assertNotNull(handover(owner, record))
+    }
+
+    private val evidence get() = GroupAdmissionEvidence(proof, listOf(GroupAdmissionCertificate(founder, "AA==")))
+    private val memberCertificate get() = GroupAdmissionCertificate(member, "AA==")
+    private fun journal(localSignature: String = "cHJvb2Y=") = GroupRootAdoptionJournal(
+        evidence, memberOffer, issuerOffer, memberCertificate,
+        GroupAdmissionConfirmation(member, founder, localSignature),
+        GroupAdmissionConfirmation(founder, member, "cHJvb2Y="),
+    )
+    private fun stagedRecord(
+        attemptId: String = "1".repeat(64), local: String = member, peer: String = founder,
+        root: GroupTrustAnchor = anchor, payload: ByteArray = GroupRootAdoptionJournalCodec.encode(journal()),
+    ) = PendingGroupAdoption(attemptId, local, peer, root, payload)
+    private fun handover(
+        owner: GroupRootAdoptionAttempt, record: PendingGroupAdoption,
+        identity: String = member, store: LocalGroupRepository = repository(),
+    ) = owner.handover(identity, store, record, evidence, memberCertificate)
 
     private fun owner(
         selected: String = founder,

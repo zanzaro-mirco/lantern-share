@@ -1,4 +1,4 @@
-# Passaggio di consegne — 17 ottobre 2026
+# Passaggio di consegne — 18 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -7,6 +7,18 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
 ## Prossimo passo attuale
+
+**Ultimo checkpoint verificato:** `e3080c9`, [iOS completo 38981050486](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38981050486) e [PoC 38981039894](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38981039894) success, letti da conclusi senza polling. Framework/export/Native/app e **141 XCTest zero fallimenti** in simulatore; sette nuovi dell'ispettore inclusi. Bootstrap interop compilato, non eseguito. Nessun nuovo hardware.
+
+**Incremento corrente:** continuazione revocabile nel core Kotlin. `GroupRootAdoptionAttempt.handover` richiede conferme vive, preflight locale e record completo identico al journal canonico ricostruito dalle offerte/firme effettive. Trasferimento monouso dello stesso motore a `GroupRootAdoptionHandover`, deadline/watermark non resettati; revoche terminali, vecchi callback inerti. Handle non ricostruibile dal deposito, confronto snapshot non autorizzante. Nessun owner OS/caller/UI o commit SQLite nuovo; schema/wire/versioni invariati. ADR 011 aggiornato.
+
+**Verificato:** sette nuove regressioni comuni, protocollo completo **363 JVM / 327 unit Android** e **una integrazione TLS/P-256/SQLite reale**, tutti passati, zero failure/error/skipped. APK Android e classi desktop compilati; metadata comuni compilati. Checkpoint 38 s / 13 s; dopo ultime sole modifiche test protocollo completo ripetuto in 7 s, non app. Revoca EOF conserva deposito e verifica storica alla riapertura; non crea gruppo/trust/storia. Comandi in STATO. Nuova continuazione non verificata su Native/simulatore/hardware; non confondere il precedente Apple riuscito con questo incremento.
+
+**Prossimo incremento unico:** collegamento all'owner JVM/Android con trasferimento seriale del socket, timer originale e revoche, ritiro/drain dei vecchi callback e ownership senza gap. Non implementare ancora commit/recovery/UI. Identità/gruppo/blocco/record esatto richiedono futura arbitrazione atomica. Fase 1/hardware obbligatori aperti. Consegna unica raggruppata, niente polling CI.
+
+### Storico — consegna dell'ispezione, 17 ottobre
+
+**Consegnato:** `e3080c9cf99ba58d1352256d767c290028c262ef`, 17 file, unico push. [iOS completo 38981050486](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38981050486) queued, bootstrap_interop=false; [PoC 38981039894](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38981039894) in_progress nella sola lettura post-push valida (corretto il filtro SHA abbreviato che non restituiva run). Richiesta cancellazione duplicato ordinario iOS 38981039890, senza ricontrollare. Nessun polling/attesa, Apple nuovo NON ancora attestato. Leggere il completo da concluso prima del prossimo incremento; preservare questa nota locale e STATO, nessun push solo documentale.
 
 **Ultimo checkpoint concluso verificato:** `ef3026c`, [iOS completo 38632423380](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38632423380) / [PoC 38632422811](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38632422811) success. Native dominio/protocollo/SQLite eseguiti, **134 XCTest zero fallimenti** in simulatore; opt-in bootstrap compilato, non eseguito. Android/Windows test e compilazione riusciti. Nessun polling. Copre il deposito precedente, non il nuovo ispettore Apple qui sotto.
 

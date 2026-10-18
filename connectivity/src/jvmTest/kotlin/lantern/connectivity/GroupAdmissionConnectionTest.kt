@@ -434,19 +434,29 @@ class GroupAdmissionConnectionTest {
                         assertTrue(candidate.sent(send))
                         assertTrue(issuer.readChunk())
                         assertConfirmed(issuer)
-                        val draft = assertNotNull(candidate.releaseForCommit(member.id, memberStore))
+                        val memberCertificate = GroupAdmissionCertificate(member.id,
+                            Base64.getEncoder().encodeToString(member.certificate.encoded))
+                        val journal = GroupRootAdoptionJournal(received, offers.local, offers.remote, memberCertificate,
+                            GroupAdmissionConfirmation(send.sender, send.recipient, send.signature), remote)
+                        val pending = PendingGroupAdoption(randomNonce(), member.id, founder.id, anchor,
+                            GroupRootAdoptionJournalCodec.encode(journal))
+                        val handover = assertNotNull(candidate.handover(member.id, memberStore, pending, received, memberCertificate))
+                        val draft = handover.draft
                         assertEquals(anchor, draft.anchor)
                         assertEquals(member.id, draft.memberIdentity)
                         assertEquals(digest(rightCode.bytes), digest(draft.comparisonBytes()))
                         assertEquals(remote, draft.confirmations.remote)
                         assertEquals(GroupAdmissionConfirmation(send.sender, send.recipient, send.signature), draft.confirmations.local)
                         assertTrue(verifier.verify(member.id, sign.bytes, draft.confirmations.local.signature))
-                        val journal = GroupRootAdoptionJournal.fromDraft(draft, received, offers,
-                            GroupAdmissionCertificate(member.id, Base64.getEncoder().encodeToString(member.certificate.encoded)))
                         // Staging is NOT an adoption/commit acknowledgement or production recovery.
-                        val pending = PendingGroupAdoption(randomNonce(), member.id, founder.id, anchor,
-                            GroupRootAdoptionJournalCodec.encode(journal))
                         assertTrue(memberStore.stageGroupAdoption(pending, member.id))
+                        assertTrue(handover.matchesRecord(assertNotNull(memberStore.pendingGroupAdoption())))
+                        handover.transportClosed()
+                        assertFalse(handover.matchesRecord(pending))
+                        assertEquals(GroupAdmissionConfirmationState.Closed(GroupAdmissionConfirmationFailure.TransportClosed),
+                            handover.state())
+                        // EOF revokes live progress, not the historical material or its read-only inspection.
+                        assertTrue(pending.sameRecord(assertNotNull(memberStore.pendingGroupAdoption())))
                         assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
                             GroupRootAdoptionJournalInspector.inspect(assertNotNull(memberStore.pendingGroupAdoption()), member.id))
                         staged = pending

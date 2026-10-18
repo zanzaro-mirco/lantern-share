@@ -2,6 +2,7 @@ package lantern.protocol
 
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupRepository
+import lantern.domain.PendingGroupAdoption
 import kotlin.coroutines.cancellation.CancellationException
 
 sealed interface GroupRootAdoptionFailure {
@@ -47,7 +48,7 @@ class GroupRootAdoptionDraft internal constructor(
  * repository lifetime, peer trust, distributed commit or application traffic is owned here.
  */
 class GroupRootAdoptionAttempt(
-    offers: ProtocolHandshakeOffers,
+    private val offers: ProtocolHandshakeOffers,
     private val localIdentity: String,
     selectedPeerIdentity: String,
     authenticatedPeerIdentity: String,
@@ -121,6 +122,34 @@ class GroupRootAdoptionAttempt(
         val draft = GroupRootAdoptionDraft(proof, localIdentity, receipt)
         terminal = GroupRootAdoptionState.ReleasedForCommit
         return draft
+    }
+
+    /**
+     * Transfers the SAME live confirmation/deadline to a new serial owner. The supplied
+     * record must be the exact canonical journal for this comparison and endpoint evidence.
+     * Binding does not prove it was staged or authenticate its attempt ID/certificates.
+     * The caller transfers transport, timer and lifecycle routing before using the handle;
+     * old-owner callbacks must be drained/retired. No repository write or commit occurs.
+     */
+    fun handover(
+        currentIdentityId: String,
+        repository: LocalGroupRepository,
+        record: PendingGroupAdoption,
+        evidence: GroupAdmissionEvidence,
+        memberCertificate: GroupAdmissionCertificate,
+    ): GroupRootAdoptionHandover? {
+        if (readingLocalContext || !active() || confirmation.state != GroupAdmissionConfirmationState.Confirmed) return null
+        if (!checkLocalContext(currentIdentityId, repository)) return null
+        val receipt = confirmation.receipt() ?: return null
+        val draft = GroupRootAdoptionDraft(proof, localIdentity, receipt)
+        val journal = GroupRootAdoptionJournal.fromDraft(draft, evidence, offers, memberCertificate)
+        val expected = PendingGroupAdoption(record.attemptId, localIdentity, offers.remote.identity,
+            proof.anchor, GroupRootAdoptionJournalCodec.encode(journal))
+        require(expected.sameRecord(record)) { "Handover journal does not match live comparison" }
+        if (!active()) return null
+        val handover = GroupRootAdoptionHandover(draft, record, confirmation)
+        terminal = GroupRootAdoptionState.ReleasedForCommit
+        return handover
     }
 
     fun cancel() = invalidate { confirmation.cancel() }
