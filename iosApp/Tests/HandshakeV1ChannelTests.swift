@@ -30,7 +30,12 @@ final class HandshakeV1ChannelTests: XCTestCase {
         try confirmRoot(pair, offers: offers, evidence: evidence, store: store,
             onSnapshot: { owner, snapshot in
                 if snapshot.phase == .confirmed {
-                    XCTAssertFalse(try owner.commitLocal(currentIdentity: pair.serverIdentity)) // No reentrant commit.
+                    do {
+                        let committed = try owner.commitLocal(currentIdentity: pair.serverIdentity)
+                        XCTAssertFalse(committed) // No reentrant commit.
+                    } catch {
+                        XCTFail("Reentrant commit must be refused without throwing: \(error)")
+                    }
                 }
                 if snapshot.phase == .committed { committed.fulfill() }
             }, onConfirmed: { owner in
