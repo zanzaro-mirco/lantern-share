@@ -3,6 +3,11 @@ package lantern.connectivity
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.LocalGroupState
+import lantern.domain.LocalGroupFailure
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import lantern.protocol.GroupAdmissionCertificate
 import lantern.protocol.GroupAdmissionChainResult
 import lantern.protocol.GroupAdmissionCodec
@@ -46,6 +51,77 @@ class GroupRootAdoptionJournalInspectorTest {
     private val proof = GroupAdmissionProof(anchor, listOf(admission(founder, issuer), admission(issuer, member)))
     private val local = ProtocolHandshakeParticipant(member.id, randomNonce(), capabilities)
     private val remote = ProtocolHandshakeParticipant(issuer.id, randomNonce(), capabilities)
+
+    @Test
+    fun startupServiceReadsCommittedMembershipButNeverPromotesAPendingJournal() {
+        val directory = Files.createTempDirectory("lantern-membership-startup-")
+        val path = directory.resolve("member.db")
+        val record = record(journal())
+        try {
+            openDesktopRepository(path).use { store ->
+                assertTrue(store.stageGroupAdoption(record, member.id))
+            }
+            openDesktopRepository(path).use { store ->
+                LocalGroupService(member, store).use { service ->
+                    assertEquals(LocalGroupState.Empty, await(service))
+                    assertTrue(record.sameRecord(assertNotNull(store.pendingGroupAdoption())))
+                    assertNull(store.committedGroupAdoption())
+                }
+                // Fixture installs a committed record. Live consent/commit is tested separately
+                // with actual TLS in GroupAdmissionConnectionTest, not simulated by the service.
+                assertTrue(store.commitGroupAdoption(record, member.id))
+            }
+            openDesktopRepository(path).use { store ->
+                LocalGroupService(member, store).use { service ->
+                    assertEquals(LocalGroupState.Adopted(anchor), await(service))
+                    service.create()
+                    service.reload()
+                    assertEquals(LocalGroupState.Adopted(anchor), service.state.value)
+                }
+                LocalGroupService(founder, store).use { service ->
+                    assertEquals(LocalGroupState.Failed(LocalGroupFailure.IDENTITY_MISMATCH), await(service))
+                    service.create()
+                    service.reload()
+                    assertEquals(LocalGroupState.Failed(LocalGroupFailure.IDENTITY_MISMATCH), await(service))
+                }
+                assertTrue(record.sameRecord(assertNotNull(store.committedGroupAdoption())))
+                assertNull(store.pendingGroupAdoption())
+                assertTrue(store.trusted().isEmpty())
+                assertTrue(store.history().isEmpty())
+            }
+        } finally { Files.walk(directory).use { it.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
+    }
+
+    @Test
+    fun startupRejectsCorruptProofAndOsCertificateErrorsWithoutOverwriteOrCleanup() {
+        val cases = listOf(
+            record(journal(remoteSignature = member.sign(byteArrayOf(1)))) to LocalGroupFailure.INVALID_ROOT,
+            record(journal(memberCertificate = GroupAdmissionCertificate(member.id, "AA=="))) to LocalGroupFailure.STORAGE,
+        )
+        for ((record, failure) in cases) {
+            val directory = Files.createTempDirectory("lantern-membership-invalid-")
+            try {
+                openDesktopRepository(directory.resolve("member.db")).use { store ->
+                    assertTrue(store.stageGroupAdoption(record, member.id))
+                    assertTrue(store.commitGroupAdoption(record, member.id))
+                    LocalGroupService(member, store).use { service ->
+                        assertEquals(LocalGroupState.Failed(failure), await(service))
+                        service.create()
+                        service.reload()
+                        assertEquals(LocalGroupState.Failed(failure), await(service))
+                    }
+                    assertTrue(record.sameRecord(assertNotNull(store.committedGroupAdoption())))
+                    assertNull(store.pendingGroupAdoption())
+                    assertEquals(anchor, store.localGroup())
+                    assertTrue(store.trusted().isEmpty())
+                }
+            } finally { Files.walk(directory).use { it.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
+        }
+    }
+
+    private fun await(service: LocalGroupService): LocalGroupState = runBlocking {
+        withTimeout(5000) { service.state.first { it != LocalGroupState.Loading } }
+    }
 
     @Test
     fun checksRealDelegatedChainAndBothSignaturesWithoutPromotingTheCandidate() {

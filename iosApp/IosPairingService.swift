@@ -384,7 +384,8 @@ final class BonjourProbe: ObservableObject {
                 if let ticket = try owner.prepare(persistence: persistence) {
                     _ = try owner.commit(ticket: ticket, currentIdentity: identity, persistence: persistence)
                 }
-                try self.localGroup.created(identityId: identity.id, persistence: persistence)
+                try GroupAdoptionJournalInspector.loadLocalGroup(self.localGroup, identityID: identity.id,
+                    persistence: persistence, afterCreation: true)
             } catch { self.localGroup.createFailed() }
         }
     }
@@ -395,7 +396,7 @@ final class BonjourProbe: ObservableObject {
 
     private func loadLocalGroup() {
         guard let identity, let persistence else { localGroup.loadFailed(); return }
-        do { try localGroup.loaded(identityId: identity.id, persistence: persistence) }
+        do { try GroupAdoptionJournalInspector.loadLocalGroup(localGroup, identityID: identity.id, persistence: persistence) }
         catch { localGroup.loadFailed() }
     }
 

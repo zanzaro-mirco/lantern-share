@@ -5,6 +5,10 @@ import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupRepository
 import lantern.domain.PendingGroupAdoption
 import lantern.domain.GroupAdoptionRepository
+import lantern.domain.LocalGroupState
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import lantern.persistence.openDesktopRepository
 import lantern.protocol.GroupAdmissionBridgeFailure
 import lantern.protocol.GroupAdmissionBridgeState
@@ -158,9 +162,10 @@ class GroupAdmissionConnectionTest {
         val directory = Files.createTempDirectory("lantern-root-local-commit-")
         val path = directory.resolve("member.db")
         var saved: PendingGroupAdoption? = null
+        val peers = Peers()
         try {
             openDesktopRepository(path).use { store ->
-                withFixture { fixture ->
+                withFixture(peers) { fixture ->
                     fixture.rootOwner(store).use { member ->
                         fixture.clientOwner().use { issuer ->
                             assertFalse(member.commitLocal(fixture.member))
@@ -190,6 +195,15 @@ class GroupAdmissionConnectionTest {
                 assertNull(it.pendingGroupAdoption())
                 assertTrue(it.trusted().isEmpty())
                 assertTrue(it.history().isEmpty())
+                LocalGroupService(peers.member, it).use { service ->
+                    val displayed = runBlocking {
+                        withTimeout(5000) { service.state.first { state -> state != LocalGroupState.Loading } }
+                    }
+                    assertEquals(LocalGroupState.Adopted(record.anchor), displayed)
+                    service.create()
+                    assertTrue(record.sameRecord(assertNotNull(it.committedGroupAdoption())))
+                    assertTrue(it.trusted().isEmpty())
+                }
             }
         } finally { Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
     }

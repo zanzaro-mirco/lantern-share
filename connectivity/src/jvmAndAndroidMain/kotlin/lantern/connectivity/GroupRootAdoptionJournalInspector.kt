@@ -1,17 +1,27 @@
 package lantern.connectivity
 
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.GroupTrustAnchor
+import lantern.domain.LocalGroupState
 import lantern.protocol.GroupRootAdoptionJournalInspection
 import lantern.protocol.GroupRootAdoptionJournalInspectionResult
+import lantern.protocol.GroupAdmissionCertificate
+import lantern.protocol.localGroupPresentation
 import java.security.cert.X509Certificate
 
 /** OS boundary for historical inspection; no repository writes, live selection or authorization. */
 internal object GroupRootAdoptionJournalInspector {
-    fun inspect(record: PendingGroupAdoption, currentIdentityId: String): GroupRootAdoptionJournalInspectionResult {
+    fun inspect(record: PendingGroupAdoption, currentIdentityId: String): GroupRootAdoptionJournalInspectionResult =
+        withVerifier { GroupRootAdoptionJournalInspection.inspect(record, currentIdentityId, it) }
+
+    fun presentation(anchor: GroupTrustAnchor?, currentIdentityId: String, committed: PendingGroupAdoption?): LocalGroupState =
+        withVerifier { localGroupPresentation(anchor, currentIdentityId, committed, it) }
+
+    private fun <T> withVerifier(block: ((GroupAdmissionCertificate, ByteArray, String) -> Boolean) -> T): T {
         // Per-invocation only: no stale certificate/provider results survive a later inspection.
         val certificates = mutableMapOf<String, X509Certificate>()
         val verifier by lazy { GroupAdmissionCertificateVerifier(certificates::get) }
-        return GroupRootAdoptionJournalInspection.inspect(record, currentIdentityId) { supplied, bytes, signature ->
+        return block { supplied, bytes, signature ->
             certificates.getOrPut(supplied.identity) { GroupAdmissionEvidenceCertificates.decode(supplied) }
             verifier.verify(supplied.identity, bytes, signature)
         }

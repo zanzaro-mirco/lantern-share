@@ -4,12 +4,13 @@ import kotlinx.coroutines.flow.StateFlow
 
 enum class LocalGroupFailure { STORAGE, INVALID_ROOT, IDENTITY_MISMATCH }
 
-/** Local foundation only: none of these states grants remote membership or chat permission. */
+/** Local durable group only: none of these states grants peer trust or chat permission. */
 sealed interface LocalGroupState {
     data object Loading : LocalGroupState
     data object Empty : LocalGroupState
     data object Creating : LocalGroupState
     data class Founded(val anchor: GroupTrustAnchor) : LocalGroupState
+    data class Adopted(val anchor: GroupTrustAnchor) : LocalGroupState
     data class Failed(val reason: LocalGroupFailure) : LocalGroupState
     data object Closed : LocalGroupState
 }

@@ -14,11 +14,12 @@ import lantern.domain.LocalGroupController
 import lantern.domain.LocalGroupFailure
 import lantern.domain.LocalGroupRepository
 import lantern.domain.LocalGroupState
-import lantern.protocol.localGroupPresentation
+import lantern.domain.GroupAdoptionRepository
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Owns only local foundation work, not transport, sessions or repository lifetime.
+ * Owns local foundation work and read-only durable membership presentation, not transport,
+ * sessions or repository lifetime. Pending adoption journals are never consumed on startup.
  * The app supplies the same immutable OS identity as its Node and must close this service
  * before closing the database. Identity replacement requires recreating both owners.
  * UI entry points only reserve state/launch IO; opening the screen never creates a group.
@@ -87,7 +88,12 @@ class LocalGroupService(
         }
     }
 
-    private fun readState(): LocalGroupState = localGroupPresentation(repository.localGroup(), identity.id)
+    private fun readState(): LocalGroupState {
+        // Repositories are append-only for membership; a concurrent commit between these reads
+        // can yield a safe mismatch, never a promoted pending journal. Reload is explicit.
+        val committed = (repository as? GroupAdoptionRepository)?.committedGroupAdoption()
+        return GroupRootAdoptionJournalInspector.presentation(repository.localGroup(), identity.id, committed)
+    }
 
     override fun close() {
         synchronized(lifecycleGate) {

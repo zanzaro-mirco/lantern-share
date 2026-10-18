@@ -64,6 +64,45 @@ final class HandshakeV1ChannelTests: XCTestCase {
             XCTAssertEqual(try reopened.localGroup()?.groupId, String(repeating: "c", count: 64))
             XCTAssertEqual(try reopened.trusted(), [])
             XCTAssertEqual(try reopened.history().count, 0)
+            let controller = IosLocalGroupController(requestCreate: { XCTFail("already a member") }, requestReload: {})
+            defer { controller.close() }
+            try GroupAdoptionJournalInspector.loadLocalGroup(controller, identityID: pair.serverIdentity.id, persistence: reopened)
+            XCTAssertEqual(controller.snapshot().phase.name, "ADOPTED")
+            XCTAssertEqual(controller.snapshot().groupId, String(repeating: "c", count: 64))
+            controller.create()
+            controller.reload()
+            XCTAssertEqual(controller.snapshot().phase.name, "ADOPTED")
+
+            let foreign = IosLocalGroupController(requestCreate: { XCTFail("wrong OS identity") }, requestReload: {})
+            defer { foreign.close() }
+            try GroupAdoptionJournalInspector.loadLocalGroup(foreign, identityID: pair.clientIdentity.id, persistence: reopened)
+            XCTAssertEqual(foreign.snapshot().failure, "IDENTITY_MISMATCH")
+
+            let unavailable = IosLocalGroupController(requestCreate: { XCTFail("verification unavailable") }, requestReload: {})
+            defer { unavailable.close() }
+            XCTAssertThrowsError(try unavailable.loadedVerified(identityId: pair.serverIdentity.id, persistence: reopened,
+                verifyCertificateSignature: { _, _, _ in nil }))
+            XCTAssertEqual(unavailable.snapshot().phase.name, "LOADING") // No partially checked publication.
+            unavailable.loadFailed()
+            XCTAssertEqual(unavailable.snapshot().failure, "STORAGE")
+            unavailable.reload()
+            try GroupAdoptionJournalInspector.loadLocalGroup(unavailable, identityID: pair.serverIdentity.id, persistence: reopened)
+            XCTAssertEqual(unavailable.snapshot().phase.name, "ADOPTED")
+
+            let invalid = IosLocalGroupController(requestCreate: { XCTFail("invalid signature") }, requestReload: {})
+            defer { invalid.close() }
+            try invalid.loadedVerified(identityId: pair.serverIdentity.id, persistence: reopened,
+                verifyCertificateSignature: { _, _, _ in KotlinBoolean(bool: false) })
+            XCTAssertEqual(invalid.snapshot().failure, "INVALID_ROOT")
+            let closed = IosLocalGroupController(requestCreate: { XCTFail("closed") }, requestReload: {})
+            try closed.loadedVerified(identityId: pair.serverIdentity.id, persistence: reopened,
+                verifyCertificateSignature: { _, _, _ in
+                    closed.close() // Closing during OS verification cannot revive the published state.
+                    return KotlinBoolean(bool: true)
+                })
+            XCTAssertEqual(closed.snapshot().phase.name, "CLOSED")
+            XCTAssertNotNil(try reopened.committedGroupAdoption())
+            XCTAssertEqual(try reopened.trusted(), [])
         }
     }
 

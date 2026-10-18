@@ -1,12 +1,12 @@
 # ADR 012 — punto di commit e interruzioni dell'ammissione
 
 Data: 18 ottobre 2026. **Stato: politica A confermata esplicitamente dall'utente;
-implementazione locale e test JVM/Android riusciti, checkpoint Apple nuovo pendente.**
+implementazione locale e test JVM/Android/Apple riusciti nel checkpoint `a164425` / 39150669273.**
 Schema 4 additivo; nessun nuovo messaggio wire. B1 è verificato nel
 checkpoint iOS completo `ea25221` / [39141932749](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39141932749):
 Native, framework/export, app e 151 XCTest in simulatore riusciti; nessun collaudo fisico.
-B2 è collegato agli owner isolati, non ancora al servizio/UI; non è chiuso prima del
-checkpoint Native/Swift/simulatore. Nessuna nuova verifica fisica.
+B2 è collegato agli owner isolati e verificato Native/Swift/simulatore con 156 XCTest
+riusciti. Nessuna nuova verifica fisica; l'ingresso di ammissione nel servizio/UI resta B3.
 
 ## Problema concreto
 
@@ -163,3 +163,14 @@ Windows non verifica export/Swift o simulatore: esito del checkpoint nuovo in ST
 Non attivare servizio/UI (B3), sessioni o traffico prima dell'accettazione B2.
 Hardware di fase 1 ancora obbligatorio. Il commit locale non è commit distribuito,
 né l'ammissione già utilizzabile nell'app: ingresso servizio e UI restano separati.
+
+### Lettura dell'appartenenza al riavvio (prima parte B3)
+
+Dopo l'accettazione automatica B2, gli ingressi esistenti di gestione del gruppo leggono
+il marker `committedGroupAdoption`, non il pendente. La presentazione condivisa richiede
+radice coerente, identità corrente e ispettore storico con verificatori OS; distingue
+Adopted da Founded e non pubblica stato prima del termine delle verifiche. Errori di
+storage/provider, materiale non valido o identità diversa non offrono sovrascrittura
+né cleanup/replay automatici. La rilettura esplicita rimane di sola lettura. Non è
+autenticazione di una sessione e non assegna trust PoC; il flusso di nuova ammissione
+negli ingressi dell'app resta da integrare. Evidenze/limiti del nuovo Apple in STATO.

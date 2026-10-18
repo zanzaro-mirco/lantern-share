@@ -1,12 +1,24 @@
 # Stato sviluppo — 18 ottobre 2026
 
-## Organizzazione corrente — blocchi funzionali
+## Sintesi corrente — B3, appartenenza durevole al riavvio
+
+**B2 verificato automaticamente:** `a1644250896d970ed879797464c1234ae652167f`, [iOS completo 39150669273](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150669273) concluso success. Framework/export/app e step Native dominio/protocollo/persistenza riusciti; **156 XCTest zero fallimenti**, log 48,386 s (56,965 complessivi). Bootstrap interop compilato, runtime opt-in saltato. Stato/job e solo riepilogo test letti da concluso, nessun polling. Non hardware.
+
+**Prima parte B3 implementata/integrata:** stato Adopted distinto da Founded nel pannello Compose; lettura all'avvio/rilettura esplicita in LocalGroupService Android/desktop e BonjourProbe iOS. Solo il marker di commit esatto, radice coerente, identità OS e verifica della catena/due conferme permettono questa presentazione. Il pendente non è consultato/promosso/eliminato. Errori OS prima della pubblicazione, dati/firme non validi e identità diversa falliscono senza sovrascrivere; close impedisce aggiornamenti tardivi. Nessun nuovo trust, sessione o traffico; schema/wire/versioni/workflow invariati. Non è ancora possibile iniziare l'ammissione dalla UI: B3 resta aperto.
+
+**Verificato localmente (JDK 17):** controllo mirato di presentazione/ispettore/servizio con compilazione app riuscito in 35 s; checkpoint integrato `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :connectivity:jvmTest :androidApp:assembleDebug :desktopApp:classes --console=plain` riuscito in **31 s**. XML: 372 protocollo JVM, 336 unit Android, 189 connettività di cui uno mDNS opt-in saltato: **896 eseguiti/passati, zero failure/error**. APK/classi desktop compilati nel primo controllo, UP-TO-DATE nel secondo. Regole comuni mantenute, servizio con P-256/DER/SQLite e riapertura, integrazione TLS reale estesa fino al controller di servizio. Identità errata/prova alterata/provider fallito non cambiano il marker né creano trust/storia.
+
+**Apple nuovo ancora da verificare:** facciata Kotlin compilata/eseguita con il preesistente `& ./ui/build/foundation-portability/check.ps1` host/JDBC (esplorativo, non Native/Swift). Estensioni XCTest mantenute per marker reale dopo TLS/drain/riapertura, stato ADOPTED, identità diversa, errore provider senza pubblicazione parziale, rilettura, chiusura rientrante e pendente non promosso. Swift/Xcode non disponibili su Windows; checkpoint Apple richiesto, nessun nuovo hardware. Warning SLF4J preesistenti visibili, nessun errore locale.
+
+**Prossimo blocco unico:** esito Apple concluso/correzioni, poi ingressi di ammissione vivo nel servizio/azioni minime dell'app con gli owner già verificati. Non altre facciate senza consumer. B3 aperto; fase 0 chiusa, fase 1/hardware e gate UI obbligatori invariati. Evidenze e note precedenti sotto conservate; consegna raggruppata, niente polling o build per sole note.
+
+## Riferimenti precedenti — organizzazione e B2
 
 Piano, AGENTS e architettura: un blocco circoscritto attivo, passi compilabili interni senza consegne per strato, test mirati e checkpoint raggruppato, nessun polling CI. **B1 verificato automaticamente; B2 politica A confermata dall'utente e implementata negli owner isolati, nuovo Apple da verificare.** B3 servizio/UI resta coda nel rispetto del gate hardware. Non è ancora ammissione utilizzabile nell'app.
 
 **Intervento di pianificazione precedente:** solo documentazione, senza nuove build/CI/hardware. Il lavoro B1 successivo e le sue verifiche sono nella sintesi corrente sotto. Evidenze tecniche e note precedenti conservate, fase 0 chiusa, fase 1 e collaudi fisici obbligatori aperti. Sintesi future brevi con riferimenti, senza storico duplicato; nessuna archiviazione delle evidenze esistenti in questo intervento.
 
-## Sintesi corrente — B2, commit locale e interruzioni (politica A)
+### Evidenze B2 precedenti — commit locale e interruzioni (politica A)
 
 **Checkpoint concluso verificato:** `ea252211bea767a8bcfdad7b3bec1abe9b286f21`, [iOS completo 39141932749](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39141932749) success, bootstrap_interop=false. Framework/export/app compilati, task Native protocollo/dominio/persistenza eseguiti, **151 XCTest zero fallimenti** in simulatore (log 49,288 s). Bootstrap interop compilato soltanto, runtime opt-in saltato. Una lettura della run conclusa e riepilogo log del solo job iOS, nessun polling o nuova CI. Non su hardware; questo risultato sostituisce il precedente runtime attestato e3080c9 / 141 XCTest.
 
@@ -23,6 +35,8 @@ Piano, AGENTS e architettura: un blocco circoscritto attivo, passi compilabili i
 **Checkpoint 60260fc letto da concluso:** [iOS completo 39146576891](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39146576891) failure. Framework/export e step Native protocollo/persistenza success; Compile app and ordinary XCTest fallito, XCTest simulatore e bootstrap saltati. Errore unico: HandshakeV1ChannelTests.swift:31:25, conversione callback throws → non-throwing in onSnapshot. [PoC 39146567893](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39146567893) success per conclusione; duplicato iOS ordinario cancelled. Stati/job/errori letti da conclusi, nessun polling. Ultimo runtime XCTest riuscito resta B1 / 151, non B2.
 
 **Corretto, nuovo Apple da verificare:** separata la chiamata `try owner.commitLocal` dall'autoclosure XCTest: let dentro do/catch nel callback, poi XCTAssertFalse del Bool e XCTFail se l'operazione lancia. Rifiuto del commit rientrante ancora verificato dallo stesso test, nessuna asserzione rimossa né test saltato. Solo fixture Swift e note aggiornate/preservate, nessun cambiamento produzione/schema/wire/versioni/workflow. Diff/whitespace e revisione locali riusciti; nessuna build Kotlin/Android/desktop non pertinente. Compilazione Swift e runtime non verificabili su Windows: un nuovo checkpoint completo necessario, non dichiarato superato.
+
+**Consegnato:** `a1644250896d970ed879797464c1234ae652167f`, tre file, unico commit/push. [iOS completo 39150669273](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150669273) in_progress, bootstrap_interop=false; [PoC 39150654492](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150654492) success per conclusione, non nuova compilazione app dedotta. Sola lettura post-push e richiesta cancellazione duplicato iOS ordinario 39150654527, senza ricontrolli/polling/attese. Nuovo Apple NON attestato. Questa nota e PASSAGGIO locali da preservare/raggruppare, nessun altro push documentale.
 
 **Unico prossimo passo:** B2 non chiuso finché Native/export/Swift/simulatore nuovi non riusciti: leggere il completo da concluso e correggere prima di B3. Nessun ingresso Node/servizio/UI attivato; presentazione del membro adottato e recupero dello stato all'avvio appartengono a B3. Fase 0 chiusa; fase 1, collaudi fisici Android↔Windows/iPhone/Mac e gate UI invariati. Storico sotto conservato, nessun nuovo duplicato.
 

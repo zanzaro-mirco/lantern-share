@@ -94,6 +94,7 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
                 }
                 LocalGroupState.Creating -> Text("Salvataggio del gruppo…")
                 is LocalGroupState.Founded -> SelectionContainer { Text("Gruppo: ${current.anchor.groupId}") }
+                is LocalGroupState.Adopted -> SelectionContainer { Text("Membro del gruppo: ${current.anchor.groupId}") }
                 is LocalGroupState.Failed -> {
                     Text(when (current.reason) {
                         LocalGroupFailure.STORAGE -> "Impossibile leggere o salvare il gruppo. Nessun nuovo tentativo automatico."
@@ -104,7 +105,7 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
                 }
                 LocalGroupState.Closed -> Text("Gestione gruppo arrestata.")
             }
-            Text("La creazione salva solo la fondazione locale: non associa dispositivi e non abilita sessioni o messaggi di gruppo.")
+            Text("Lo stato locale non abilita sessioni o messaggi di gruppo. La creazione non associa dispositivi; l'ingresso di nuovi membri non è ancora disponibile da questa schermata.")
         }
     }
 }

@@ -48,6 +48,10 @@ final class LocalGroupControllerTests: XCTestCase {
         store.close()
         try controller.loaded(identityId: String(repeating: "a", count: 64), persistence: store)
         try controller.created(identityId: String(repeating: "a", count: 64), persistence: store)
+        try controller.loadedVerified(identityId: String(repeating: "a", count: 64), persistence: store,
+            verifyCertificateSignature: { _, _, _ in XCTFail("closed verifier"); return nil })
+        try controller.createdVerified(identityId: String(repeating: "a", count: 64), persistence: store,
+            verifyCertificateSignature: { _, _, _ in XCTFail("closed verifier"); return nil })
         controller.loadFailed()
         controller.createFailed()
         controller.create()

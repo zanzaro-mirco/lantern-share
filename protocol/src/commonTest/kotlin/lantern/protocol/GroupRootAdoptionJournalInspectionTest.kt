@@ -3,6 +3,8 @@ package lantern.protocol
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.LocalGroupState
+import lantern.domain.LocalGroupFailure
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -24,6 +26,45 @@ class GroupRootAdoptionJournalInspectionTest {
         SignedGroupAdmission(GroupAdmissionClaim(anchor.groupId, issuer, member), "AAAB"),
     ))
     private val journal = journal(proof)
+
+    @Test
+    fun committedPresentationRequiresMatchingRootIdentityAndEverySignature() {
+        val committed = record()
+        var calls = 0
+        assertEquals(LocalGroupState.Adopted(anchor), localGroupPresentation(anchor, member, committed) { _, _, _ ->
+            calls++
+            true
+        })
+        assertEquals(4, calls)
+        for (index in 0..3) {
+            calls = 0
+            assertEquals(LocalGroupState.Failed(LocalGroupFailure.INVALID_ROOT),
+                localGroupPresentation(anchor, member, committed) { _, _, _ -> calls++ != index })
+        }
+        for (root in listOf(null, anchor.copy(groupId = "f".repeat(64)))) {
+            assertEquals(LocalGroupState.Failed(LocalGroupFailure.INVALID_ROOT),
+                localGroupPresentation(root, member, committed) { _, _, _ -> error("No verification") })
+        }
+        assertEquals(LocalGroupState.Failed(LocalGroupFailure.IDENTITY_MISMATCH),
+            localGroupPresentation(anchor, founder, committed) { _, _, _ -> error("No verification") })
+        assertEquals(LocalGroupState.Failed(LocalGroupFailure.INVALID_ROOT),
+            localGroupPresentation(anchor, member, record(payload = byteArrayOf(1))) { _, _, _ -> error("No verification") })
+    }
+
+    @Test
+    fun presentationNeverInfersAdoptionWithoutCommittedMarkerOrSwallowsProviderFailure() {
+        assertEquals(LocalGroupState.Empty, localGroupPresentation(null, member, null) { _, _, _ -> error("No verification") })
+        assertEquals(LocalGroupState.Failed(LocalGroupFailure.IDENTITY_MISMATCH),
+            localGroupPresentation(anchor, member, null) { _, _, _ -> error("No verification") })
+        val failure = CancellationException("Test provider cancellation")
+        assertSame(failure, assertFailsWith<CancellationException> {
+            localGroupPresentation(anchor, member, record()) { _, _, _ -> throw failure }
+        })
+        val providerFailure = IllegalArgumentException("Test provider error")
+        assertSame(providerFailure, assertFailsWith<IllegalArgumentException> {
+            localGroupPresentation(anchor, member, record()) { _, _, _ -> throw providerFailure }
+        })
+    }
 
     @Test
     fun checksEveryDelegationAndBothDirectionsOnReconstructedBytes() {

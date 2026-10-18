@@ -6,7 +6,15 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Prossimo passo attuale
+## Ripartenza corrente — B3, appartenenza al riavvio
+
+B2 verificato automaticamente: `a164425`, [iOS completo 39150669273](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150669273) success, Native/framework/export/app e **156 XCTest senza fallimenti**; bootstrap compilato soltanto, nessun hardware. Politica A già approvata, non richiederla di nuovo. Decisioni in ADR 012, comandi/evidenze in STATO.
+
+Prima parte B3 implementata: LocalGroupService e BonjourProbe leggono il marker già committato e verificano identità/prove con gli adattatori OS; Compose distingue membro adottato da fondatore. Solo lettura all'avvio, nessuna promozione/cleanup del pendente o autorizzazione al traffico. Controllo integrato JVM/Android riuscito; nuovo Swift/XCTest da verificare nel checkpoint Apple. B3 NON completo: manca ancora l'ingresso di ammissione dagli utilizzatori dell'app, non una nuova API isolata. Gate hardware/UI invariati.
+
+**Prossimo blocco concreto:** dopo esito Apple concluso/correzioni, collegare il percorso di ammissione vivo agli ingressi del servizio e alle azioni/stati minimi dell'app, usando gli owner esistenti. Nessuna sessione/riconnessione/collegamento manuale o UI completa. Conservare note locali post-push e raggruppare; nessun polling CI. I riferimenti sotto sono evidenze precedenti, non istruzioni di ripartenza correnti.
+
+## Riferimenti precedenti — B1/B2 (preservati)
 
 **Metodo aggiornato il 18 ottobre:** seguire i blocchi funzionali e l'accettazione in PIANO_SVILUPPO, sezione 4. Un solo blocco attivo, passi interni senza conferme/consegne per classe, test mirati e checkpoint integrato raggruppato; nessun polling CI. AGENTS e ARCHITETTURA allineati; modifiche del piano da consegnare insieme al codice coerente, note precedenti preservate.
 
@@ -19,6 +27,8 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 **Checkpoint 60260fc letto da concluso:** [iOS completo 39146576891](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39146576891) failure nella compilazione XCTest Swift; framework/export e step test Native riusciti, simulatore XCTest e bootstrap non raggiunti. [PoC 39146567893](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39146567893) success per conclusione; iOS ordinario duplicato 39146567850 cancelled. Una lettura stati/job ed errori mirati, nessun polling. B2 non ancora verificato nel simulatore.
 
 **Correzione corrente:** solo HandshakeV1ChannelTests, callback onSnapshot del nuovo test commit/drain. `XCTAssertFalse(try owner.commitLocal(...))` faceva inferire un callback throws incompatibile con il contratto non-throwing. Ora chiamata fallibile assegnata a let dentro do/catch, Bool asserito separatamente e XCTFail su errore inatteso. Test di rifiuto rientrante preservato, nessuna modifica produzione/schema/wire/workflow. Revisione/diff/whitespace locali; Swift/Xcode non disponibili su Windows, nuova compilazione/runtime Apple da verificare. Note post-push precedenti preservate e raggruppate con la correzione, niente build Kotlin/app estranee.
+
+**Correzione consegnata:** `a1644250896d970ed879797464c1234ae652167f`, tre file, unico commit/push. [iOS completo 39150669273](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150669273) in_progress, bootstrap_interop=false; [PoC 39150654492](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150654492) success per conclusione nella sola lettura post-push (nessuna build app inferita dai job non letti). Richiesta cancellazione iOS ordinario duplicato 39150654527, nessun ricontrollo/polling. Nuova compilazione/runtime Apple non attestati; queste note con STATO restano locali da raggruppare, niente push solo Markdown.
 
 **Unico prossimo passo:** leggere il checkpoint Apple B2 da concluso e correggere eventuali errori prima di B3. La politica A è approvata: non richiederla di nuovo. Dopo verifica collegare ingressi del servizio e stato di appartenenza adottata in B3, rispettando gate UI e hardware di fase 1 ancora aperti. Non ricominciare basi verificate o introdurre commit distribuito/altre API isolate. Storico sotto conservato.
 

@@ -72,6 +72,13 @@ final class GroupRootAdoptionTests: XCTestCase {
         XCTAssertNotNil(try store.pendingGroupAdoption())
         XCTAssertNil(try store.localGroup())
 
+        let display = IosLocalGroupController(requestCreate: {}, requestReload: {})
+        defer { display.close() }
+        try display.loadedVerified(identityId: member, persistence: store,
+            verifyCertificateSignature: { _, _, _ in XCTFail("pending journal is not membership"); return nil })
+        XCTAssertEqual(display.snapshot().phase.name, "EMPTY")
+        XCTAssertNotNil(try store.pendingGroupAdoption()) // No startup cleanup or consent recovery.
+
         let retry = try owner(fresh: true)
         XCTAssertFalse(try retry.retryLocalCommit(currentIdentityId: member, persistence: store, replacingInterrupted: old))
         try complete(retry, store, fresh: true)
