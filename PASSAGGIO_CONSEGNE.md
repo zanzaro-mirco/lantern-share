@@ -8,6 +8,20 @@ Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e v
 
 ## Prossimo passo attuale
 
+**Checkpoint precedente:** `46e2847`, [PoC 39124809079](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809079) / [iOS ordinario 39124809090](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809090) success per stato/conclusione, letti da conclusi senza polling. Nessun nuovo runtime Apple inferito: ultimo completo e3080c9 / 141 XCTest simulatore, non hardware.
+
+**Incremento corrente:** GroupRootAdoptionConnection JVM/Android passa alla continuazione nello STESSO owner socket/timer: nessun gap di ownership, revoche e timer instradati al core nuovo, confronto precedente inerte. Nessun nuovo oggetto proprietario del socket. Null se I/O/firma/guard ancora pendenti, senza attendere sotto lock; caller deve joinare prima del retry. Journal dai messaggi realmente inviati/verificati/offerte/certificati TLS; rifiuto del frame parziale al confine e di qualsiasi dato successivo. EOF osservato dal read loop, timer autonomo originale. Nessuna scrittura/stage o autorizzazione implicita. Identità/gruppo serializzati dal caller, DB/scheduler caller-owned fino a close/join; ID nuovo OS fornito esternamente.
+
+**Verificato:** suite completa connettività **182 casi, uno mDNS opt-in saltato, 181 passati**, zero failure/error, checkpoint 29 s incluse compilazione APK Android/classi desktop. Otto nuove regressioni TLS e due integrazioni estese, riapertura SQLite e certificati reali. Un import test mancante corretto prima del checkpoint. Nuovo OS non provato sul telefono, Apple non modificato; niente versioni/schema/wire/workflow/caller UI. Comandi e limiti in STATO; ADR 011 aggiornato.
+
+**Revisione finale:** dopo il ricontrollo della fase anche nel timer/remaining, ripetuti solo otto nuovi test rootHandover più APK Android/classi desktop, successo 7 s sul codice definitivo. XML attuali selettivi; suite completa 181 passati attestata nel checkpoint precedente, non sommata due volte. Whitespace riuscito.
+
+**Prossimo incremento unico:** facciata Kotlin iOS della continuazione, senza duplicare protocollo in Swift; owner Apple/commit/recovery/UI restano separati. Fase 1/hardware obbligatori aperti. Conservare le note locali post-push e consegnare raggruppato, nessun polling.
+
+### Storico — consegna della continuazione core
+
+**Consegnato:** `46e28473ab51d3834ff2eda00c5ea8c55d26d5ed`, sette file, unico push. [PoC 39124809079](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809079) / [iOS ordinario 39124809090](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39124809090) in_progress nell'unica lettura post-push. Nessun dispatch/polling o esito nuovo attestato; leggere da concluse alla ripresa. Nota locale con STATO da preservare nel prossimo incremento, nessun push documentale aggiuntivo.
+
 **Ultimo checkpoint verificato:** `e3080c9`, [iOS completo 38981050486](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38981050486) e [PoC 38981039894](https://github.com/zanzaro-mirco/lantern-share/actions/runs/38981039894) success, letti da conclusi senza polling. Framework/export/Native/app e **141 XCTest zero fallimenti** in simulatore; sette nuovi dell'ispettore inclusi. Bootstrap interop compilato, non eseguito. Nessun nuovo hardware.
 
 **Incremento corrente:** continuazione revocabile nel core Kotlin. `GroupRootAdoptionAttempt.handover` richiede conferme vive, preflight locale e record completo identico al journal canonico ricostruito dalle offerte/firme effettive. Trasferimento monouso dello stesso motore a `GroupRootAdoptionHandover`, deadline/watermark non resettati; revoche terminali, vecchi callback inerti. Handle non ricostruibile dal deposito, confronto snapshot non autorizzante. Nessun owner OS/caller/UI o commit SQLite nuovo; schema/wire/versioni invariati. ADR 011 aggiornato.

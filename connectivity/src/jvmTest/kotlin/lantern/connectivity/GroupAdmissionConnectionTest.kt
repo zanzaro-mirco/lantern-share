@@ -54,6 +54,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.HandshakeCompletedListener
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -112,6 +113,16 @@ class GroupAdmissionConnectionTest {
                             assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), member.state)
                             assertNull(store.localGroup())
                             assertTrue(store.trusted().isEmpty())
+                            val pending = assertNotNull(member.handover(fixture.member, randomNonce()))
+                            assertNull(store.pendingGroupAdoption()) // Handover never stages on the caller's behalf.
+                            assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                                GroupRootAdoptionJournalInspector.inspect(pending, fixture.member.id))
+                            assertTrue(store.stageGroupAdoption(pending, fixture.member.id))
+                            assertNull(member.handover(fixture.member, randomNonce()))
+                            assertNull(member.comparison())
+                            assertFalse(member.confirm(comparison))
+                            assertFalse(member.prepare(fixture.member))
+                            assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), member.state)
                             member.block()
                             assertRootClosed(member, GroupAdmissionConfirmationFailure.Blocked)
                             assertTrue(fixture.serverSocket.isClosed)
@@ -124,10 +135,233 @@ class GroupAdmissionConnectionTest {
                 assertNull(reopened.localGroup())
                 assertTrue(reopened.trusted().isEmpty())
                 assertTrue(reopened.history().isEmpty())
+                val pending = assertNotNull(reopened.pendingGroupAdoption())
+                assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                    GroupRootAdoptionJournalInspector.inspect(pending, pending.localIdentity))
             }
         } finally {
             Files.walk(directory).use { files -> files.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
         }
+    }
+
+    @Test
+    fun rootHandoverFromReentrantClockCannotPublishTheRetiredPhase() = withFixture { fixture ->
+        var onClock: () -> Unit = {}
+        fixture.rootOwner(rootRepository(), now = { onClock(); monotonicMillis() }).use { owner ->
+            fixture.clientOwner().use { issuer ->
+                confirmRoot(fixture, owner, issuer)
+                onClock = {
+                    onClock = {}
+                    assertNotNull(owner.handover(fixture.member, randomNonce()))
+                }
+                assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), owner.state)
+                onClock = {
+                    onClock = {}
+                    owner.block()
+                }
+                assertRootClosed(owner, GroupAdmissionConfirmationFailure.Blocked)
+                assertTrue(fixture.serverSocket.isClosed)
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverRefusesAPartialFrameBufferedBehindTheValidConfirmation() = withFixture { fixture ->
+        var expected = 0
+        val tlsInput = fixture.serverSocket.inputStream
+        val input = object : FilterInputStream(tlsInput) {
+            override fun read(bytes: ByteArray): Int {
+                DataInputStream(tlsInput).readFully(bytes, 0, expected)
+                return expected
+            }
+        }
+        fixture.rootOwner(rootRepository(), socket = WrappedSocket(fixture.serverSocket, input = input)).use { owner ->
+            fixture.clientOwner().use { issuer ->
+                assertTrue(owner.prepare(fixture.member))
+                assertTrue(issuer.prepare())
+                assertTrue(owner.confirm(assertNotNull(owner.comparison())))
+                assertTrue(issuer.readChunk())
+                val frame = GroupAdmissionConfirmationFrameDecoder.encode(GroupAdmissionConfirmation(
+                    fixture.issuer.id, fixture.member.id,
+                    fixture.issuer.sign(fixture.context.approvalBytes(fixture.issuer.id)))) + byteArrayOf(0)
+                expected = frame.size
+                fixture.clientSocket.outputStream.write(frame)
+                fixture.clientSocket.outputStream.flush()
+                assertTrue(owner.readChunk())
+                assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), owner.state)
+                assertFailsWith<IllegalArgumentException> { owner.handover(fixture.member, randomNonce()) }
+                assertRootClosed(owner, GroupAdmissionConfirmationFailure.TransportClosed)
+                assertTrue(fixture.serverSocket.isClosed)
+                assertNull(owner.handover(fixture.member, randomNonce()))
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverReadFailureOrCancellationPropagatesAndRevokesTheContinuation() {
+        for (cancelled in listOf(false, true)) withFixture { fixture ->
+            var fail = false
+            val failure = if (cancelled) CancellationException("Test read cancelled") else IOException("Test read failed")
+            val input = object : FilterInputStream(fixture.serverSocket.inputStream) {
+                override fun read(bytes: ByteArray): Int {
+                    if (fail) throw failure
+                    return super.read(bytes)
+                }
+            }
+            fixture.rootOwner(rootRepository(), socket = WrappedSocket(fixture.serverSocket, input = input)).use { owner ->
+                fixture.clientOwner().use { issuer ->
+                    confirmRoot(fixture, owner, issuer)
+                    assertNotNull(owner.handover(fixture.member, randomNonce()))
+                    fail = true
+                    assertSame(failure, assertFailsWith<Exception> { owner.readChunk() })
+                    assertRootClosed(owner, if (cancelled) GroupAdmissionConfirmationFailure.Cancelled
+                        else GroupAdmissionConfirmationFailure.TransportClosed)
+                    assertTrue(fixture.serverSocket.isClosed)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverEofOrAdditionalDataRevokesWithoutAcceptingANewProtocol() {
+        for (extraData in listOf(false, true)) withFixture { fixture ->
+            fixture.rootOwner(rootRepository()).use { owner ->
+                fixture.clientOwner().use { issuer ->
+                    confirmRoot(fixture, owner, issuer)
+                    assertNotNull(owner.handover(fixture.member, randomNonce()))
+                    if (extraData) {
+                        fixture.clientSocket.outputStream.write(byteArrayOf(1))
+                        fixture.clientSocket.outputStream.flush()
+                        val failure = assertFailsWith<IOException> { owner.readChunk() }
+                        assertEquals("Unexpected data after root adoption handover", failure.message)
+                    } else {
+                        fixture.clientSocket.shutdownOutput()
+                        assertFalse(owner.readChunk())
+                    }
+                    assertRootClosed(owner, GroupAdmissionConfirmationFailure.TransportClosed)
+                    assertTrue(fixture.serverSocket.isClosed)
+                    assertFalse(fixture.scheduler.isShutdown)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverKeepsOriginalIdleDeadlineAndAbortsWithoutStateInspection() = withFixture { fixture ->
+        val selected = monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 1500
+        fixture.rootOwner(rootRepository(), selectedAt = selected).use { owner ->
+            fixture.clientOwner().use { issuer ->
+                confirmRoot(fixture, owner, issuer)
+                assertNotNull(owner.handover(fixture.member, randomNonce()))
+                val elapsed = CountDownLatch(1)
+                fixture.scheduler.schedule({ elapsed.countDown() }, 1800, TimeUnit.MILLISECONDS)
+                assertTrue(elapsed.await(5, TimeUnit.SECONDS))
+                assertTrue(fixture.serverSocket.isClosed)
+                assertRootClosed(owner, GroupAdmissionConfirmationFailure.Expired)
+                assertFalse(fixture.scheduler.isShutdown)
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverRejectsWhileARealReadIsInFlightWithoutWaitingForIt() = withFixture { fixture ->
+        var observe = false
+        val entered = CountDownLatch(1)
+        val input = object : FilterInputStream(fixture.serverSocket.inputStream) {
+            override fun read(bytes: ByteArray): Int {
+                if (observe) entered.countDown()
+                return super.read(bytes)
+            }
+        }
+        fixture.rootOwner(rootRepository(), socket = WrappedSocket(fixture.serverSocket, input = input)).use { owner ->
+            fixture.clientOwner().use { issuer ->
+                confirmRoot(fixture, owner, issuer)
+                observe = true
+                val reader = Executors.newSingleThreadExecutor()
+                try {
+                    val pending = reader.submit<Boolean> { try { owner.readChunk() } catch (_: IOException) { false } }
+                    assertTrue(entered.await(5, TimeUnit.SECONDS))
+                    assertNull(owner.handover(fixture.member, randomNonce()))
+                    assertEquals(GroupRootAdoptionState.Active(GroupAdmissionConfirmationState.Confirmed), owner.state)
+                    owner.block()
+                    assertFalse(pending.get(5, TimeUnit.SECONDS))
+                    assertRootClosed(owner, GroupAdmissionConfirmationFailure.Blocked)
+                } finally {
+                    reader.shutdownNow()
+                    assertTrue(reader.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverChecksCurrentIdentityMembershipAndReadErrorsAgain() {
+        for (scenario in 0..2) withFixture { fixture ->
+            var afterConfirmation = false
+            val failure = IllegalStateException("Test final root read unavailable")
+            val store = rootRepository {
+                if (!afterConfirmation || scenario == 0) null
+                else if (scenario == 1) fixture.anchor else throw failure
+            }
+            fixture.rootOwner(store).use { owner ->
+                fixture.clientOwner().use { issuer ->
+                    confirmRoot(fixture, owner, issuer)
+                    afterConfirmation = true
+                    val reason = when (scenario) {
+                        0 -> {
+                            assertNull(owner.handover(fixture.issuer, randomNonce()))
+                            GroupRootAdoptionFailure.IdentityChanged
+                        }
+                        1 -> {
+                            assertNull(owner.handover(fixture.member, randomNonce()))
+                            GroupRootAdoptionFailure.AlreadyInGroup
+                        }
+                        else -> {
+                            assertSame(failure, assertFailsWith<IllegalStateException> {
+                                owner.handover(fixture.member, randomNonce())
+                            })
+                            GroupRootAdoptionFailure.StorageFailed
+                        }
+                    }
+                    assertEquals(GroupRootAdoptionState.Closed(reason), owner.state)
+                    assertTrue(fixture.serverSocket.isClosed)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun rootHandoverRoutesCloseBlockAndLeaveAndPreservesFirstReason() {
+        val events: List<Pair<(GroupRootAdoptionConnection) -> Unit, GroupAdmissionConfirmationFailure>> = listOf(
+            { owner: GroupRootAdoptionConnection -> owner.close() } to GroupAdmissionConfirmationFailure.Cancelled,
+            { owner: GroupRootAdoptionConnection -> owner.block() } to GroupAdmissionConfirmationFailure.Blocked,
+            { owner: GroupRootAdoptionConnection -> owner.leaveGroup() } to GroupAdmissionConfirmationFailure.LeftGroup,
+        )
+        for ((event, reason) in events) withFixture { fixture ->
+            fixture.rootOwner(rootRepository()).use { owner ->
+                fixture.clientOwner().use { issuer ->
+                    confirmRoot(fixture, owner, issuer)
+                    assertNotNull(owner.handover(fixture.member, randomNonce()))
+                    event(owner)
+                    owner.close()
+                    owner.block()
+                    assertRootClosed(owner, reason)
+                    assertTrue(fixture.serverSocket.isClosed)
+                }
+            }
+        }
+    }
+
+    private fun confirmRoot(fixture: Fixture, owner: GroupRootAdoptionConnection, issuer: GroupAdmissionConnection) {
+        assertTrue(owner.prepare(fixture.member))
+        assertTrue(issuer.prepare())
+        val comparison = assertNotNull(owner.comparison())
+        assertContentEquals(assertNotNull(issuer.comparison()).bytes, comparison.bytes)
+        assertTrue(issuer.confirm(assertNotNull(issuer.comparison())))
+        assertTrue(owner.readChunk())
+        assertTrue(owner.confirm(comparison))
+        assertTrue(issuer.readChunk())
+        assertConfirmed(issuer)
     }
 
     @Test
@@ -274,8 +508,13 @@ class GroupAdmissionConnectionTest {
         withFixture { fixture ->
             val certificates = fixture.certificates + (fixture.issuer.id to fixture.member.certificate)
             fixture.rootOwner(rootRepository(), certificates = certificates).use { owner ->
-                assertTrue(owner.prepare(fixture.member))
-                assertNotNull(owner.comparison()) // Actual TLS certificate overrides hostile evidence.
+                fixture.clientOwner().use { issuer ->
+                    confirmRoot(fixture, owner, issuer)
+                    val pending = assertNotNull(owner.handover(fixture.member, randomNonce()))
+                    // Actual TLS certificate overrides hostile evidence also in the captured journal.
+                    assertEquals(GroupRootAdoptionJournalInspectionResult.HistoricalSignaturesValid,
+                        GroupRootAdoptionJournalInspector.inspect(pending, fixture.member.id))
+                }
             }
         }
     }
@@ -1817,16 +2056,17 @@ class GroupAdmissionConnectionTest {
         fun rootOwner(repository: LocalGroupRepository, socket: SSLSocket = serverSocket,
             selectedAt: Long = this.selectedAt, selectedPeer: String = issuer.id,
             proof: GroupAdmissionProof = this.proof,
-            certificates: Map<String, X509Certificate> = this.certificates): GroupRootAdoptionConnection {
+            certificates: Map<String, X509Certificate> = this.certificates,
+            now: () -> Long = ::monotonicMillis): GroupRootAdoptionConnection {
             // The offers already crossed real TLS in exchangeContext. Retire this pure
             // bootstrap fixture before adopting; it owns no socket or deadline task.
             val bootstrap = ProtocolHandshakeAttempt(memberOffer, issuer.id, issuer.id,
-                selectedAt, ::monotonicMillis) { _, _ -> error("No bootstrap APPROVE") }
+                selectedAt, now) { _, _ -> error("No bootstrap APPROVE") }
             assertTrue(bootstrap.receive(ProtocolHandshakeFrame.Hello(issuerOffer)))
             val offers = assertNotNull(bootstrap.offersForGroupAdmission())
             bootstrap.cancel()
             return GroupRootAdoptionConnection.adopt(socket, member, repository, offers,
-                proof, certificates, selectedPeer, selectedAt, scheduler)
+                proof, certificates, selectedPeer, selectedAt, scheduler, now)
         }
     }
 

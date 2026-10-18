@@ -81,10 +81,37 @@ riserva il record. Draft/record trattenuti dopo revoca non ricreano permessi. Il
 commit richiede arbitrazione atomica, identità OS/gruppo/blocco/record e liveness ricontrollati.
 Questo incremento non collega gli owner JVM/Swift, il servizio o la UI, e non adotta una root.
 
+### Owner JVM/Android — 18 ottobre
+
+`GroupRootAdoptionConnection.handover(currentIdentity, attemptId)` collega la continuazione
+senza spostare socket o timer in un secondo oggetto OS. Lo stesso owner passa dalla fase
+confronto alla fase continuazione dentro il lock lifecycle: close/blocco/uscita/errori/EOF
+e timer instradati alla nuova fase, nessun intervallo privo di responsabile delle risorse.
+La vecchia API di confronto diventa inerte; lo stato OS resta Active(Confirmed) finché vivo,
+non è lo stato interno ReleasedForCommit del tentativo ritirato.
+
+Firma e I/O mantengono il lock lifecycle libero come prima. Un contatore di operazioni
+comprende firma/read/write, guard di errore e cleanup: handover restituisce null mentre
+ci sono operazioni vecchie pendenti, senza aspettarne il drain sotto lock. Caller tenuto
+a completare/join quelle chiamate prima del retry, e a serializzare cambi identità/gruppo.
+Database e scheduler rimangono caller-owned, vivi fino a chiusura e join dell'owner.
+
+Il journal deriva dalle conferme conservate solo dopo sent/receive riusciti e dalle offerte
+originali. DER dei due endpoint effettivi TLS prevalgono sull'evidence ricevuta; la catena
+include i certificati di tutti gli emittenti. Il core ricontrolla identità/gruppo e binding
+esatto. ID casuale OS fornito dal caller, non generato o autenticato dal repository.
+Il record restituito non è depositato automaticamente e non autorizza un commit.
+
+Il decoder termina al confine: frame parziali residui falliscono prima di pubblicare il
+record. Dopo il passaggio, readChunk monitora EOF/errori; qualsiasi nuovo dato è rifiutato,
+non interpretato come conferma/commit/testo. Per osservare EOF il caller deve continuare
+le letture; il timer originale rimane attivo anche senza I/O/UI. Lo stesso close revoca
+la continuazione: non esiste una nuova proprietà pubblica del socket o un handle non custodito.
+
 ## Verifica e conseguenze
 
 Test comuni di codec/binding/copie/limiti, firme P-256 reali, JDBC con riapertura, retry/conflitti fra connessioni, inserimento/rimozione falliti, storage corrotto/sola lettura e migrazioni 1→3/2→3. Integrazione TLS reale: firme raccolte sul canale, payload salvato in SQLite e riletto dopo chiusura/riapertura, pin/catena/entrambe le firme verificati; destinatario ancora senza gruppo/trust/storia. Una versione payload ignota rimane depositata dopo decode fallito.
 
 Tre test Native iOS predisposti per riapertura/retry/rimozione, migrazione 2→3 preservativa e rollback su errori prima/dopo INSERT e dopo DELETE. La fixture preesistente della migrazione 1→corrente rimuove entrambe le nuove tabelle per rappresentare davvero lo schema 1. Risultati e comandi effettivi in STATO; predisposizione non equivale a runtime Native o hardware.
 
-Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione, ora estesa al trasferimento/revoca della continuazione. Nessuno stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Nuove prove comuni, P-256/JCA e TLS/SQLite coprono l'ispezione; i sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. Il prossimo incremento collega il trasferimento revocabile all'owner JVM/Android e alla sua durata di risorse; non introduce ancora un commit locale. Il journal storico non può sostituire il confronto vivo. Risultati della nuova continuazione in STATO.
+Nessun owner/caller attivo salva questi record ancora: il percorso TLS di deposito è una fixture di integrazione, estesa al trasferimento/revoca della continuazione anche nell'owner JVM/Android. Nessuno stato distribuito, nuova fondazione remota, UI recovery, rotazione di identità o wire modificato. Nuove prove comuni, P-256/JCA e TLS/SQLite coprono l'ispezione; i sette XCTest dell'ispettore Apple sono passati nel checkpoint 38981050486 (141 totali), non su hardware. Il prossimo incremento è la facciata Kotlin iOS della continuazione; nessun commit locale o collegamento Node/UI. Il journal storico non può sostituire il confronto vivo. Risultati effettivi in STATO.
