@@ -21,4 +21,6 @@ interface LocalGroupController {
     fun create()
     /** Explicit read-only recovery after an error; never generates an identity or a group. */
     fun reload()
+    /** Read-only refresh after a separate admission owner may have committed membership. */
+    fun refreshMembership() = reload()
 }

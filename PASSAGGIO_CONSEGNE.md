@@ -1,4 +1,4 @@
-# Passaggio di consegne — 18 ottobre 2026
+# Passaggio di consegne — 19 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -6,11 +6,23 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B3, appartenenza al riavvio
+## Ripartenza corrente — B3, ingresso Android/desktop
+
+Checkpoint precedente verificato: `dc33c26`, [iOS completo 39167348683](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39167348683) success, Native/export/app e **156 XCTest zero fallimenti** (48,351 s, 49,476 complessivi); [PoC 39167348209](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39167348209) success per conclusione. Letture da concluse, nessun polling. Appartenenza al riavvio verificata anche nel simulatore, non hardware.
+
+Nuovo blocco: primo ingresso effettivo Android/desktop dal fondatore a un dispositivo senza gruppo. Node riusa listener/discovery, selezione v1 esplicita separata dal PoC, pin/TLS legati alla selezione esatta, HELLO/evidence/owner esistenti, codice completo e due clic; commit locale A, rilettura della membership e riapertura. Azioni minime nel pannello Compose, non UI completa. `group-admission` obbligatoria e ruolo `group-issuer`/`group-candidate` nei normali supportedFeatures HELLO: solo instradamento, mai autorità. Nessun nuovo formato/schema o trust PoC/traffico di gruppo. Dettagli e verifiche correnti in STATO e AMMISSIONE_GRUPPO.
+
+**B3 resta aperto:** nuovo ingresso non ancora collegato a BonjourProbe/iOS; emittente non fondatore richiede ancora il produttore della prova delegata. Non sono ruoli amministrativi di prodotto né una riduzione del requisito «ogni membro autorizza». Sessioni/riconnessione/collegamento manuale esclusi. Hardware di fase 1 e gate UI completa invariati.
+
+**Prossimo blocco concreto:** leggere l'esito CI concluso/correggere, poi portare lo stesso ingresso esplicito fondatore→nuovo membro nel servizio iOS, con Kotlin condiviso, owner Swift esistenti e drain prima della chiusura SQLite. Nessun polling. Note post-push precedenti preservate nella consegna corrente; nessun push solo documentale.
+
+## Evidenze precedenti — B3, appartenenza al riavvio
 
 B2 verificato automaticamente: `a164425`, [iOS completo 39150669273](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39150669273) success, Native/framework/export/app e **156 XCTest senza fallimenti**; bootstrap compilato soltanto, nessun hardware. Politica A già approvata, non richiederla di nuovo. Decisioni in ADR 012, comandi/evidenze in STATO.
 
 Prima parte B3 implementata: LocalGroupService e BonjourProbe leggono il marker già committato e verificano identità/prove con gli adattatori OS; Compose distingue membro adottato da fondatore. Solo lettura all'avvio, nessuna promozione/cleanup del pendente o autorizzazione al traffico. Controllo integrato JVM/Android riuscito; nuovo Swift/XCTest da verificare nel checkpoint Apple. B3 NON completo: manca ancora l'ingresso di ammissione dagli utilizzatori dell'app, non una nuova API isolata. Gate hardware/UI invariati.
+
+Consegnato `dc33c260b4a3e3ab0a29e735f228422928c28dd5`, unico push. [Checkpoint iOS completo 39167348683](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39167348683) e [PoC 39167348209](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39167348209) queued nella sola lettura post-push. Richiesta cancellazione duplicato iOS ordinario 39167348332; nessun ricontrollo/polling o nuovo esito attestato. Leggere da concluse alla ripresa. Questa nota e STATO locali da raggruppare alla prossima consegna, niente push solo documentale.
 
 **Prossimo blocco concreto:** dopo esito Apple concluso/correzioni, collegare il percorso di ammissione vivo agli ingressi del servizio e alle azioni/stati minimi dell'app, usando gli owner esistenti. Nessuna sessione/riconnessione/collegamento manuale o UI completa. Conservare note locali post-push e raggruppare; nessun polling CI. I riferimenti sotto sono evidenze precedenti, non istruzioni di ripartenza correnti.
 

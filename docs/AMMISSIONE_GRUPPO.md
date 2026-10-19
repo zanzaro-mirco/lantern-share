@@ -1,5 +1,47 @@
 # Dichiarazione di ammissione al gruppo
 
+## Ingresso nell'app Android/desktop — 19 ottobre 2026
+
+Il pannello tecnico espone «Ingresso gruppo» distinto dal pairing PoC. Il fondatore
+crea prima il gruppo; il nuovo membro non deve avere un gruppo. Entrambi selezionano
+il peer scoperto. Node sospende il reconnect PoC durante la selezione e ritira i vecchi
+socket: il protocollo si sceglie localmente, mai sniffando/facendo fallback da byte remoti.
+Ogni handshake TLS cattura il token esatto della selezione; un'altra selezione non può
+riusare quel TLS. Pin e scadenza restano quelli della selezione originale (120 s).
+
+Il normale HELLO v1 usa requiredFeatures `["group-admission"]` e supportedFeatures con
+`group-admission` più un solo ruolo locale: `group-issuer` oppure `group-candidate`.
+Ruoli uguali/ambigui sono rifiutati prima dell'evidence. Sono metadati pubblici per
+l'instradamento, NON appartenenza o autorità: radice locale del fondatore, catena,
+certificati endpoint, firme e doppia conferma restano obbligatori. Non cambia alcun
+campo, codec, formato di prova o versione wire; nessun nuovo frame/ACK distribuito.
+Queste capability di servizio vanno riusate nel futuro ingresso Apple.
+
+Il fondatore usa prepareFounderGroupAdmission e l'evidence esistente. Il destinatario
+cede il bootstrap direttamente a GroupRootAdoptionConnection, non all'overload con
+radice indipendente: la radice ricevuta è candidata e viene legata al confronto completo.
+Nessun owner precedente resta attivo, anche se l'inizializzazione del ricevente fallisce.
+Il ticket core rimane privato al worker: la UI deve restituire proprio l'istanza mostrata,
+non solo lo stesso hash. Non si legge/signa in parallelo mentre si attende il clic locale;
+timer e annullamento restano attivi. Dopo write e conferma remota verificate il destinatario
+esegue handover e commit locale A; l'emittente non può attestare il salvataggio remoto e
+mantiene TLS fino al ritiro/deadline. Nessun trust PoC o traffico di gruppo è abilitato.
+
+Esito SQLite incerto: stato terminale e rilettura della membership, senza replay. Un
+pendente già presente richiede la specifica azione «nuovo confronto e sostituzione»:
+snapshot esatto trattenuto alla selezione e rimosso solo dopo nuove firme/conferme, non
+all'avvio. Cancel/blocco/arresto prima dell'handoff di commit impediscono il salvataggio;
+un commit già in corso può completare, non è rollback/uscita dal gruppo.
+
+membershipRevision segnala la rilettura anche dopo la chiusura della selezione durante
+il commit. Il pannello richiede una lettura OS/SQLite, non deduce l'appartenenza dal contatore;
+LocalGroupService non perde la richiesta arrivata mentre una lettura/creazione era in corso.
+
+Test mantenuti GroupAdmissionServiceTest sul vero Node coprono TLS/P-256/SQLite,
+riapertura, consenso mancante/vecchio, ruoli errati, blocco, riprova/esito incerto e ritorno
+esplicito al PoC. Esiti effettivi in STATO. Ingresso servizio iOS e inviti da membro
+delegato ancora aperti; il fondatore non diventa un amministratore di prodotto.
+
 ## Ispezione del candidato depositato — 17 ottobre 2026
 
 `GroupRootAdoptionJournalInspection` controlla uno snapshot senza modificarlo: decode completo, identità OS corrente ↔ metadati ↔ ruoli/radice del payload, intera catena e firme di membro/emittente sui byte canonici ricostruiti. Usa gli stessi certificati esatti dei pin dichiarati; il verificatore OS applica DER, curva, validità, autofirma e firma. Nessuna nuova codifica di rete o migrazione. L'ID tentativo non è autenticato dalle firme storiche.

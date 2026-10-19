@@ -17,6 +17,9 @@ import lantern.domain.DeviceController
 import lantern.domain.DeviceRepository
 import lantern.domain.DeviceState
 import lantern.domain.DiscoveryService
+import lantern.domain.GroupAdmissionController
+import lantern.domain.GroupAdmissionState
+import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Peer
 import lantern.domain.Reconnection
 import lantern.protocol.Wire
@@ -35,7 +38,7 @@ class Node(
     private val discovery: DiscoveryService,
     private val address: InetAddress,
     private val requestedPort: Int = 0,
-) : DeviceController, AutoCloseable {
+) : DeviceController, GroupAdmissionController, AutoCloseable {
     private val mutable = MutableStateFlow(DeviceState(
         name = repository.name(),
         id = identity.id,
@@ -50,6 +53,11 @@ class Node(
     @Volatile private var activeRun: ServiceRun? = null
     @Volatile private var cleanupJob: Job? = null
     @Volatile private var closed = false
+    private val admissions = GroupAdmissionService(identity, repository as? GroupAdoptionRepository, scope) {
+        !closed && activeRun != null
+    }
+    override val admissionState = admissions.admissionState
+    override val membershipRevision = admissions.membershipRevision
 
     val port: Int get() = activeRun?.server?.localPort ?: 0
 
@@ -124,7 +132,7 @@ class Node(
     }
 
     private fun createListener(): SSLServerSocket =
-        (identity.context(authorization::allowsHandshake).serverSocketFactory
+        (identity.context(::allowsHandshake).serverSocketFactory
             .createServerSocket(requestedPort, LISTEN_BACKLOG, address) as SSLServerSocket).apply {
             enabledProtocols = arrayOf("TLSv1.3")
             needClientAuth = true
@@ -132,6 +140,11 @@ class Node(
 
     private suspend fun reconnectLoop(run: ServiceRun) {
         while (isCurrent(run)) {
+            if (admissions.active) {
+                admissions.selectedPeer()?.takeIf { Reconnection.initiates(identity.id, it.id) }?.let { connect(run, it) }
+                delay(DISCOVERY_POLL_MILLIS)
+                continue
+            }
             authorization.takeExpired()?.let { expired ->
                 run.channels[expired]?.close()
                 update(run) { it.copy(pairingPeer = null, comparisonCode = null, status = "Associazione scaduta") }
@@ -156,6 +169,7 @@ class Node(
     @Synchronized
     override fun pair(peer: Peer) {
         val run = checkNotNull(activeRun) { "Servizio arrestato" }
+        admissions.cancelGroup()
         if (authorization.isTrusted(peer.id)) return
         reject()
         authorization.select(peer.id)
@@ -179,6 +193,7 @@ class Node(
 
     @Synchronized
     override fun block(peerId: String) {
+        admissions.block(peerId)
         authorization.revoke(peerId)
         activeRun?.channels?.get(peerId)?.let(resourceCloser::close)
         mutable.update {
@@ -199,7 +214,7 @@ class Node(
             try {
                 val remote = InetAddress.getByName(peer.host)
                 require(remote.isSiteLocalAddress || remote.isLinkLocalAddress || remote.isLoopbackAddress) { "Indirizzo non locale" }
-                socket = identity.context { it == peer.id && authorization.allowsHandshake(it) }
+                socket = identity.context { it == peer.id && allowsHandshake(it) }
                     .socketFactory.createSocket() as SSLSocket
                 if (!registerSocket(run, socket)) return@launch
                 socket.connect(InetSocketAddress(remote, peer.port), CONNECT_TIMEOUT_MILLIS)
@@ -217,18 +232,24 @@ class Node(
         }
     }
 
-    private fun handle(run: ServiceRun, socket: SSLSocket, expectedPeer: String?) {
+    private suspend fun handle(run: ServiceRun, socket: SSLSocket, expectedPeer: String?) {
         var connection: PeerConnection? = null
         try {
             check(isCurrent(run))
+            val admissionToken = admissions.selectionToken()
             socket.soTimeout = HANDSHAKE_TIMEOUT_MILLIS
             socket.enabledProtocols = arrayOf("TLSv1.3")
             socket.startHandshake()
+            check(isCurrent(run) && admissions.matchesSelection(admissionToken))
             val certificate = socket.session.peerCertificates.single() as X509Certificate
             val remoteId = digest(certificate.encoded)
-            require(remoteId != identity.id && authorization.allowsHandshake(remoteId))
+            require(remoteId != identity.id && allowsHandshake(remoteId))
             require(expectedPeer == null || expectedPeer == remoteId)
             if (expectedPeer == null) require(Reconnection.initiates(remoteId, identity.id))
+            if (admissionToken != null) {
+                admissions.handle(socket, remoteId, admissionToken)
+                return
+            }
             connection = PeerConnection(
                 socket, remoteId, certificate, identity, authorization, repository,
                 isActive = { isCurrent(run) }, onEvent = { event -> onConnectionEvent(run, remoteId, event) },
@@ -295,6 +316,7 @@ class Node(
     override fun stop() {
         val run = activeRun
         activeRun = null
+        admissions.cancelGroup()
         authorization.cancel()
         run?.job?.cancel()
         run?.let {
@@ -318,7 +340,28 @@ class Node(
             pendingCleanup?.join()
             lifetime.cancelAndJoin()
         }
+        admissions.close()
     }
+
+    private fun allowsHandshake(peerId: String): Boolean =
+        if (admissions.active) admissions.allowsHandshake(peerId) else authorization.allowsHandshake(peerId)
+
+    @Synchronized
+    override fun selectGroupPeer(peer: Peer, replaceInterrupted: Boolean) {
+        val run = activeRun ?: return
+        if (closed) return
+        reject()
+        // A protocol is chosen explicitly, never sniffed/fallen back from untrusted bytes.
+        // Drain old PoC sockets before enabling selected v1 TLS. The listener stays alive.
+        val cleanup = resourceCloser.closeAll(run.sockets.toList())
+        admissions.select(peer, replaceInterrupted, cleanup)
+        discovered(run, peer)
+    }
+
+    override fun confirmGroup(comparison: GroupAdmissionState.Comparing) = admissions.confirmGroup(comparison)
+
+    @Synchronized
+    override fun cancelGroup() = admissions.cancelGroup()
 
     private fun closeSocket(socket: java.io.Closeable) {
         runCatching { socket.close() }

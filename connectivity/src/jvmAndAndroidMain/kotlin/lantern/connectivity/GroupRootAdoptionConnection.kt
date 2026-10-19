@@ -40,7 +40,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * Handover keeps the SAME socket/timer owner and routes lifecycle to the live continuation;
  * no resource is released to an unguarded caller. Reads after handover observe EOF/failure
  * only; additional data is rejected, not interpreted as a new protocol or commit message.
- * Local commit uses policy A; no Node caller or application traffic is enabled here.
+ * Local commit uses policy A. GroupAdmissionService drives it from Node's explicit v1 path;
+ * this owner never grants application traffic.
  */
 internal class GroupRootAdoptionConnection private constructor(
     private val socket: SSLSocket,
@@ -73,6 +74,9 @@ internal class GroupRootAdoptionConnection private constructor(
 
     val state: GroupRootAdoptionState
         get() = guarded { synchronized(stateLock) { snapshotLocked() } }
+
+    /** Untrusted candidate presentation only; does not grant membership. */
+    val candidateAnchor get() = proof.anchor
 
     /** Keep the repository alive until this owner has been closed and all I/O joined. */
     fun prepare(currentIdentity: Identity): Boolean = guarded {

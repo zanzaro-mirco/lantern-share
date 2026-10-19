@@ -138,7 +138,8 @@ preservate. Errore dalla chiamata di commit: CommitOutcomeUnknown terminale, mai
 automatico. Il risultato va riletto tramite committedGroupAdoption (anche in IosPersistence)
 e verificato con identità OS corrente e ispettore storico esistente. L'assenza del marker
 non autorizza la promozione del solo pendente; marker già durevole e valido non richiede
-nuovi clic. Questa rilettura è disponibile/testata, non ancora orchestrata nella UI.
+nuovi clic. Questa rilettura è disponibile/testata e ora orchestrata dal pannello
+Android/desktop; l'ingresso di ammissione nel servizio iOS resta aperto.
 
 ## Accettazione e limiti
 
@@ -173,4 +174,6 @@ Adopted da Founded e non pubblica stato prima del termine delle verifiche. Error
 storage/provider, materiale non valido o identità diversa non offrono sovrascrittura
 né cleanup/replay automatici. La rilettura esplicita rimane di sola lettura. Non è
 autenticazione di una sessione e non assegna trust PoC; il flusso di nuova ammissione
-negli ingressi dell'app resta da integrare. Evidenze/limiti del nuovo Apple in STATO.
+negli ingressi Android/desktop è ora collegato dal fondatore a un nuovo membro, con
+selezione distinta dal PoC e azioni minime (AMMISSIONE_GRUPPO, 19 ottobre). Ingresso
+iOS e produttore della prova delegata ancora aperti. Evidenze/limiti in STATO.

@@ -13,6 +13,7 @@ import javax.net.ssl.SSLException
 import javax.net.ssl.SSLSocket
 import kotlin.concurrent.read
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.GroupAdoptionRepository
 import lantern.protocol.GroupAdmissionConfirmationContext
 import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.GroupAdmissionEvidence
@@ -118,6 +119,13 @@ internal class HandshakeV1Connection private constructor(
         synchronized(stateLock) { if (activeLocked() && !exchangingEvidence) attempt.comparison() else null }
     }
 
+    /** Negotiated HELLO metadata only, not proof of membership or issuer authority. */
+    fun remoteCapabilitiesForGroup(): ProtocolCapabilities? = guarded {
+        synchronized(stateLock) {
+            if (activeLocked() && !exchangingEvidence) attempt.offersForGroupAdmission()?.remote?.capabilities else null
+        }
+    }
+
     /** The UI must pass the retained ticket ONLY after explicit comparison on both devices. */
     fun confirm(comparison: ProtocolHandshakeComparison): Boolean = socketOperation {
         val signing = synchronized(stateLock) {
@@ -148,6 +156,47 @@ internal class HandshakeV1Connection private constructor(
     /** Member-only receive; the mandatory anchor is independent of the received proof. */
     fun receiveEvidenceAndTransfer(expectedAnchor: GroupTrustAnchor): GroupAdmissionConnection? =
         exchangeEvidence(expectedAnchor, null)
+
+    /**
+     * New-member path, NOT the anchored-member overload above. The received root remains a
+     * candidate until the root owner's full comparison, two confirmations and local commit.
+     * Retires this owner atomically; never exposes unowned offers/socket to the service.
+     */
+    fun receiveRootEvidenceAndTransfer(repository: GroupAdoptionRepository): GroupRootAdoptionConnection? {
+        val exclusive = operations.writeLock()
+        if (!exclusive.tryLock()) return null
+        try {
+            return guarded {
+                synchronized(stateLock) {
+                    if (!activeLocked() || attempt.offersForGroupAdmission() == null) return@guarded null
+                    exchangingEvidence = true
+                }
+                val evidence = stream.readEvidence {
+                    synchronized(stateLock) {
+                        requireEvidenceActiveLocked()
+                        socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+                    }
+                }
+                val certificates = GroupAdmissionEvidenceCertificates.decode(evidence)
+                synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    val offers = checkNotNull(attempt.offersForGroupAdmission())
+                    // Receiving core validates candidate roles; initialization failure aborts
+                    // the released socket rather than restoring the bootstrap owner.
+                    expiryTask?.cancel(false)
+                    expiryTask = null
+                    attempt.cancel()
+                    phase = HandshakeV1ConnectionState.ReleasedToGroup
+                    GroupRootAdoptionConnection.adopt(socket, identity, repository, offers,
+                        evidence.proof, certificates, selectedPeerIdentity, selectedAtMillis, scheduler) {
+                        nowMillis().also { require(it >= offers.observedAtMillis) { "Handover clock moved backwards" } }
+                    }
+                }
+            }
+        } finally {
+            exclusive.unlock()
+        }
+    }
 
     private fun exchangeEvidence(
         expectedAnchor: GroupTrustAnchor,

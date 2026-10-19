@@ -31,6 +31,7 @@ class LocalGroupService(
     private val mutable = MutableStateFlow<LocalGroupState>(LocalGroupState.Loading)
     override val state = mutable.asStateFlow()
     private val closed = AtomicBoolean(false)
+    private val refreshPending = AtomicBoolean(false)
     private val lifecycleGate = Any()
     private val lifetime = SupervisorJob()
     private val scope = CoroutineScope(lifetime + Dispatchers.IO)
@@ -64,6 +65,8 @@ class LocalGroupService(
                 // A write error can have an uncertain acknowledgement. Never restore Empty
                 // or replay here: only an explicit read-only reload can recover durable state.
                 mutable.compareAndSet(LocalGroupState.Creating, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+            } finally {
+                drainRefresh()
             }
         }
     }
@@ -75,6 +78,25 @@ class LocalGroupService(
         if (mutable.compareAndSet(previous, LocalGroupState.Loading)) load()
     }
 
+    override fun refreshMembership() {
+        if (closed.get()) return
+        refreshPending.set(true)
+        drainRefresh()
+    }
+
+    private fun drainRefresh() {
+        while (!closed.get() && refreshPending.get()) {
+            val previous = mutable.value
+            if (previous == LocalGroupState.Loading || previous == LocalGroupState.Creating || previous == LocalGroupState.Closed) return
+            if (!refreshPending.compareAndSet(true, false)) continue
+            if (mutable.compareAndSet(previous, LocalGroupState.Loading)) {
+                load()
+                return
+            }
+            refreshPending.set(true)
+        }
+    }
+
     private fun load() {
         scope.launch {
             try {
@@ -84,6 +106,8 @@ class LocalGroupService(
                 throw cancelled
             } catch (_: Exception) {
                 mutable.compareAndSet(LocalGroupState.Loading, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+            } finally {
+                drainRefresh()
             }
         }
     }

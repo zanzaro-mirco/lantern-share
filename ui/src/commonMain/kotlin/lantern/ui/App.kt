@@ -18,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,10 +34,15 @@ import lantern.domain.Peer
 import lantern.domain.LocalGroupController
 import lantern.domain.LocalGroupFailure
 import lantern.domain.LocalGroupState
+import lantern.domain.GroupAdmissionController
+import lantern.domain.GroupAdmissionFailure
+import lantern.domain.GroupAdmissionRole
+import lantern.domain.GroupAdmissionState
 
 @Composable
 fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? = null) {
     val state by controller.state.collectAsState()
+    val admission = controller as? GroupAdmissionController
     var recipient by remember { mutableStateOf<String?>(null) }
 
     MaterialTheme {
@@ -55,6 +61,7 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 SelectionContainer { Text("Identità: ${state.id}") }
                 Text(state.status)
                 if (localGroup != null) LocalGroupPanel(localGroup)
+                if (admission != null) GroupAdmissionPanel(admission, localGroup)
                 PairingPanel(state.pairingPeer, state.comparisonCode, controller::confirm, controller::reject)
                 Text("Dispositivi scoperti", style = MaterialTheme.typography.titleLarge)
                 if (state.peers.isEmpty()) Text("Nessun dispositivo. Verifica rete locale e firewall.")
@@ -68,6 +75,11 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                         onSelect = { recipient = peer.id },
                         onBlock = { controller.block(peer.id) },
                     )
+                    if (admission != null && state.active) {
+                        OutlinedButton(onClick = { admission.selectGroupPeer(peer) }) {
+                            Text("Ingresso gruppo con ${peer.name}")
+                        }
+                    }
                 }
                 MessageComposer(
                     canSend = recipient in state.connected,
@@ -105,7 +117,52 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
                 }
                 LocalGroupState.Closed -> Text("Gestione gruppo arrestata.")
             }
-            Text("Lo stato locale non abilita sessioni o messaggi di gruppo. La creazione non associa dispositivi; l'ingresso di nuovi membri non è ancora disponibile da questa schermata.")
+            Text("Lo stato locale non abilita sessioni o messaggi di gruppo. La creazione non associa dispositivi.")
+        }
+    }
+}
+
+@Composable
+private fun GroupAdmissionPanel(controller: GroupAdmissionController, localGroup: LocalGroupController?) {
+    val state by controller.admissionState.collectAsState()
+    val membershipRevision by controller.membershipRevision.collectAsState()
+    LaunchedEffect(membershipRevision) {
+        if (membershipRevision > 0) localGroup?.refreshMembership()
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Ammissione gruppo · Android/desktop", style = MaterialTheme.typography.titleMedium)
+            when (val current = state) {
+                GroupAdmissionState.Idle -> Text("Il fondatore crea un gruppo. Poi selezionate Ingresso gruppo sui due dispositivi; il nuovo membro deve essere senza gruppo. Gli inviti da membri non fondatori e iOS seguiranno in un incremento successivo.")
+                is GroupAdmissionState.Selecting -> Text("Seleziona Ingresso gruppo anche su ${current.peer.name} (120 s).")
+                is GroupAdmissionState.Comparing -> {
+                    Text(if (current.role == GroupAdmissionRole.FOUNDER) "Autorizza il nuovo membro" else "Ingresso nel gruppo candidato")
+                    SelectionContainer { Text("Gruppo: ${current.groupId}\nCodice completo: ${current.code}") }
+                    Text("Confronta TUTTO il codice sui due schermi. Conferma soltanto se coincide.")
+                    Button(onClick = { controller.confirmGroup(current) }) { Text("Codice identico: confermo") }
+                }
+                is GroupAdmissionState.AwaitingPeer -> Text("Conferma inviata. In attesa di ${current.peer.name}…")
+                is GroupAdmissionState.Completed -> Text(if (current.adoptedLocally)
+                    "Appartenenza salvata su questo dispositivo: ${current.groupId}"
+                else "Due conferme verificate. Il salvataggio sul nuovo membro NON è attestato da questo schermo.")
+                is GroupAdmissionState.Failed -> {
+                    Text(when (current.reason) {
+                        GroupAdmissionFailure.UNAVAILABLE -> "Ammissione non disponibile: serve un fondatore oppure un dispositivo senza gruppo e un archivio leggibile."
+                        GroupAdmissionFailure.INTERRUPTED -> "Tentativo interrotto conservato. Serve un nuovo confronto; nessun consenso sarà ripreso."
+                        GroupAdmissionFailure.COMMIT_OUTCOME_UNKNOWN -> "Esito del salvataggio incerto. Rilettura dello stato locale, nessun replay automatico."
+                        GroupAdmissionFailure.FAILED -> "Ammissione interrotta o non valida. Riprova con una nuova selezione su entrambi."
+                    })
+                    if (current.reason == GroupAdmissionFailure.INTERRUPTED) {
+                        OutlinedButton(onClick = { controller.selectGroupPeer(current.peer, replaceInterrupted = true) }) {
+                            Text("Nuovo confronto e sostituzione del tentativo interrotto")
+                        }
+                    }
+                }
+            }
+            if (state != GroupAdmissionState.Idle) {
+                TextButton(onClick = controller::cancelGroup) { Text("Chiudi ammissione (non elimina il gruppo)") }
+            }
+            Text("Percorso distinto dall'associazione PoC; non abilita chat o sessioni di gruppo.")
         }
     }
 }

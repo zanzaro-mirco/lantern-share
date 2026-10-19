@@ -22,6 +22,39 @@ import kotlin.test.assertTrue
 
 class LocalGroupServiceTest {
     @Test
+    fun membershipRefreshDuringInitialReadIsNotLostAndNeverWrites() = withDatabase { path ->
+        val identity = createDesktopIdentity().identity()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val reads = AtomicInteger()
+        openDesktopRepository(path).use { repository ->
+            val boundary = object : LocalGroupRepository by repository {
+                override fun localGroup(): GroupTrustAnchor? {
+                    val snapshot = repository.localGroup()
+                    if (reads.incrementAndGet() == 1) {
+                        entered.countDown()
+                        check(release.await(5, TimeUnit.SECONDS))
+                    }
+                    return snapshot
+                }
+                override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
+                    error("Refresh must never write")
+            }
+            LocalGroupService(identity, boundary).use { service ->
+                try {
+                    assertTrue(entered.await(5, TimeUnit.SECONDS))
+                    val anchor = GroupTrustAnchor(randomNonce(), identity.id)
+                    repository.foundLocalGroup(anchor, identity.id)
+                    service.refreshMembership()
+                    release.countDown()
+                    assertEquals(LocalGroupState.Founded(anchor), await(service) { it is LocalGroupState.Founded })
+                    assertEquals(2, reads.get())
+                } finally { release.countDown() }
+            }
+        }
+    }
+
+    @Test
     fun openingDoesNotCreateAndExplicitCreationSurvivesReopenWithoutTrust() = withDatabase { path ->
         val identity = createDesktopIdentity().identity()
         val saved = openDesktopRepository(path).use { repository ->
