@@ -10,6 +10,12 @@ enum GroupRootAdoptionChannelFailure {
     case adapter(Error)
 }
 
+struct GroupRootAdoptionChannelCallbacks {
+    let onSnapshot: (IosGroupRootSnapshot) -> Void
+    let onComparison: (IosGroupAdmissionComparison, String) -> Void
+    let onClosed: (GroupRootAdoptionChannelFailure) -> Void
+}
+
 /// Preserve both failures without logging peer-controlled parser text or losing cleanup errors.
 struct GroupRootAdoptionFailureContext: Error {
     let primary: GroupRootAdoptionChannelFailure
@@ -21,6 +27,8 @@ struct GroupRootAdoptionFailureContext: Error {
 /// Confirmed and handover remain revocable, never membership or permission to send messages.
 /// A separate successful local commit retires transport; it still does not authorize traffic.
 final class GroupRootAdoptionChannel {
+    /// Untrusted root shown in the full live comparison, not an adopted membership.
+    var candidateGroupID: String { boundEvidence.candidateGroupId }
     private let connection: NWConnection
     private let identity: AppleIdentity
     private let persistence: IosPersistence
@@ -173,6 +181,12 @@ final class GroupRootAdoptionChannel {
     func cancel() { lifecycle { try bridge.cancel() } }
     func block() { lifecycle { try bridge.block() } }
     func leaveGroup() { lifecycle { try bridge.leaveGroup() } }
+
+    /// Terminal core outcome is retained even after socket retirement; never retries a write.
+    func snapshot() throws -> IosGroupRootSnapshot {
+        dispatchPrecondition(condition: .onQueue(queue))
+        return try bridge.snapshot()
+    }
 
     /// Call on the serial queue, outside callbacks (enqueue from onSnapshot).
     /// A pending receive is phase-neutral: the SAME owner delivers it to the current bridge,

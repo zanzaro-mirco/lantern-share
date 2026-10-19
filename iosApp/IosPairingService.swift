@@ -16,6 +16,7 @@ final class AllowedPeerStore {
     private let lock = NSLock()
     private var trusted = Set<String>()
     private var candidate: String?
+    private var exclusive = false
     private var deadline: UInt64 = 0
     private let now: () -> UInt64
 
@@ -29,6 +30,16 @@ final class AllowedPeerStore {
 
     func select(_ value: String?) {
         lock.lock()
+        exclusive = false
+        candidate = value
+        deadline = now() + 120_000_000_000
+        lock.unlock()
+    }
+
+    /// Group mode suspends trusted v0 pins; discovery and a previous pairing grant no ingress.
+    func selectGroup(_ value: String) {
+        lock.lock()
+        exclusive = true
         candidate = value
         deadline = now() + 120_000_000_000
         lock.unlock()
@@ -36,12 +47,12 @@ final class AllowedPeerStore {
 
     func contains(_ value: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return trusted.contains(value) || (candidate == value && now() < deadline)
+        return (!exclusive && trusted.contains(value)) || (candidate == value && now() < deadline)
     }
 
     func values() -> Set<String> {
         lock.lock(); defer { lock.unlock() }
-        var result = trusted
+        var result = exclusive ? Set<String>() : trusted
         if let candidate, now() < deadline { result.insert(candidate) }
         return result
     }
@@ -327,11 +338,14 @@ private enum PairingError: Error, LocalizedError {
 final class BonjourProbe: ObservableObject {
     let state = IosProbeState()
     private(set) var localGroup: IosLocalGroupController!
+    private(set) var groupAdmission: IosGroupAdmissionController!
     private let queue = DispatchQueue(label: "dev.lantern.poc.ios-service")
     private let allowedPeers = AllowedPeerStore()
     private var browser: NWBrowser?
     private var listener: NWListener?
     private var channel: PairingChannel?
+    private var admission: GroupAdmissionSession?
+    private let admissionDrains = DispatchGroup()
     private var identity: AppleIdentity?
     private var transport: AppleTLSTransport?
     private var persistence: IosPersistence?
@@ -349,13 +363,34 @@ final class BonjourProbe: ObservableObject {
             requestCreate: { [weak self] in self?.createLocalGroup() },
             requestReload: { [weak self] in self?.reloadLocalGroup() }
         )
+        groupAdmission = IosGroupAdmissionController(
+            requestSelect: { [weak self] in self?.selectGroup($0) },
+            requestConfirm: { [weak self] ticket in
+                self?.queue.async { [weak self] in self?.admission?.confirm(ticket) }
+            },
+            requestCancel: { [weak self] in
+                self?.queue.async { [weak self] in self?.cancelGroup() }
+            }
+        )
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.openStores() }
     }
 
     deinit {
         localGroup.close()
-        stopResources()
-        persistence?.close()
+        let channel = self.channel, browser = self.browser, listener = self.listener, admission = self.admission
+        let persistence = self.persistence, drains = self.admissionDrains, queue = self.queue
+        queue.async {
+            channel?.cancel()
+            browser?.stateUpdateHandler = nil
+            browser?.browseResultsChangedHandler = nil
+            browser?.cancel()
+            listener?.stateUpdateHandler = nil
+            listener?.newConnectionHandler = nil
+            listener?.cancel()
+            admission?.cancel()
+            // Retired previous selections also belong to this drain, not just the current one.
+            drains.notify(queue: queue) { persistence?.close() }
+        }
     }
 
     func rename(_ value: String) {
@@ -420,6 +455,7 @@ final class BonjourProbe: ObservableObject {
         queue.async { [weak self] in
             guard let self, let peer = self.peers[peerID], let identity = self.identity,
                   let transport = self.transport, !self.trusted.contains(peerID) else { return }
+            self.cancelGroup()
             self.channel?.cancel()
             self.channel = nil
             self.retryGeneration += 1
@@ -443,6 +479,42 @@ final class BonjourProbe: ObservableObject {
                 self.failChannel("Associazione scaduta", retry: false)
             }
         }
+    }
+
+    private func selectGroup(_ selection: IosGroupAdmissionSelection) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.cancelGroup()
+            self.groupAdmission.selected(value: selection)
+            guard self.listener != nil, let peer = self.peers[selection.peerId],
+                  let identity = self.identity, let transport = self.transport, let persistence = self.persistence else {
+                self.groupAdmission.failed(value: selection, reason: .unavailable)
+                return
+            }
+            self.channel?.cancel()
+            self.channel = nil
+            self.pairingGeneration += 1
+            self.retryGeneration += 1
+            self.allowedPeers.selectGroup(selection.peerId)
+            self.onMain {
+                self.state.updateConnected(peerId: "")
+                self.state.updatePairing(peerId: "", code: "")
+            }
+            let session = GroupAdmissionSession(identity: identity, persistence: persistence, transport: transport,
+                selection: selection, presentation: self.groupAdmission, endpoint: peer.endpoint, queue: self.queue,
+                onMembershipChanged: { [weak self] in self?.localGroup.refreshMembership() })
+            self.admission = session
+            self.admissionDrains.enter()
+            session.whenClosedAndDrained { [drains = self.admissionDrains] in drains.leave() }
+            session.start()
+        }
+    }
+
+    private func cancelGroup() {
+        admission?.cancel()
+        admission = nil
+        groupAdmission.cancelled()
+        allowedPeers.select(nil)
     }
 
     func confirm() {
@@ -525,6 +597,7 @@ final class BonjourProbe: ObservableObject {
             listener.service = service(for: identity)
             listener.newConnectionHandler = { [weak self, weak listener] connection in
                 guard let self, let listener, self.listener === listener else { connection.cancel(); return }
+                if let admission = self.admission { admission.accept(connection); return }
                 do { try self.openChannel(connection, expectedPeerID: nil) }
                 catch { connection.cancel(); self.failChannel(error.localizedDescription) }
             }
@@ -552,6 +625,7 @@ final class BonjourProbe: ObservableObject {
     }
 
     private func stopResources() {
+        cancelGroup()
         channel?.cancel(); channel = nil
         browser?.stateUpdateHandler = nil
         browser?.browseResultsChangedHandler = nil
@@ -589,7 +663,7 @@ final class BonjourProbe: ObservableObject {
     }
 
     private func reconnectTrustedPeers() {
-        guard channel == nil, allowedPeers.selected() == nil, let identity, let transport else { return }
+        guard admission == nil, channel == nil, allowedPeers.selected() == nil, let identity, let transport else { return }
         guard let peer = peers.values.first(where: { trusted.contains($0.id) && identity.id < $0.id }) else { return }
         do {
             let connection = try transport.connect(endpoint: peer.endpoint, expectedPeerID: peer.id)
@@ -598,7 +672,7 @@ final class BonjourProbe: ObservableObject {
     }
 
     private func openChannel(_ connection: NWConnection, expectedPeerID: String?) throws {
-        guard channel == nil, let identity, let transport, let persistence else {
+        guard admission == nil, channel == nil, let identity, let transport, let persistence else {
             connection.cancel()
             return
         }
@@ -662,7 +736,7 @@ final class BonjourProbe: ObservableObject {
         let delay = wire.reconnectDelayMillis(attempt: retryAttempt, jitter: Double.random(in: 0...1))
         retryAttempt = min(retryAttempt + 1, 30)
         queue.asyncAfter(deadline: .now() + Double(delay) / 1_000) { [weak self] in
-            guard let self, self.retryGeneration == generation, self.listener != nil, self.channel == nil else { return }
+            guard let self, self.admission == nil, self.retryGeneration == generation, self.listener != nil, self.channel == nil else { return }
             if let candidate = self.allowedPeers.selected() {
                 guard let peer = self.peers[candidate], let identity = self.identity,
                       let transport = self.transport, identity.id < candidate else { return }

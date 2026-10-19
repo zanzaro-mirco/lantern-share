@@ -22,6 +22,7 @@ class IosLocalGroupController(
 ) : LocalGroupController {
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES
     private val mutable = MutableStateFlow<LocalGroupState>(LocalGroupState.Loading)
+    private val refreshPending = MutableStateFlow(false)
     override val state = mutable.asStateFlow()
 
     fun snapshot(): IosLocalGroupDisplay = when (val current = mutable.value) {
@@ -43,6 +44,21 @@ class IosLocalGroupController(
         if (previous is LocalGroupState.Failed && mutable.compareAndSet(previous, LocalGroupState.Loading)) requestReload()
     }
 
+    override fun refreshMembership() {
+        refreshPending.value = true
+        drainRefresh()
+    }
+
+    private fun drainRefresh() {
+        while (refreshPending.value) {
+            val current = mutable.value
+            if (current == LocalGroupState.Closed || current == LocalGroupState.Loading || current == LocalGroupState.Creating) return
+            if (!mutable.compareAndSet(current, LocalGroupState.Loading)) continue
+            refreshPending.value = false
+            requestReload()
+        }
+    }
+
     fun hasPendingCreation(): Boolean = mutable.value == LocalGroupState.Creating
 
     /** Foundation-only compatibility entry; adopted material fails closed without an OS verifier. */
@@ -62,6 +78,7 @@ class IosLocalGroupController(
     ) {
         if (mutable.value != LocalGroupState.Loading) return
         mutable.compareAndSet(LocalGroupState.Loading, readState(identityId, persistence, verifyCertificateSignature))
+        drainRefresh()
     }
 
     /** Read durable state after handoff, not a supplied draft or caller's success boolean. */
@@ -79,6 +96,7 @@ class IosLocalGroupController(
         val persisted = readState(identityId, persistence, verifyCertificateSignature)
         check(persisted != LocalGroupState.Empty) { "Foundation missing after commit handoff" }
         mutable.compareAndSet(LocalGroupState.Creating, persisted)
+        drainRefresh()
     }
 
     private fun readState(
@@ -95,10 +113,12 @@ class IosLocalGroupController(
 
     fun loadFailed() {
         mutable.compareAndSet(LocalGroupState.Loading, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+        drainRefresh()
     }
 
     fun createFailed() {
         mutable.compareAndSet(LocalGroupState.Creating, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+        drainRefresh()
     }
 
     fun close() { mutable.value = LocalGroupState.Closed }

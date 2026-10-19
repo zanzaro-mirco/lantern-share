@@ -49,6 +49,8 @@ class IosHandshakeV1Offers internal constructor(internal val offers: ProtocolHan
     val localIdentity: String get() = offers.local.identity
     val remoteIdentity: String get() = offers.remote.identity
     val observedAtMillis: Long get() = offers.observedAtMillis
+    /** Routing metadata only, never proof of group membership or authority. */
+    val remoteSupportedFeatures: List<String> get() = offers.remote.capabilities.supportedFeatures.sorted()
 }
 
 /**

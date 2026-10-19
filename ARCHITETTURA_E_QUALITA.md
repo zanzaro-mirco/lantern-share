@@ -100,6 +100,8 @@ Deposito dell'adozione candidata: [ADR 011](docs/ADR-011-JOURNAL-ADOZIONE-LOCALE
 
 Ingresso B3 Android/desktop: Node compone GroupAdmissionService con gli owner v1 esistenti e lo stesso listener/discovery; UI usa GroupAdmissionController senza socket/SQL. Scelta v1 esplicita, mai fallback dal payload, selezione congelata prima del TLS, deadline e proprietà del trasporto preservate. Fondatore→nuovo membro soltanto in questo incremento, senza autorità attribuita ai metadati di ruolo HELLO. Conferma trattiene l'esatta istanza visualizzata; commit locale A e rilettura separati dall'esito dell'emittente. Stato e limiti iOS/deleghe/hardware in STATO; formati/schema invariati.
 
+Ingresso B3 iOS: BonjourProbe compone GroupAdmissionSession sulla coda seriale e riusa il pannello con IosGroupAdmissionController; confronto core privato all'owner, presentazione e token vecchi non autorizzano nulla. Bootstrap trasferisce lo stesso TLS al candidato senza dedurre fiducia nella radice. Commit fuori callback, rilettura accodata anche durante un'operazione UI, drain cumulativo prima della chiusura SQLite, comprese selezioni ritirate. Stessa politica A e capability Node; nessuna duplicazione Swift del protocollo. Implementato, nuovo Apple ancora da verificare; inviti delegati e hardware restano aperti.
+
 Incremento successivo: [ADR 001 — identità Mac](docs/ADR-001-IDENTITA-MAC.md). Adattatore KeychainStore separato dalla migrazione e dal motore; riferimento locale con pin, importazione conservativa, verifica della chiave dopo rilettura, nessuna rotazione automatica in caso di errore. Dipendenze e protocollo invariati. Test portabili distinti dalla prova nativa Mac ancora non eseguita.
 
 ## 10. Revisione applicata al codice esistente

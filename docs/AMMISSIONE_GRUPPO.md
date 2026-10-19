@@ -1,5 +1,39 @@
 # Dichiarazione di ammissione al gruppo
 
+## Ingresso nel servizio iOS — 19 ottobre 2026
+
+BonjourProbe compone GroupAdmissionSession sulla propria coda seriale non-UI e sul
+listener/discovery esistenti. Il pannello Compose condiviso passa tramite
+IosGroupAdmissionController: selezioni opache distinte, clic dell'istanza visualizzata,
+callback vecchi inerti. I ticket crittografici restano privati al servizio. Questa è
+integrazione nell'app, non soltanto una facciata; verifica Apple nuova ancora da attestare.
+
+Durante la scelta v1 AllowedPeerStore esclude i pin fidati PoC, il reconnect v0 resta
+sospeso e il TLS entrante è assegnato alla selezione corrente PRIMA dell'handshake.
+Sessioni sostituite chiudono anche i TLS pendenti; nessuno può riusarli nel tentativo nuovo.
+Capability/ruoli e ordinamento delle identità sono quelli del Node descritti sotto;
+non sono autorità. Retry soltanto prima del bootstrap entro i 120 s originari.
+
+HandshakeV1Channel usa letture evidence bounded esatte anche nel nuovo percorso
+receiveRootEvidenceAndTransfer: release a GroupRootAdoptionChannel sulla stessa coda,
+connessione/scadenza originarie, nessun I/O precedente ancora pendente al trasferimento.
+La radice rimane candidata, non viene passata all'overload che richiede fiducia
+indipendente. Verifica proof/endpoint e firme rimane nel core e negli adattatori esistenti.
+
+Due clic e firme verificate precedono handover/commit locale A, accodati fuori dai callback
+del medesimo owner. Errori prima del commit distinti dal suo esito incerto terminale;
+nessun replay. Sostituzione esplicita del vecchio journal soltanto con identità locale
+coerente, snapshot esatto e confronto fresco. Il fondatore non attesta il salvataggio remoto.
+Cancel/stop non eliminano un commit già completato. Notifica e rilettura della membership
+non dipendono dalla selezione ancora visibile; un refresh durante Loading/Creating è accodato.
+
+Ogni selezione entra nel drain cumulativo del servizio. GroupRootAdoptionChannel rimane
+trattenuto fino a whenClosedAndDrained; anche le selezioni già sostituite devono rientrare
+prima della chiusura SQLite. Bootstrap/emittente non accedono al DB da callback tardivi
+dopo cancel. Nessun trust PoC, sessione o traffico di gruppo deriva dall'appartenenza.
+Test servizio Swift mantenuti con TLS/Keychain/SQLite veri predisposti; esiti in STATO.
+Inviti da membro delegato e collaudi hardware restano aperti, non cambia la specifica.
+
 ## Ingresso nell'app Android/desktop — 19 ottobre 2026
 
 Il pannello tecnico espone «Ingresso gruppo» distinto dal pairing PoC. Il fondatore

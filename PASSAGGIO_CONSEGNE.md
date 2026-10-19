@@ -6,7 +6,17 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B3, ingresso Android/desktop
+## Ripartenza corrente — B3, ingresso iOS
+
+Precedente `a4613c1`: [PoC 39268035729](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39268035729) e [iOS ordinario 39268035721](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39268035721) conclusi success, letti una volta senza polling. Apple ha compilato framework/app/XCTest, NON eseguito i test. Ultimo runtime attestato `dc33c26`, 156 XCTest, non hardware.
+
+Nuovo blocco implementato: ingresso fondatore→candidato nel servizio BonjourProbe e nella UI iPhone, stesso pannello/contratti Kotlin e stessi owner Swift. Selezione v1 separata dal PoC, pin esclusivo, capability compatibili Node, stesso TLS/scadenza, evidence con radice candidata, codice completo e due clic, commit locale A e rilettura. Pending interrotto non promosso/eliminato all'avvio: nuova prova e sostituzione esatta soltanto esplicite. Database mantenuto fino al drain cumulativo dei canali candidati, incluse selezioni precedenti. Nessuna sessione/chat di gruppo, schema/wire/versioni/workflow invariati. Dettagli in AMMISSIONE_GRUPPO e sintesi STATO.
+
+Locale: 4 test UI JVM + 4 Android passati, APK/classi desktop compilati; integrato definitivo 4 s, connettività UP-TO-DATE (non rieseguita). Lock UI esteso ai test alle versioni esistenti dopo il primo errore di risoluzione. Facciate iOS Kotlin controllate dall'harness host/JDBC già presente, non Native/Swift. Cinque nuovi XCTest mantenuti predisposti, NON compilati/eseguiti su Windows. Nuovo runtime Apple e hardware non attestati.
+
+**Prossimo blocco:** dopo il checkpoint Apple concluso/correzioni, prova delegata verificata e percorso del membro emittente. B3 resta aperto finché ogni membro non può autorizzare; nessuna restrizione amministrativa di prodotto. Fase 1/hardware e gate UI invariati. Nessun polling; note locali post-push da raggruppare, niente push solo Markdown.
+
+## Evidenze precedenti — B3, ingresso Android/desktop
 
 Checkpoint precedente verificato: `dc33c26`, [iOS completo 39167348683](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39167348683) success, Native/export/app e **156 XCTest zero fallimenti** (48,351 s, 49,476 complessivi); [PoC 39167348209](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39167348209) success per conclusione. Letture da concluse, nessun polling. Appartenenza al riavvio verificata anche nel simulatore, non hardware.
 
@@ -15,6 +25,8 @@ Nuovo blocco: primo ingresso effettivo Android/desktop dal fondatore a un dispos
 **B3 resta aperto:** nuovo ingresso non ancora collegato a BonjourProbe/iOS; emittente non fondatore richiede ancora il produttore della prova delegata. Non sono ruoli amministrativi di prodotto né una riduzione del requisito «ogni membro autorizza». Sessioni/riconnessione/collegamento manuale esclusi. Hardware di fase 1 e gate UI completa invariati.
 
 **Prossimo blocco concreto:** leggere l'esito CI concluso/correggere, poi portare lo stesso ingresso esplicito fondatore→nuovo membro nel servizio iOS, con Kotlin condiviso, owner Swift esistenti e drain prima della chiusura SQLite. Nessun polling. Note post-push precedenti preservate nella consegna corrente; nessun push solo documentale.
+
+Consegnato `a4613c1dd24ba0b3f7085a7cb8332d51165481ae`, 17 file, unico commit/push. [PoC 39268035729](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39268035729) e [iOS ordinario 39268035721](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39268035721) in_progress nella sola lettura post-push. Nessun dispatch duplicato/polling o esito remoto nuovo attestato. Leggere da concluse alla ripresa. Questa nota con STATO rimane locale da raggruppare al prossimo blocco, niente push solo Markdown.
 
 ## Evidenze precedenti — B3, appartenenza al riavvio
 

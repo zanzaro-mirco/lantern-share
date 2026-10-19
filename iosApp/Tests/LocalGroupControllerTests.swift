@@ -131,6 +131,35 @@ final class LocalGroupControllerTests: XCTestCase {
         controller.close(); recovered.close(); foreign.close()
     }
 
+    func testRefreshDuringInitialLoadIsQueuedAndRereadsDurableGroup() throws {
+        let namespace = "dev.lantern.tests.group-refresh.\(UUID().uuidString)"
+        defer { removeIdentity(namespace) }
+        let identity = try AppleIdentityStore(namespace: namespace).open()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lantern-refresh-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+        defer { store.close() }
+        var reloads = 0
+        let controller = IosLocalGroupController(requestCreate: { XCTFail("refresh must not create") }, requestReload: { reloads += 1 })
+        controller.refreshMembership() // Initial load already in progress; do not lose the request.
+        try controller.loaded(identityId: identity.id, persistence: store)
+        XCTAssertEqual(reloads, 1)
+        XCTAssertEqual(controller.snapshot().phase.name, "LOADING")
+        let foundation = try LocalGroupFoundation(identity: identity)
+        let ticket = try XCTUnwrap(foundation.prepare(persistence: store))
+        _ = try foundation.commit(ticket: ticket, currentIdentity: identity, persistence: store)
+        try controller.loaded(identityId: identity.id, persistence: store)
+        XCTAssertEqual(controller.snapshot().phase.name, "FOUNDED")
+        controller.refreshMembership() // A stable state, not only FAILED, must support a new read.
+        XCTAssertEqual(reloads, 2)
+        try controller.loaded(identityId: identity.id, persistence: store)
+        controller.close()
+        controller.refreshMembership()
+        XCTAssertEqual(reloads, 2)
+        XCTAssertEqual(controller.snapshot().phase.name, "CLOSED")
+    }
+
     private func removeIdentity(_ namespace: String) {
         let queries: [[String: Any]] = [
             [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: Data("\(namespace).key".utf8)],

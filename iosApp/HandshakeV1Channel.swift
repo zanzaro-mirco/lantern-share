@@ -24,6 +24,7 @@ enum HandshakeV1Continuation {
 final class HandshakeV1Channel {
     private let connection: NWConnection
     private let identity: AppleIdentity
+    private let transport: AppleTLSTransport
     private let queue: DispatchQueue
     private let signingQueue: DispatchQueue
     private let bridge: IosHandshakeV1
@@ -56,6 +57,7 @@ final class HandshakeV1Channel {
         signingQueue: DispatchQueue = .global(qos: .userInitiated),
         nowMillis: @escaping () -> Int64 = HandshakeV1Channel.monotonicMillis,
         continuation: HandshakeV1Continuation = .approvals,
+        capabilitiesJson: String = "{\"version\":1,\"supportedFeatures\":[\"text\",\"receipts\"],\"requiredFeatures\":[\"text\"]}",
         onSnapshot: @escaping (IosHandshakeV1Snapshot) -> Void,
         onComparison: @escaping (IosHandshakeV1Comparison, String) -> Void,
         onClosed: @escaping (HandshakeV1ChannelFailure) -> Void
@@ -72,7 +74,7 @@ final class HandshakeV1Channel {
             self.bridge = try IosHandshakeV1.companion.create(
                 localIdentity: identity.id,
                 localNonce: Self.randomNonce(),
-                capabilitiesJson: "{\"version\":1,\"supportedFeatures\":[\"text\",\"receipts\"],\"requiredFeatures\":[\"text\"]}",
+                capabilitiesJson: capabilitiesJson,
                 authenticatedLocalIdentity: transport.localIdentityID,
                 selectedPeerIdentity: selectedPeerID,
                 authenticatedPeerIdentity: AppleIdentity.fingerprint(certificate),
@@ -88,6 +90,7 @@ final class HandshakeV1Channel {
         }
         self.connection = connection
         self.identity = identity
+        self.transport = transport
         self.queue = queue
         self.signingQueue = signingQueue
         self.selectedAtMillis = selectedAtMillis
@@ -156,6 +159,13 @@ final class HandshakeV1Channel {
         terminate(.cancelled)
     }
 
+    /// Public routing metadata of the HELLO verified on this exact selected TLS connection.
+    func remoteSupportedFeaturesForGroup() throws -> [String]? {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return nil }
+        return try bridge.offersForGroupAdmission()?.remoteSupportedFeatures
+    }
+
     /// Issuer-only write. Success means exchange started, not sent, confirmed or authorized.
     @discardableResult
     func sendEvidenceAndTransfer(
@@ -203,8 +213,57 @@ final class HandshakeV1Channel {
             guard try evidenceActive() else { return false }
             exchangingEvidence = true
             evidenceDecoder = IosGroupAdmissionEvidenceDecoder()
-            receiveEvidence(expectedGroup: expectedGroup, expectedFounder: expectedFounder,
-                callbacks: callbacks, onTransferred: onTransferred)
+            receiveEvidence { [weak self] evidence in
+                guard let self, let offers = try self.bridge.offersForGroupAdmission() else { return }
+                _ = try IosGroupAdmissionContext.companion.create(
+                    offers: offers, expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                    evidence: evidence, role: .member
+                )
+                let certificates = try GroupAdmissionEvidenceCertificates.decode(evidence)
+                self.transferEvidence(evidence, certificates: certificates, role: .member,
+                    expectedGroup: expectedGroup, expectedFounder: expectedFounder,
+                    callbacks: callbacks, onTransferred: onTransferred)
+            }
+            return !closed
+        } catch { adapterFailed(); return false }
+    }
+
+    /// New member path: the received root is a candidate, never an independently trusted anchor.
+    /// Exact evidence reads and queue-atomic release preserve this socket and its original deadline.
+    @discardableResult
+    func receiveRootEvidenceAndTransfer(
+        persistence: IosPersistence, callbacks: GroupRootAdoptionChannelCallbacks,
+        onTransferred: @escaping (GroupRootAdoptionChannel) -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard try evidenceActive() else { return false }
+            exchangingEvidence = true
+            evidenceDecoder = IosGroupAdmissionEvidenceDecoder()
+            receiveEvidence { [weak self] evidence in
+                guard let self, !self.closed, !self.receivePending, !self.writePending,
+                      let offers = try self.bridge.releaseForGroupAdmission() else { return }
+                self.closed = true
+                self.timer?.cancel()
+                self.timer = nil
+                self.evidenceDecoder?.cancel()
+                self.evidenceDecoder = nil
+                self.connection.stateUpdateHandler = nil
+                do {
+                    let next = try GroupRootAdoptionChannel(
+                        connection: self.connection, identity: self.identity, transport: self.transport,
+                        selectedPeerID: offers.remoteIdentity, offers: offers, evidence: evidence,
+                        persistence: persistence, selectedAtMillis: self.selectedAtMillis,
+                        queue: self.queue, signingQueue: self.signingQueue, nowMillis: self.nowMillis,
+                        onSnapshot: callbacks.onSnapshot, onComparison: callbacks.onComparison, onClosed: callbacks.onClosed
+                    )
+                    onTransferred(next)
+                } catch {
+                    // Receiver has taken cleanup responsibility even if its initializer failed.
+                    callbacks.onClosed(.adapter(error))
+                }
+            }
             return !closed
         } catch { adapterFailed(); return false }
     }
@@ -218,10 +277,7 @@ final class HandshakeV1Channel {
         return true
     }
 
-    private func receiveEvidence(
-        expectedGroup: String, expectedFounder: String, callbacks: GroupAdmissionChannelCallbacks,
-        onTransferred: @escaping (GroupAdmissionChannel) -> Void
-    ) {
+    private func receiveEvidence(onEvidence: @escaping (IosGroupAdmissionEvidence) throws -> Void) {
         guard !closed, let decoder = evidenceDecoder else { return }
         do {
             guard try evidenceActive() else { return }
@@ -248,18 +304,9 @@ final class HandshakeV1Channel {
                             return
                         }
                         if let evidence {
-                            guard let offers = try self.bridge.offersForGroupAdmission() else { _ = try self.observe(); return }
-                            _ = try IosGroupAdmissionContext.companion.create(
-                                offers: offers, expectedGroup: expectedGroup, expectedFounder: expectedFounder,
-                                evidence: evidence, role: .member
-                            )
-                            let certificates = try GroupAdmissionEvidenceCertificates.decode(evidence)
-                            self.transferEvidence(evidence, certificates: certificates, role: .member,
-                                expectedGroup: expectedGroup, expectedFounder: expectedFounder,
-                                callbacks: callbacks, onTransferred: onTransferred)
+                            try onEvidence(evidence)
                         } else {
-                            self.receiveEvidence(expectedGroup: expectedGroup, expectedFounder: expectedFounder,
-                                callbacks: callbacks, onTransferred: onTransferred)
+                            self.receiveEvidence(onEvidence: onEvidence)
                         }
                     } catch { self.adapterFailed() }
                 }

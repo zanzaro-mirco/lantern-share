@@ -19,6 +19,8 @@ class IosGroupAdmissionCertificate internal constructor(private val supplied: Gr
  * The shared codec owns all JSON, coverage, count, pin syntax and canonical Base64 rules.
  */
 class IosGroupAdmissionEvidence internal constructor(internal val evidence: GroupAdmissionEvidence) {
+    /** Untrusted display value: only the live full comparison can bind consent to this root. */
+    val candidateGroupId: String get() = evidence.proof.anchor.groupId
     val certificates: List<IosGroupAdmissionCertificate>
         get() = evidence.certificates.map(::IosGroupAdmissionCertificate)
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES

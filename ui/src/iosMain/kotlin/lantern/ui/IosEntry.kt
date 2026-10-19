@@ -11,6 +11,7 @@ import androidx.compose.ui.window.ComposeUIViewController
 import lantern.domain.ContentLimits
 import lantern.domain.LocalGroupRepository
 import lantern.domain.GroupAdoptionRepository
+import lantern.domain.Peer
 import lantern.domain.Reconnection
 import lantern.persistence.IosDeviceRepository
 import lantern.persistence.openIosRepository
@@ -206,6 +207,7 @@ fun ProbeViewController(
     reject: () -> Unit,
     send: (String, String) -> Unit,
     localGroup: IosLocalGroupController,
+    groupAdmission: IosGroupAdmissionController,
 ): UIViewController = ComposeUIViewController {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
@@ -229,6 +231,7 @@ fun ProbeViewController(
                 ) { Text("Salva nome") }
                 if (state.persistenceError.isNotEmpty()) Text(state.persistenceError, color = MaterialTheme.colorScheme.error)
                 LocalGroupPanel(localGroup)
+                GroupAdmissionPanel(groupAdmission, localGroup)
                 Text("TLS 1.3 con confronto completo del codice. Ricevuta dopo il salvataggio sul destinatario.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)
@@ -249,6 +252,9 @@ fun ProbeViewController(
                         Text("${peer.name} · ${peer.id.take(12)}")
                         if (peer.id in state.trusted) Text("Autorizzato")
                         else Button(onClick = { pair(peer.id) }) { Text("Associa") }
+                        OutlinedButton(onClick = {
+                            groupAdmission.selectGroupPeer(Peer(peer.id, peer.name, "", 0))
+                        }) { Text("Ingresso gruppo con ${peer.name}") }
                     }
                 }
                 Text("Testo cifrato", style = MaterialTheme.typography.titleLarge)

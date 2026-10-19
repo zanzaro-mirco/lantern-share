@@ -3,9 +3,8 @@ import Security
 import LanternIdentity
 import LanternUI
 
-/// A future explicit admission request uses this on its owning queue, off the UI thread.
-/// It must recheck connection liveness/cancellation before sending. No active service caller,
-/// trust write, implicit remote root adoption or durable admission is introduced here.
+/// The explicit GroupAdmissionSession calls this on its non-UI owning queue, rechecking
+/// liveness before sending. Canonical proof/roles remain Kotlin; no PoC trust is written.
 enum FounderGroupAdmission {
     static func prepare(
         identity: AppleIdentity,

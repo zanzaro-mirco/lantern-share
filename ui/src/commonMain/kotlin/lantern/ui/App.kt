@@ -123,7 +123,7 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
 }
 
 @Composable
-private fun GroupAdmissionPanel(controller: GroupAdmissionController, localGroup: LocalGroupController?) {
+internal fun GroupAdmissionPanel(controller: GroupAdmissionController, localGroup: LocalGroupController?) {
     val state by controller.admissionState.collectAsState()
     val membershipRevision by controller.membershipRevision.collectAsState()
     LaunchedEffect(membershipRevision) {
@@ -131,9 +131,9 @@ private fun GroupAdmissionPanel(controller: GroupAdmissionController, localGroup
     }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Ammissione gruppo · Android/desktop", style = MaterialTheme.typography.titleMedium)
+            Text("Ammissione gruppo", style = MaterialTheme.typography.titleMedium)
             when (val current = state) {
-                GroupAdmissionState.Idle -> Text("Il fondatore crea un gruppo. Poi selezionate Ingresso gruppo sui due dispositivi; il nuovo membro deve essere senza gruppo. Gli inviti da membri non fondatori e iOS seguiranno in un incremento successivo.")
+                GroupAdmissionState.Idle -> Text("Il fondatore crea un gruppo. Poi selezionate Ingresso gruppo sui due dispositivi; il nuovo membro deve essere senza gruppo. Gli inviti da membri non fondatori seguiranno in un incremento successivo.")
                 is GroupAdmissionState.Selecting -> Text("Seleziona Ingresso gruppo anche su ${current.peer.name} (120 s).")
                 is GroupAdmissionState.Comparing -> {
                     Text(if (current.role == GroupAdmissionRole.FOUNDER) "Autorizza il nuovo membro" else "Ingresso nel gruppo candidato")

@@ -15,6 +15,7 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
         }
+        commonTest.dependencies { implementation(kotlin("test")) }
         iosMain.dependencies {
             implementation(project(":persistence"))
             implementation(project(":protocol"))
