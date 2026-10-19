@@ -6,7 +6,9 @@ import kotlinx.coroutines.withTimeout
 import lantern.domain.DeviceRepository
 import lantern.domain.DiscoveryService
 import lantern.domain.GroupAdmissionRole
+import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionState
+import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupState
@@ -65,6 +67,14 @@ class DelegatedGroupAdmissionServiceTest {
                         assertEquals(listOf(founder.id, issuer.id), journal.evidence.proof.admissions.map { it.claim.issuerId })
                         assertEquals(listOf(issuer.id, candidate.id), journal.evidence.proof.admissions.map { it.claim.memberId })
                         assertTrue(original.sameRecord(assertNotNull(issuerStore.committedGroupAdoption())))
+                        // Already adopted members authenticate their OWN paths, not a fresh
+                        // issuer->candidate credential or another comparison/commit.
+                        val candidateMarker = assertNotNull(candidateStore.committedGroupAdoption())
+                        verifyMembers(issuing, receiving)
+                        assertTrue(original.sameRecord(assertNotNull(issuerStore.committedGroupAdoption())))
+                        assertTrue(candidateMarker.sameRecord(assertNotNull(candidateStore.committedGroupAdoption())))
+                        assertEquals(0L, issuing.membershipRevision.value)
+                        assertEquals(1L, receiving.membershipRevision.value)
                         for (store in listOf(issuerStore, candidateStore)) {
                             assertTrue(store.trusted().isEmpty())
                             assertTrue(store.history().isEmpty())
@@ -82,6 +92,71 @@ class DelegatedGroupAdmissionServiceTest {
                 val next = prepareLocalGroupAdmission(candidate, reopened, createDesktopIdentity().identity().id)
                 assertEquals(3, next.proof.admissions.size)
                 assertEquals(3, next.certificates.size)
+            }
+        }
+    }
+
+    @Test
+    fun founderAndReopenedMemberAuthenticateWithoutNewInviteInBothTlsOrders() {
+        for (founderInitiates in listOf(true, false)) withDirectory { directory ->
+            val identities = List(2) { createDesktopIdentity().identity() }.sortedBy { it.id }
+            val founder = identities[if (founderInitiates) 0 else 1]
+            val member = identities[if (founderInitiates) 1 else 0]
+            val anchor = GroupTrustAnchor(randomNonce(), founder.id)
+            adoptFirst(directory, founder, member, anchor)
+            openDesktopRepository(directory.resolve("founder.db")).use { founderStore ->
+                openDesktopRepository(directory.resolve("issuer.db")).use { memberStore ->
+                    val original = assertNotNull(memberStore.committedGroupAdoption())
+                    node(founder, founderStore).use { a -> node(member, memberStore).use { b ->
+                        a.start()
+                        b.start()
+                        verifyMembers(a, b)
+                        assertTrue(original.sameRecord(assertNotNull(memberStore.committedGroupAdoption())))
+                        assertEquals(0L, a.membershipRevision.value)
+                        assertEquals(0L, b.membershipRevision.value)
+                        assertTrue(founderStore.trusted().isEmpty())
+                        assertTrue(memberStore.trusted().isEmpty())
+                        assertTrue(a.state.value.connected.isEmpty())
+                        assertTrue(b.state.value.connected.isEmpty())
+                        b.cancelGroup()
+                        assertEquals(GroupMembershipCheckState.Idle, b.membershipCheckState.value)
+                    } }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun differentGroupsAndAdmissionModeMismatchFailWithoutCreatingTrust() = withDirectory { directory ->
+        val aIdentity = createDesktopIdentity().identity()
+        val bIdentity = createDesktopIdentity().identity()
+        openDesktopRepository(directory.resolve("a.db")).use { aStore ->
+            openDesktopRepository(directory.resolve("b.db")).use { bStore ->
+                val aAnchor = GroupTrustAnchor(randomNonce(), aIdentity.id)
+                val bAnchor = GroupTrustAnchor(randomNonce(), bIdentity.id)
+                aStore.foundLocalGroup(aAnchor, aIdentity.id)
+                bStore.foundLocalGroup(bAnchor, bIdentity.id)
+                node(aIdentity, aStore).use { a -> node(bIdentity, bStore).use { b ->
+                    a.start()
+                    b.start()
+                    selectMembership(a, b)
+                    awaitMembership(a) { it is GroupMembershipCheckState.Failed }
+                    awaitMembership(b) { it is GroupMembershipCheckState.Failed }
+                    a.cancelGroup()
+                    b.cancelGroup()
+                    a.verifyGroupPeer(peer(b))
+                    b.selectGroupPeer(peer(a))
+                    awaitMembership(a) { it is GroupMembershipCheckState.Failed }
+                    awaitState(b) { it is GroupAdmissionState.Failed }
+                    assertEquals(aAnchor, aStore.localGroup())
+                    assertEquals(bAnchor, bStore.localGroup())
+                    for (store in listOf(aStore, bStore)) {
+                        assertTrue(store.trusted().isEmpty())
+                        assertTrue(store.history().isEmpty())
+                        assertNull(store.pendingGroupAdoption())
+                        assertNull(store.committedGroupAdoption())
+                    }
+                } }
             }
         }
     }
@@ -113,6 +188,12 @@ class DelegatedGroupAdmissionServiceTest {
                     assertTrue(original.sameRecord(assertNotNull(store.committedGroupAdoption())))
                     assertTrue(store.trusted().isEmpty())
                     assertTrue(receivingStore.trusted().isEmpty())
+                    // A check also rejects corruption, never infers membership from the root alone.
+                    issuing.cancelGroup()
+                    receiving.cancelGroup()
+                    issuing.verifyGroupPeer(peer(receiving))
+                    awaitMembership(issuing) { it is GroupMembershipCheckState.Failed }
+                    assertTrue(original.sameRecord(assertNotNull(store.committedGroupAdoption())))
                 } }
             }
         }
@@ -152,6 +233,27 @@ class DelegatedGroupAdmissionServiceTest {
         }
     }
 
+    @Test
+    fun membershipWithoutLocalGroupFailsOffUiWithoutReadingPendingOrWriting() = withDirectory { directory ->
+        val identity = createDesktopIdentity().identity()
+        openDesktopRepository(directory.resolve("empty.db")).use { store ->
+            val boundary = object : DeviceRepository by store, GroupAdoptionRepository by store {
+                override fun pendingGroupAdoption(): PendingGroupAdoption? = error("Must not read pending")
+            }
+            node(identity, boundary).use { owner ->
+                owner.start()
+                owner.verifyGroupPeer(Peer(createDesktopIdentity().identity().id, "unknown", "127.0.0.1", 1))
+                val failure = awaitMembership(owner) { it is GroupMembershipCheckState.Failed } as GroupMembershipCheckState.Failed
+                assertEquals(GroupAdmissionFailure.UNAVAILABLE, failure.reason)
+                assertNull(store.localGroup())
+                assertNull(store.committedGroupAdoption())
+                assertTrue(store.trusted().isEmpty())
+                owner.cancelGroup()
+                assertEquals(GroupMembershipCheckState.Idle, owner.membershipCheckState.value)
+            }
+        }
+    }
+
     private fun adoptFirst(directory: Path, founder: Identity, issuer: Identity, anchor: GroupTrustAnchor): String =
         openDesktopRepository(directory.resolve("founder.db")).use { founderStore ->
             openDesktopRepository(directory.resolve("issuer.db")).use { issuerStore ->
@@ -184,6 +286,35 @@ class DelegatedGroupAdmissionServiceTest {
         }
         a.selectGroupPeer(Peer(b.identity.id, "candidate", "127.0.0.1", b.port))
         b.selectGroupPeer(Peer(a.identity.id, "issuer", "127.0.0.1", a.port))
+    }
+
+    private fun peer(node: Node) = Peer(node.identity.id, "member", "127.0.0.1", node.port)
+
+    private fun selectMembership(a: Node, b: Node) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (a.port == 0 || b.port == 0) {
+            check(System.nanoTime() < deadline)
+            Thread.sleep(10)
+        }
+        a.verifyGroupPeer(peer(b))
+        b.verifyGroupPeer(peer(a))
+    }
+
+    private fun verifyMembers(a: Node, b: Node) {
+        a.cancelGroup()
+        b.cancelGroup()
+        selectMembership(a, b)
+        val verifiedA = awaitMembership(a) { it is GroupMembershipCheckState.Verified } as GroupMembershipCheckState.Verified
+        val verifiedB = awaitMembership(b) { it is GroupMembershipCheckState.Verified } as GroupMembershipCheckState.Verified
+        assertEquals(verifiedA.groupId, verifiedB.groupId)
+        assertEquals(b.identity.id, verifiedA.peer.id)
+        assertEquals(a.identity.id, verifiedB.peer.id)
+        assertEquals(GroupAdmissionState.Idle, a.admissionState.value)
+        assertEquals(GroupAdmissionState.Idle, b.admissionState.value)
+    }
+
+    private fun awaitMembership(node: Node, predicate: (GroupMembershipCheckState) -> Boolean) = runBlocking {
+        withTimeout(12_000) { node.membershipCheckState.first(predicate) }
     }
 
     private fun comparisons(a: Node, b: Node): Pair<GroupAdmissionState.Comparing, GroupAdmissionState.Comparing> {

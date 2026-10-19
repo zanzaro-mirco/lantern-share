@@ -11,6 +11,8 @@ import lantern.protocol.ProtocolHandshakeFraming
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupAdmissionEvidenceFrameDecoder
 import lantern.protocol.GroupAdmissionEvidenceFraming
+import lantern.protocol.GroupMembershipEvidence
+import lantern.protocol.GroupMembershipEvidenceCodec
 
 internal class InvalidHandshakeV1FrameException : IOException("Invalid v1 bootstrap frame")
 internal class InvalidGroupEvidenceFrameException : IOException("Invalid group evidence frame")
@@ -69,6 +71,33 @@ internal class HandshakeV1FrameStream(private val input: InputStream, private va
     fun writeEvidence(evidence: GroupAdmissionEvidence) {
         output.write(GroupAdmissionEvidenceFraming.encode(evidence))
         output.flush()
+    }
+
+    fun readMembership(beforeRead: () -> Unit): GroupMembershipEvidence {
+        try {
+            val header = ByteArray(4)
+            readFully(header, beforeRead)
+            val payload = ByteArray(GroupMembershipEvidenceCodec.payloadBytes(header))
+            readFully(payload, beforeRead)
+            return GroupMembershipEvidenceCodec.decode(payload)
+        } catch (_: IllegalArgumentException) {
+            throw InvalidGroupEvidenceFrameException()
+        } catch (_: CharacterCodingException) {
+            throw InvalidGroupEvidenceFrameException()
+        }
+    }
+
+    fun writeMembership(evidence: GroupMembershipEvidence) {
+        val payload = GroupMembershipEvidenceCodec.encode(evidence)
+        output.write(GroupMembershipEvidenceCodec.header(payload.size))
+        output.write(payload)
+        output.flush()
+    }
+
+    /** No follow-on data is permitted in this diagnostic protocol. EOF is not a remote ACK. */
+    fun awaitMembershipEnd(beforeRead: () -> Unit) {
+        beforeRead()
+        if (input.read() >= 0) throw InvalidGroupEvidenceFrameException()
     }
 
     private fun readFully(bytes: ByteArray, beforeRead: () -> Unit) {

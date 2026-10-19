@@ -33,6 +33,9 @@ import lantern.protocol.ProtocolHandshakeFrameCodec
 import lantern.protocol.ProtocolHandshakeParticipant
 import lantern.protocol.ProtocolHandshakeState
 import lantern.protocol.ProtocolNegotiationResult
+import lantern.protocol.GroupMembershipEvidence
+import lantern.protocol.GroupMembershipEvidenceCodec
+import lantern.domain.GroupTrustAnchor
 
 /** Real pinned mutual TLS and JCA signatures; only UI confirmation and selected clocks are simulated. */
 class HandshakeV1ConnectionTest {
@@ -355,6 +358,76 @@ class HandshakeV1ConnectionTest {
         }
     }
 
+    @Test
+    fun membershipCloseAndOriginalDeadlineAbortPendingReceiveWithoutAuthorizingTraffic() = withPeers { client, server ->
+        for (expire in listOf(false, true)) withSockets(client, server) { sockets ->
+            val feature = GroupMembershipEvidenceCodec.FEATURE
+            val negotiated = ProtocolCapabilities(1, setOf(feature), setOf(feature))
+            val selectedAt = if (expire) monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 1_500 else sockets.selectedAt
+            sockets.clientOwner(selectedAt = selectedAt, supported = negotiated).use { left ->
+                sockets.serverOwner(selectedAt = selectedAt, supported = negotiated).use { right ->
+                    exchangeHellos(left, right)
+                    val clientFirst = client.id < server.id
+                    val owner = if (clientFirst) left else right
+                    val identity = if (clientFirst) client else server
+                    val peerSocket = if (clientFirst) sockets.server else sockets.client
+                    val ownSocket = if (clientFirst) sockets.client else sockets.server
+                    val evidence = GroupMembershipEvidence(GroupTrustAnchor(randomNonce(), identity.id), identity.id, null)
+                    val worker = Executors.newSingleThreadExecutor()
+                    try {
+                        val result = worker.submit<GroupMembershipEvidence?> {
+                            try { owner.exchangeMembership(evidence) } catch (_: IOException) { null }
+                        }
+                        // Observe the actual write on mutual TLS, then withhold the response.
+                        // The owner is entering/read-blocked on the original same connection.
+                        peerSocket.soTimeout = 5_000
+                        assertEquals(identity.id, HandshakeV1FrameStream(peerSocket.inputStream, peerSocket.outputStream)
+                            .readMembership {}.memberIdentity)
+                        if (!expire) owner.close()
+                        assertNull(result.get(5, TimeUnit.SECONDS))
+                        assertTrue(owner.state is HandshakeV1ConnectionState.Closed)
+                        assertTrue(ownSocket.isClosed)
+                        assertFalse(sockets.scheduler.isShutdown)
+                        assertNull(owner.comparison())
+                    } finally { worker.shutdownNow() }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun untrustedMembershipExchangeCannotReuseBootstrapComparisonOrTransferToAdmission() = withPeers { client, server ->
+        withSockets(client, server) { sockets ->
+            val feature = GroupMembershipEvidenceCodec.FEATURE
+            val negotiated = ProtocolCapabilities(1, setOf(feature), setOf(feature))
+            sockets.clientOwner(supported = negotiated).use { left ->
+                sockets.serverOwner(supported = negotiated).use { right ->
+                    exchangeHellos(left, right)
+                    val oldLeft = assertNotNull(left.comparison())
+                    val oldRight = assertNotNull(right.comparison())
+                    val local = GroupMembershipEvidence(GroupTrustAnchor(randomNonce(), client.id), client.id, null)
+                    val remote = GroupMembershipEvidence(GroupTrustAnchor(randomNonce(), server.id), server.id, null)
+                    val workers = Executors.newFixedThreadPool(2)
+                    try {
+                        val a = workers.submit<GroupMembershipEvidence?> { left.exchangeMembership(local) }
+                        val b = workers.submit<GroupMembershipEvidence?> { right.exchangeMembership(remote) }
+                        assertEquals(server.id, assertNotNull(a.get(5, TimeUnit.SECONDS)).memberIdentity)
+                        assertEquals(client.id, assertNotNull(b.get(5, TimeUnit.SECONDS)).memberIdentity)
+                        assertNull(left.comparison())
+                        assertNull(right.comparison())
+                        assertFalse(left.confirm(oldLeft))
+                        assertFalse(right.confirm(oldRight))
+                        assertFalse(left.readNext())
+                        // Encoding fixture only: the admission gate must reject BEFORE using it.
+                        val proof = lantern.protocol.FounderGroupAdmissionDraft.prepare(local.anchor, client.id, server.id)
+                            .withSignature("AAAA")
+                        assertNull(left.transferToGroup(local.anchor, proof, emptyMap()))
+                    } finally { workers.shutdownNow() }
+                }
+            }
+        }
+    }
+
     private fun exchangeHellos(left: HandshakeV1Connection, right: HandshakeV1Connection) {
         assertTrue(left.start())
         assertFalse(left.start())
@@ -412,10 +485,12 @@ class HandshakeV1ConnectionTest {
     }
 
     private inner class Sockets(val client: SSLSocket, val server: SSLSocket, val clientIdentity: Identity, val serverIdentity: Identity, val selectedAt: Long, val scheduler: ScheduledExecutorService) {
-        fun clientOwner(selectedAt: Long = this.selectedAt, now: () -> Long = ::monotonicMillis) = HandshakeV1Connection.adopt(
-            client, clientIdentity, capabilities, serverIdentity.id, selectedAt, scheduler, now,
+        fun clientOwner(selectedAt: Long = this.selectedAt, now: () -> Long = ::monotonicMillis,
+            supported: ProtocolCapabilities = capabilities) = HandshakeV1Connection.adopt(
+            client, clientIdentity, supported, serverIdentity.id, selectedAt, scheduler, now,
         )
-        fun serverOwner() = HandshakeV1Connection.adopt(server, serverIdentity, capabilities, clientIdentity.id, selectedAt, scheduler)
+        fun serverOwner(selectedAt: Long = this.selectedAt, supported: ProtocolCapabilities = capabilities) =
+            HandshakeV1Connection.adopt(server, serverIdentity, supported, clientIdentity.id, selectedAt, scheduler)
     }
 
     private fun withSockets(client: Identity, server: Identity, block: (Sockets) -> Unit) {

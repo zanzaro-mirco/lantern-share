@@ -8,10 +8,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import lantern.domain.GroupAdmissionController
 import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
+import lantern.domain.GroupMembershipController
+import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.Peer
@@ -19,6 +20,7 @@ import lantern.domain.PendingGroupAdoption
 import lantern.protocol.GroupAdmissionBridgeState
 import lantern.protocol.GroupAdmissionConfirmationState
 import lantern.protocol.GroupRootAdoptionState
+import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.Wire
@@ -29,8 +31,10 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
 import kotlin.coroutines.cancellation.CancellationException
 
+internal enum class GroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK }
+
 /**
- * One explicit admission selection per Node. Uses its listener/discovery, but never wire 0,
+ * One exclusive admission or membership-check selection per Node. Uses its listener/discovery, but never wire 0,
  * peer trust or chat. All database/OS/network work runs on the supplied Node IO scope.
  * Founders and durably adopted members issue through the same verified local-proof producer.
  * Node closes this owner and joins its workers before the caller releases the database.
@@ -40,11 +44,13 @@ internal class GroupAdmissionService(
     private val repository: GroupAdoptionRepository?,
     private val scope: CoroutineScope,
     private val running: () -> Boolean,
-) : GroupAdmissionController, AutoCloseable {
+) : GroupMembershipController, AutoCloseable {
     private val mutable = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     override val admissionState = mutable.asStateFlow()
     private val revision = MutableStateFlow(0L)
     override val membershipRevision = revision.asStateFlow()
+    private val membershipCheck = MutableStateFlow<GroupMembershipCheckState>(GroupMembershipCheckState.Idle)
+    override val membershipCheckState = membershipCheck.asStateFlow()
     private val selected = AtomicReference<Selection?>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "lantern-group-deadline").apply { isDaemon = true }
@@ -52,7 +58,7 @@ internal class GroupAdmissionService(
 
     private enum class Phase { LIVE, COMMITTING, FINISHED, CANCELLED }
 
-    private class Selection(val peer: Peer, val selectedAt: Long) {
+    private class Selection(val peer: Peer, val selectedAt: Long, val mode: GroupSelectionMode) {
         val phase = AtomicReference(Phase.LIVE)
         val claimed = AtomicBoolean()
         val click = CompletableDeferred<Unit>()
@@ -77,18 +83,20 @@ internal class GroupAdmissionService(
         selection.phase.get() == Phase.LIVE && now() - selection.selectedAt in 0 until ProtocolHandshakeAttempt.TIMEOUT_MILLIS
 
     override fun selectGroupPeer(peer: Peer, replaceInterrupted: Boolean) = select(peer, replaceInterrupted, null)
+    override fun verifyGroupPeer(peer: Peer) = select(peer, false, null, GroupSelectionMode.MEMBERSHIP_CHECK)
 
     /** Wait for Node's old PoC sockets to drain before permitting a different protocol. */
-    fun select(peer: Peer, replaceInterrupted: Boolean, previousCleanup: Job?) {
+    fun select(peer: Peer, replaceInterrupted: Boolean, previousCleanup: Job?, mode: GroupSelectionMode = GroupSelectionMode.ADMISSION) {
         if (!running() || peer.id == identity.id || !Wire.isFingerprint(peer.id) || peer.port !in 1..65535) return
         cancelGroup()
-        val selection = Selection(peer, now())
+        val selection = Selection(peer, now(), mode)
         selected.set(selection)
-        mutable.value = GroupAdmissionState.Selecting(peer)
+        if (mode == GroupSelectionMode.ADMISSION) mutable.value = GroupAdmissionState.Selecting(peer)
+        else membershipCheck.value = GroupMembershipCheckState.Checking(peer)
         selection.expiry = scope.launch {
             delay(ProtocolHandshakeAttempt.TIMEOUT_MILLIS)
             if (selection.phase.compareAndSet(Phase.LIVE, Phase.CANCELLED)) {
-                publish(selection, GroupAdmissionState.Failed(peer, GroupAdmissionFailure.FAILED))
+                publishFailure(selection, GroupAdmissionFailure.FAILED)
                 selection.click.cancel()
                 retire(selection)
             }
@@ -99,7 +107,14 @@ internal class GroupAdmissionService(
                 val store = repository ?: error("Durable group repository unavailable")
                 selection.anchor = store.localGroup()
                 selection.membership = store.committedGroupAdoption()
-                val interrupted = store.pendingGroupAdoption()
+                if (mode == GroupSelectionMode.MEMBERSHIP_CHECK) {
+                    check(selection.anchor != null) { "No local membership" }
+                    // Reject unusable local credentials before enabling a selected TLS pin.
+                    // The live exchange revalidates OS certificates, which may expire meanwhile.
+                    prepareLocalMembership(identity, store)
+                    checkMembership(selection, store)
+                }
+                val interrupted = if (mode == GroupSelectionMode.ADMISSION) store.pendingGroupAdoption() else null
                 if (interrupted != null) {
                     if (!replaceInterrupted) {
                         fail(selection, GroupAdmissionFailure.INTERRUPTED)
@@ -132,6 +147,7 @@ internal class GroupAdmissionService(
             scope.launch { retire(previous) }
         }
         mutable.value = GroupAdmissionState.Idle
+        membershipCheck.value = GroupMembershipCheckState.Idle
     }
 
     fun block(peerId: String) {
@@ -148,11 +164,17 @@ internal class GroupAdmissionService(
             val anchor = selection.anchor
             val localRole = if (anchor == null) CANDIDATE_FEATURE else ISSUER_FEATURE
             val remoteRole = if (anchor == null) ISSUER_FEATURE else CANDIDATE_FEATURE
-            val capabilities = ProtocolCapabilities(1, setOf(ADMISSION_FEATURE, localRole), setOf(ADMISSION_FEATURE))
+            val capabilities = if (selection.mode == GroupSelectionMode.MEMBERSHIP_CHECK)
+                ProtocolCapabilities(1, setOf(GroupMembershipEvidenceCodec.FEATURE), setOf(GroupMembershipEvidenceCodec.FEATURE))
+            else ProtocolCapabilities(1, setOf(ADMISSION_FEATURE, localRole), setOf(ADMISSION_FEATURE))
             val bootstrap = HandshakeV1Connection.adopt(socket, identity, capabilities,
                 peerId, selection.selectedAt, scheduler)
             install(selection, bootstrap)
             check(bootstrap.start() && bootstrap.readNext())
+            if (selection.mode == GroupSelectionMode.MEMBERSHIP_CHECK) {
+                verifyMembership(selection, bootstrap)
+                return
+            }
             val remoteFeatures = checkNotNull(bootstrap.remoteCapabilitiesForGroup()).supportedFeatures
             // Public role metadata prevents two readers/two issuers from waiting in the wrong
             // phase. It grants no authority: actual root/proof/signatures/consent are mandatory.
@@ -166,6 +188,25 @@ internal class GroupAdmissionService(
             selection.expiry?.cancel()
             retire(selection)
         }
+    }
+
+    private fun verifyMembership(selection: Selection, bootstrap: HandshakeV1Connection) {
+        val store = checkNotNull(repository)
+        val anchor = checkNotNull(selection.anchor)
+        checkLive(selection)
+        checkMembership(selection, store)
+        val local = prepareLocalMembership(identity, store)
+        checkLive(selection)
+        checkMembership(selection, store)
+        val remote = checkNotNull(bootstrap.exchangeMembership(local))
+        check(verifyPeerMembership(remote, anchor, selection.peer.id))
+        checkLive(selection)
+        checkMembership(selection, store)
+        check(selection.phase.compareAndSet(Phase.LIVE, Phase.FINISHED))
+        membershipCheck.update { if (current(selection)) GroupMembershipCheckState.Verified(selection.peer, anchor.groupId) else it }
+        // A local result only. Last writer must not reset queued TLS bytes before the peer
+        // consumes them. Peer close/invalid data/timer/cancel all reach finally and close.
+        if (identity.id > selection.peer.id) bootstrap.awaitMembershipPeerClose()
     }
 
     private suspend fun issue(selection: Selection, bootstrap: HandshakeV1Connection, anchor: GroupTrustAnchor) {
@@ -278,8 +319,13 @@ internal class GroupAdmissionService(
     private fun fail(selection: Selection, reason: GroupAdmissionFailure) {
         if (selection.phase.compareAndSet(Phase.LIVE, Phase.FINISHED)) {
             selection.expiry?.cancel()
-            publish(selection, GroupAdmissionState.Failed(selection.peer, reason))
+            publishFailure(selection, reason)
         }
+    }
+
+    private fun publishFailure(selection: Selection, reason: GroupAdmissionFailure) {
+        if (selection.mode == GroupSelectionMode.ADMISSION) publish(selection, GroupAdmissionState.Failed(selection.peer, reason))
+        else membershipCheck.update { if (current(selection)) GroupMembershipCheckState.Failed(selection.peer, reason) else it }
     }
 
     private fun retire(selection: Selection) {

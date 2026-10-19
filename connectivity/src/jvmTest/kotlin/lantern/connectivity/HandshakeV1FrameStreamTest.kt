@@ -18,6 +18,9 @@ import lantern.protocol.ProtocolHandshakeApproval
 import lantern.protocol.ProtocolHandshakeFrame
 import lantern.protocol.ProtocolHandshakeFrameCodec
 import lantern.protocol.ProtocolHandshakeParticipant
+import lantern.protocol.GroupMembershipEvidence
+import lantern.protocol.GroupMembershipEvidenceCodec
+import lantern.domain.GroupTrustAnchor
 
 class HandshakeV1FrameStreamTest {
     private val hello = ProtocolHandshakeFrame.Hello(
@@ -114,6 +117,45 @@ class HandshakeV1FrameStreamTest {
         assertSame(error, assertFailsWith<IOException> {
             HandshakeV1FrameStream(ByteArrayInputStream(byteArrayOf()), output).write(hello)
         })
+    }
+
+    @Test
+    fun membershipReadsAreExactEvenWhenFragmentedAndLeaveFollowingDataUntouched() {
+        val id = "a".repeat(64)
+        val evidence = GroupMembershipEvidence(GroupTrustAnchor("b".repeat(64), id), id, null)
+        val payload = GroupMembershipEvidenceCodec.encode(evidence)
+        val input = ByteArrayInputStream(GroupMembershipEvidenceCodec.header(payload.size) + payload + byteArrayOf(7, 8))
+        val fragmented = object : FilterInputStream(input) {
+            override fun read(bytes: ByteArray, offset: Int, length: Int) = super.read(bytes, offset, minOf(1, length))
+        }
+        var checks = 0
+        val decoded = HandshakeV1FrameStream(fragmented, ByteArrayOutputStream()).readMembership { checks++ }
+        assertEquals(payload.size + 4, checks)
+        assertContentEquals(payload, GroupMembershipEvidenceCodec.encode(decoded))
+        assertEquals(7, input.read())
+        assertEquals(8, input.read())
+    }
+
+    @Test
+    fun membershipLengthAndExpiredReadsFailBeforeConsumingBodyAndFlushFailurePropagates() {
+        val input = ByteArrayInputStream(byteArrayOf(-1, -1, -1, -1, 7))
+        assertFailsWith<InvalidGroupEvidenceFrameException> { HandshakeV1FrameStream(input, ByteArrayOutputStream()).readMembership {} }
+        assertEquals(7, input.read())
+        val deadline = IOException("Test original deadline")
+        assertSame(deadline, assertFailsWith<IOException> {
+            HandshakeV1FrameStream(input, ByteArrayOutputStream()).readMembership { throw deadline }
+        })
+        val id = "a".repeat(64)
+        val evidence = GroupMembershipEvidence(GroupTrustAnchor("b".repeat(64), id), id, null)
+        val output = object : OutputStream() {
+            override fun write(value: Int) = Unit
+            override fun flush(): Unit = throw deadline
+        }
+        assertSame(deadline, assertFailsWith<IOException> { HandshakeV1FrameStream(input, output).writeMembership(evidence) })
+        HandshakeV1FrameStream(ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream()).awaitMembershipEnd {}
+        assertFailsWith<InvalidGroupEvidenceFrameException> {
+            HandshakeV1FrameStream(ByteArrayInputStream(byteArrayOf(1)), ByteArrayOutputStream()).awaitMembershipEnd {}
+        }
     }
 
     private fun framed(payload: ByteArray): ByteArray = ByteArrayOutputStream().also { bytes ->

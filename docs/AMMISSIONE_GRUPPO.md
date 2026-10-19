@@ -1,5 +1,15 @@
 # Dichiarazione di ammissione al gruppo
 
+## Verifica di membri già ammessi — B4
+
+Percorso opzionale distinto dall'invito: [ADR 013](ADR-013-VERIFICA-APPARTENENZA-TLS.md).
+Node Android/desktop e azione Verifica membro controllano la prova fino all'identità
+del peer mutual-TLS contro il gruppo locale indipendente, senza nuove deleghe o
+conferme. Il risultato diagnostico non apre sessioni né promuove trust. Stesso owner,
+selezione esclusiva e scadenza; formato nuovo solo previa negoziazione obbligatoria
+della feature opzionale, senza cambiare i codec sottostanti. Integrazione iOS ancora
+da realizzare, verifiche effettive in STATO, collaudi fisici aperti.
+
 ## Inviti da membri già ammessi — 19 ottobre 2026
 
 LocalGroupAdmission è il produttore comune consumato da Node e GroupAdmissionSession.
@@ -21,7 +31,8 @@ Un invito nuovo richiede ancora TLS selezionato, offerte/nonce nuovi, codice com
 due clic e commit locale A; il vecchio materiale non è un ticket per il nuovo consenso.
 Il fondatore non deve essere online. Ruolo UI emittente, non amministratore. Schema,
 wire e dipendenze invariati. Test mantenuti A→B→C con store riaperti e fondatore offline;
-esiti effettivi in STATO. Nuovo runtime Apple e hardware distinti dai test JVM.
+esiti effettivi in STATO. Verificato anche nel simulatore su a316ca5 / 162 XCTest,
+non hardware; il nuovo controllo B4 resta distinto dall'ammissione già verificata.
 
 ## Ingresso nel servizio iOS — 19 ottobre 2026
 
@@ -30,7 +41,7 @@ listener/discovery esistenti. Il pannello Compose condiviso passa tramite
 IosGroupAdmissionController: selezioni opache distinte, clic dell'istanza visualizzata,
 callback vecchi inerti. I ticket crittografici restano privati al servizio. Questa è
 integrazione nell'app, non soltanto una facciata; verificata in simulatore su b0914a9,
-161 XCTest senza fallimenti. Le nuove deleghe sopra richiedono il checkpoint successivo.
+161 XCTest senza fallimenti. Deleghe sopra verificate dal checkpoint successivo a316ca5.
 
 Durante la scelta v1 AllowedPeerStore esclude i pin fidati PoC, il reconnect v0 resta
 sospeso e il TLS entrante è assegnato alla selezione corrente PRIMA dell'handshake.

@@ -6,13 +6,23 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B3, inviti da membri ammessi
+## Ripartenza corrente — B4, verifica membership Android/desktop
+
+`a316ca5`: [iOS completo 39317659570](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39317659570) e [PoC 39317643429](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39317643429) conclusi success, letti senza polling. Native/export/app e **162 XCTest passati**, incluso invito delegato A→B→C e riapertura. Bootstrap compilato soltanto, nessun nuovo hardware. B3 ammissione verificata automaticamente, non collaudo fisico né sessioni.
+
+Nuovo blocco utilizzabile su Node Android/desktop: **Verifica membro** su entrambi, stessa selezione esclusiva/pin/TLS e deadline; prova della propria appartenenza COMMITTATA, radice indipendente e identità TLS obbligatorie. Nessun nuovo invito, consenso ripreso, commit o trust PoC. Formato opzionale negoziato `group-membership-check`, additivo: decisione/confini in [ADR 013](docs/ADR-013-VERIFICA-APPARTENENZA-TLS.md), comandi ed esiti in STATO. Nessuna migrazione/variazione dei frame precedenti o workflow. Ultimo writer attende EOF entro deadline per non perdere byte TLS accodati; l'esito è solo una verifica locale diagnostica, non un ticket di sessione.
+
+**Prossimo blocco unico:** dopo la CI conclusa/correzioni, portare lo stesso controllo nell'owner iOS/BonjourProbe con core Kotlin, letture esatte, stesso trasporto e lifetime. UI Apple non espone ancora questa azione: non dichiarare B4 multipiattaforma completo. Checkpoint Native/simulatore completo a tale integrazione, non duplicare ora la CI ordinaria. Fase 1/hardware e gate UI invariati. Conservare note post-push locali e raggrupparle al prossimo codice, niente polling.
+
+## Evidenze precedenti — B3, inviti da membri ammessi
 
 Checkpoint precedente `b0914a9`: [iOS completo 39275475831](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39275475831) success, letto da concluso senza polling. Native/export/app e **161 XCTest senza fallimenti**, inclusi ingresso iOS e riapertura SQLite; bootstrap compilato soltanto. Non hardware. Le note post-push precedenti sono preservate sotto.
 
 Nuovo blocco: LocalGroupAdmission condiviso estende solo la catena dell'appartenenza COMMITTATA e verificata con identità/certificato OS corrente. Nessun consenso ripristinato o uso del pendente. Node e GroupAdmissionSession iOS lo consumano nello stesso percorso esplicito; confronto completo/due clic/commit locale A invariati. L'emittente ricontrolla radice e marker esatto prima dell'invio e del clic. Nessun cambiamento schema/wire/versioni/workflow. Dettagli e comandi in STATO; nuovo Swift/simulatore da attestare.
 
 **Prossimo blocco unico:** leggere il nuovo checkpoint Apple da concluso e correggere prima di proseguire; dopo la verifica, autenticazione esplicita fra due membri già ammessi come prerequisito delle sessioni. Non confondere inviti, trust PoC e traffico di gruppo. B3 non dichiarato chiuso prima della verifica Apple; limite di percorso 32 preesistente, nessun limite di 32 membri introdotto. Fase 1/hardware e gate UI completa invariati. Nessun polling o push solo Markdown.
+
+Consegnato `a316ca5ebe4f5d051af28e1b61dc3afde973d023`, 25 file, unico commit/push. [iOS completo 39317659570](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39317659570) queued, [PoC 39317643429](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39317643429) in_progress nella sola lettura post-push. Richiesta cancellazione iOS ordinario duplicato 39317643220, senza ricontrollo. Nessun polling/esito Apple nuovo attestato. Questa nota con STATO rimane locale da raggruppare al prossimo codice, niente push solo Markdown.
 
 ## Evidenze precedenti — B3, ingresso iOS
 

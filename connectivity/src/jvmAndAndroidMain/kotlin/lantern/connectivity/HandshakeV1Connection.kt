@@ -17,6 +17,8 @@ import lantern.domain.GroupAdoptionRepository
 import lantern.protocol.GroupAdmissionConfirmationContext
 import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.GroupAdmissionEvidence
+import lantern.protocol.GroupMembershipEvidence
+import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.ProtocolHandshakeComparison
@@ -70,6 +72,7 @@ internal class HandshakeV1Connection private constructor(
     private var failure: HandshakeV1ConnectionFailure? = null
     private var expiryTask: ScheduledFuture<*>? = null
     private var exchangingEvidence = false
+    private var checkingMembership = false
 
     val state: HandshakeV1ConnectionState
         get() = guarded { synchronized(stateLock) { snapshotLocked() } }
@@ -96,7 +99,7 @@ internal class HandshakeV1Connection private constructor(
     /** One reader at a time; no frame is routed until the HELLO write actually succeeded. */
     fun readNext(): Boolean = socketOperation {
         synchronized(readerLock) {
-            if (!synchronized(stateLock) { activeLocked() }) return@socketOperation false
+            if (!synchronized(stateLock) { activeLocked() && !exchangingEvidence }) return@socketOperation false
             val frame = stream.read {
                 synchronized(stateLock) {
                     if (!activeLocked()) throw IOException("V1 bootstrap is closed")
@@ -129,7 +132,7 @@ internal class HandshakeV1Connection private constructor(
     /** The UI must pass the retained ticket ONLY after explicit comparison on both devices. */
     fun confirm(comparison: ProtocolHandshakeComparison): Boolean = socketOperation {
         val signing = synchronized(stateLock) {
-            if (activeLocked()) attempt.confirm(comparison) else null
+            if (activeLocked() && !exchangingEvidence) attempt.confirm(comparison) else null
         } ?: return@socketOperation false
         val signature = identity.sign(signing.bytes)
         val sending = synchronized(stateLock) {
@@ -146,6 +149,70 @@ internal class HandshakeV1Connection private constructor(
     }
 
     private inline fun <T> socketOperation(block: () -> T): T = operations.read { guarded(block) }
+
+    /**
+     * Selected diagnostic exchange before any APPROVE, under this same socket/timer owner.
+     * Required feature prevents confusion with admission. Lower TLS identity writes first,
+     * so two maximum-size proofs cannot deadlock while both TCP send buffers are full.
+     * The service verifies the result then closes; this is not a traffic-authorization handover.
+     */
+    fun exchangeMembership(local: GroupMembershipEvidence): GroupMembershipEvidence? {
+        val exclusive = operations.writeLock()
+        if (!exclusive.tryLock()) return null
+        try {
+            return guarded {
+                synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    check(!exchangingEvidence) { "Membership exchange already started" }
+                    val offers = checkNotNull(attempt.offersForGroupAdmission())
+                    check(GroupMembershipEvidenceCodec.FEATURE in offers.local.capabilities.requiredFeatures &&
+                        GroupMembershipEvidenceCodec.FEATURE in offers.remote.capabilities.requiredFeatures)
+                    check(local.memberIdentity == identity.id)
+                    exchangingEvidence = true
+                    checkingMembership = true
+                }
+                fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
+                fun receive() = stream.readMembership {
+                    synchronized(stateLock) {
+                        requireEvidenceActiveLocked()
+                        socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+                    }
+                }
+                fun send() {
+                    checkLive()
+                    stream.writeMembership(local)
+                    checkLive()
+                }
+                val remote = if (identity.id < selectedPeerIdentity) {
+                    send()
+                    receive()
+                } else {
+                    val received = receive()
+                    send()
+                    received
+                }
+                checkLive()
+                remote
+            }
+        } finally { exclusive.unlock() }
+    }
+
+    /**
+     * Last writer stays alive until the first writer closes after its complete read/verification.
+     * Avoid an abortive close racing queued TLS bytes. No data, ACK or new authorization follows;
+     * cancel and the original timer still abort the blocked receive independently.
+     */
+    fun awaitMembershipPeerClose() = socketOperation {
+        synchronized(readerLock) {
+            stream.awaitMembershipEnd {
+                synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    check(checkingMembership && identity.id > selectedPeerIdentity)
+                    socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+                }
+            }
+        }
+    }
 
     /** Issuer-only evidence write and handover, with no intermediate bootstrap APPROVE window. */
     fun sendEvidenceAndTransfer(
@@ -168,7 +235,7 @@ internal class HandshakeV1Connection private constructor(
         try {
             return guarded {
                 synchronized(stateLock) {
-                    if (!activeLocked() || attempt.offersForGroupAdmission() == null) return@guarded null
+                    if (!activeLocked() || exchangingEvidence || attempt.offersForGroupAdmission() == null) return@guarded null
                     exchangingEvidence = true
                 }
                 val evidence = stream.readEvidence {
@@ -207,7 +274,7 @@ internal class HandshakeV1Connection private constructor(
         try {
             return guarded {
                 synchronized(stateLock) {
-                    if (!activeLocked()) return@guarded null
+                    if (!activeLocked() || exchangingEvidence) return@guarded null
                     val offers = attempt.offersForGroupAdmission() ?: return@guarded null
                     if (outgoing != null) {
                         val context = GroupAdmissionConfirmationContext.fromBootstrapOffers(offers, expectedAnchor, outgoing.proof)
@@ -266,7 +333,7 @@ internal class HandshakeV1Connection private constructor(
         try {
             return guarded {
                 synchronized(stateLock) {
-                    if (!activeLocked()) return@synchronized null
+                    if (!activeLocked() || checkingMembership) return@synchronized null
                     val offers = attempt.offersForGroupAdmission()
                     if (offers == null) {
                         snapshotLocked()

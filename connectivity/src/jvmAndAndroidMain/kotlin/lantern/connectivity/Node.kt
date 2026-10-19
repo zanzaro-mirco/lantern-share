@@ -17,7 +17,7 @@ import lantern.domain.DeviceController
 import lantern.domain.DeviceRepository
 import lantern.domain.DeviceState
 import lantern.domain.DiscoveryService
-import lantern.domain.GroupAdmissionController
+import lantern.domain.GroupMembershipController
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Peer
@@ -38,7 +38,7 @@ class Node(
     private val discovery: DiscoveryService,
     private val address: InetAddress,
     private val requestedPort: Int = 0,
-) : DeviceController, GroupAdmissionController, AutoCloseable {
+) : DeviceController, GroupMembershipController, AutoCloseable {
     private val mutable = MutableStateFlow(DeviceState(
         name = repository.name(),
         id = identity.id,
@@ -58,6 +58,7 @@ class Node(
     }
     override val admissionState = admissions.admissionState
     override val membershipRevision = admissions.membershipRevision
+    override val membershipCheckState = admissions.membershipCheckState
 
     val port: Int get() = activeRun?.server?.localPort ?: 0
 
@@ -347,14 +348,20 @@ class Node(
         if (admissions.active) admissions.allowsHandshake(peerId) else authorization.allowsHandshake(peerId)
 
     @Synchronized
-    override fun selectGroupPeer(peer: Peer, replaceInterrupted: Boolean) {
+    override fun selectGroupPeer(peer: Peer, replaceInterrupted: Boolean) =
+        selectGroupConnection(peer, replaceInterrupted, GroupSelectionMode.ADMISSION)
+
+    @Synchronized
+    override fun verifyGroupPeer(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.MEMBERSHIP_CHECK)
+
+    private fun selectGroupConnection(peer: Peer, replaceInterrupted: Boolean, mode: GroupSelectionMode) {
         val run = activeRun ?: return
         if (closed) return
         reject()
         // A protocol is chosen explicitly, never sniffed/fallen back from untrusted bytes.
         // Drain old PoC sockets before enabling selected v1 TLS. The listener stays alive.
         val cleanup = resourceCloser.closeAll(run.sockets.toList())
-        admissions.select(peer, replaceInterrupted, cleanup)
+        admissions.select(peer, replaceInterrupted, cleanup, mode)
         discovered(run, peer)
     }
 

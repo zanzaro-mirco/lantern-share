@@ -38,6 +38,8 @@ import lantern.domain.GroupAdmissionController
 import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
+import lantern.domain.GroupMembershipController
+import lantern.domain.GroupMembershipCheckState
 
 @Composable
 fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? = null) {
@@ -62,6 +64,7 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 Text(state.status)
                 if (localGroup != null) LocalGroupPanel(localGroup)
                 if (admission != null) GroupAdmissionPanel(admission, localGroup)
+                if (admission is GroupMembershipController) GroupMembershipCheckPanel(admission)
                 PairingPanel(state.pairingPeer, state.comparisonCode, controller::confirm, controller::reject)
                 Text("Dispositivi scoperti", style = MaterialTheme.typography.titleLarge)
                 if (state.peers.isEmpty()) Text("Nessun dispositivo. Verifica rete locale e firewall.")
@@ -78,6 +81,9 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                     if (admission != null && state.active) {
                         OutlinedButton(onClick = { admission.selectGroupPeer(peer) }) {
                             Text("Ingresso gruppo con ${peer.name}")
+                        }
+                        if (admission is GroupMembershipController) {
+                            OutlinedButton(onClick = { admission.verifyGroupPeer(peer) }) { Text("Verifica membro ${peer.name}") }
                         }
                     }
                 }
@@ -118,6 +124,26 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
                 LocalGroupState.Closed -> Text("Gestione gruppo arrestata.")
             }
             Text("Lo stato locale non abilita sessioni o messaggi di gruppo. La creazione non associa dispositivi.")
+        }
+    }
+}
+
+@Composable
+private fun GroupMembershipCheckPanel(controller: GroupMembershipController) {
+    val state by controller.membershipCheckState.collectAsState()
+    if (state == GroupMembershipCheckState.Idle) return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Verifica appartenenza", style = MaterialTheme.typography.titleMedium)
+            when (val current = state) {
+                GroupMembershipCheckState.Idle -> Unit
+                is GroupMembershipCheckState.Checking -> Text("Seleziona Verifica membro anche su ${current.peer.name} (120 s). Non è un nuovo invito.")
+                is GroupMembershipCheckState.Verified -> Text("Questo dispositivo ha verificato ${current.peer.name} nel gruppo ${current.groupId}. Il canale di prova viene chiuso: nessuna sessione o chat abilitata, nessuna conferma dell'esito remoto.")
+                is GroupMembershipCheckState.Failed -> Text(if (current.reason == GroupAdmissionFailure.UNAVAILABLE)
+                    "Serve un'appartenenza locale salvata e verificabile. Nessun dato modificato."
+                else "Verifica fallita o interrotta: gruppo diverso, prova non valida o percorso non supportato. Nessun peer autorizzato.")
+            }
+            TextButton(onClick = controller::cancelGroup) { Text("Chiudi verifica") }
         }
     }
 }
