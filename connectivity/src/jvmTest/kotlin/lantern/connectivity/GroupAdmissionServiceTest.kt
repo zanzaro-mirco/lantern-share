@@ -43,7 +43,7 @@ class GroupAdmissionServiceTest {
         val saved = fixture.use { f ->
             f.select()
             val (issuer, member) = f.comparisons()
-            assertEquals(GroupAdmissionRole.FOUNDER, issuer.role)
+            assertEquals(GroupAdmissionRole.ISSUER, issuer.role)
             assertEquals(GroupAdmissionRole.NEW_MEMBER, member.role)
             assertEquals(issuer.code, member.code)
             assertEquals(64, member.code.length)

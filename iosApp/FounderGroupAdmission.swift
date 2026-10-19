@@ -3,8 +3,8 @@ import Security
 import LanternIdentity
 import LanternUI
 
-/// The explicit GroupAdmissionSession calls this on its non-UI owning queue, rechecking
-/// liveness before sending. Canonical proof/roles remain Kotlin; no PoC trust is written.
+/// Founder-only preparation boundary, retained for focused tests. GroupAdmissionSession uses
+/// LocalGroupAdmission for both founders and adopted members. No PoC trust is written.
 enum FounderGroupAdmission {
     static func prepare(
         identity: AppleIdentity,

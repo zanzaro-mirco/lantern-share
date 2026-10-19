@@ -84,10 +84,10 @@ class IosGroupAdmissionController(
         state.value = GroupAdmissionState.Selecting(value.peer)
     }
 
-    fun comparing(value: IosGroupAdmissionSelection, founder: Boolean, groupId: String, code: String): IosGroupAdmissionDisplayTicket? {
+    fun comparing(value: IosGroupAdmissionSelection, issuer: Boolean, groupId: String, code: String): IosGroupAdmissionDisplayTicket? {
         if (selection !== value || state.value !is GroupAdmissionState.Selecting) return null
         val comparison = GroupAdmissionState.Comparing(value.peer,
-            if (founder) GroupAdmissionRole.FOUNDER else GroupAdmissionRole.NEW_MEMBER, groupId, code)
+            if (issuer) GroupAdmissionRole.ISSUER else GroupAdmissionRole.NEW_MEMBER, groupId, code)
         return IosGroupAdmissionDisplayTicket(value, comparison).also {
             displayed.value = it
             state.value = comparison

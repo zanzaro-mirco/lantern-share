@@ -1,12 +1,36 @@
 # Dichiarazione di ammissione al gruppo
 
+## Inviti da membri già ammessi — 19 ottobre 2026
+
+LocalGroupAdmission è il produttore comune consumato da Node e GroupAdmissionSession.
+Il fondatore usa la fondazione locale; un membro adottato deve leggere il marker
+COMMITTATO, con radice identica e identità OS corrente. Il produttore verifica catena
+completa e due conferme storiche mediante gli adattatori certificati esistenti,
+richiede il DER locale esatto del marker, poi aggiunge e verifica la nuova delega
+firmata dall'identità OS. Conserva tutte le deleghe/certificati precedenti. Non legge
+il journal pendente, non scrive appartenenza, non ripristina consenso o deadline.
+
+Cicli/destinatario già nel percorso e superamento dei 32 elementi preesistenti sono
+rifiutati, mai troncati; non si introduce un limite di 32 membri o una nuova revoca.
+Radice e marker completo sono riletti dopo la firma, e dagli owner prima dell'invio
+e della conferma. Un cambiamento del solo ID operazione invalida comunque la selezione.
+Letture e verifiche non promettono atomicità contro scrittori OS/DB esterni: il servizio
+resta responsabile della serializzazione lifecycle. Errori OS propagati senza fallback.
+
+Un invito nuovo richiede ancora TLS selezionato, offerte/nonce nuovi, codice completo,
+due clic e commit locale A; il vecchio materiale non è un ticket per il nuovo consenso.
+Il fondatore non deve essere online. Ruolo UI emittente, non amministratore. Schema,
+wire e dipendenze invariati. Test mantenuti A→B→C con store riaperti e fondatore offline;
+esiti effettivi in STATO. Nuovo runtime Apple e hardware distinti dai test JVM.
+
 ## Ingresso nel servizio iOS — 19 ottobre 2026
 
 BonjourProbe compone GroupAdmissionSession sulla propria coda seriale non-UI e sul
 listener/discovery esistenti. Il pannello Compose condiviso passa tramite
 IosGroupAdmissionController: selezioni opache distinte, clic dell'istanza visualizzata,
 callback vecchi inerti. I ticket crittografici restano privati al servizio. Questa è
-integrazione nell'app, non soltanto una facciata; verifica Apple nuova ancora da attestare.
+integrazione nell'app, non soltanto una facciata; verificata in simulatore su b0914a9,
+161 XCTest senza fallimenti. Le nuove deleghe sopra richiedono il checkpoint successivo.
 
 Durante la scelta v1 AllowedPeerStore esclude i pin fidati PoC, il reconnect v0 resta
 sospeso e il TLS entrante è assegnato alla selezione corrente PRIMA dell'handshake.
@@ -31,8 +55,8 @@ Ogni selezione entra nel drain cumulativo del servizio. GroupRootAdoptionChannel
 trattenuto fino a whenClosedAndDrained; anche le selezioni già sostituite devono rientrare
 prima della chiusura SQLite. Bootstrap/emittente non accedono al DB da callback tardivi
 dopo cancel. Nessun trust PoC, sessione o traffico di gruppo deriva dall'appartenenza.
-Test servizio Swift mantenuti con TLS/Keychain/SQLite veri predisposti; esiti in STATO.
-Inviti da membro delegato e collaudi hardware restano aperti, non cambia la specifica.
+Test servizio Swift mantenuti con TLS/Keychain/SQLite veri; esiti in STATO.
+Inviti delegati descritti sopra; collaudi hardware aperti, non cambia la specifica.
 
 ## Ingresso nell'app Android/desktop — 19 ottobre 2026
 

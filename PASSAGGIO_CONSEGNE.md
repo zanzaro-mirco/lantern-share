@@ -6,7 +6,15 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B3, ingresso iOS
+## Ripartenza corrente — B3, inviti da membri ammessi
+
+Checkpoint precedente `b0914a9`: [iOS completo 39275475831](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39275475831) success, letto da concluso senza polling. Native/export/app e **161 XCTest senza fallimenti**, inclusi ingresso iOS e riapertura SQLite; bootstrap compilato soltanto. Non hardware. Le note post-push precedenti sono preservate sotto.
+
+Nuovo blocco: LocalGroupAdmission condiviso estende solo la catena dell'appartenenza COMMITTATA e verificata con identità/certificato OS corrente. Nessun consenso ripristinato o uso del pendente. Node e GroupAdmissionSession iOS lo consumano nello stesso percorso esplicito; confronto completo/due clic/commit locale A invariati. L'emittente ricontrolla radice e marker esatto prima dell'invio e del clic. Nessun cambiamento schema/wire/versioni/workflow. Dettagli e comandi in STATO; nuovo Swift/simulatore da attestare.
+
+**Prossimo blocco unico:** leggere il nuovo checkpoint Apple da concluso e correggere prima di proseguire; dopo la verifica, autenticazione esplicita fra due membri già ammessi come prerequisito delle sessioni. Non confondere inviti, trust PoC e traffico di gruppo. B3 non dichiarato chiuso prima della verifica Apple; limite di percorso 32 preesistente, nessun limite di 32 membri introdotto. Fase 1/hardware e gate UI completa invariati. Nessun polling o push solo Markdown.
+
+## Evidenze precedenti — B3, ingresso iOS
 
 Precedente `a4613c1`: [PoC 39268035729](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39268035729) e [iOS ordinario 39268035721](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39268035721) conclusi success, letti una volta senza polling. Apple ha compilato framework/app/XCTest, NON eseguito i test. Ultimo runtime attestato `dc33c26`, 156 XCTest, non hardware.
 
@@ -15,6 +23,8 @@ Nuovo blocco implementato: ingresso fondatore→candidato nel servizio BonjourPr
 Locale: 4 test UI JVM + 4 Android passati, APK/classi desktop compilati; integrato definitivo 4 s, connettività UP-TO-DATE (non rieseguita). Lock UI esteso ai test alle versioni esistenti dopo il primo errore di risoluzione. Facciate iOS Kotlin controllate dall'harness host/JDBC già presente, non Native/Swift. Cinque nuovi XCTest mantenuti predisposti, NON compilati/eseguiti su Windows. Nuovo runtime Apple e hardware non attestati.
 
 **Prossimo blocco:** dopo il checkpoint Apple concluso/correzioni, prova delegata verificata e percorso del membro emittente. B3 resta aperto finché ogni membro non può autorizzare; nessuna restrizione amministrativa di prodotto. Fase 1/hardware e gate UI invariati. Nessun polling; note locali post-push da raggruppare, niente push solo Markdown.
+
+Consegnato `b0914a99c8a0f7eeb210dd8dda0cd95621619d43`, 24 file, unico commit/push. Dispatch [iOS completo 39275475831](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39275475831) riuscito, bootstrap_interop=false; nuovo esito Apple NON letto/attestato. La sola lista post-push filtrata per SHA era ancora vuota: niente seconda lettura/polling; run PoC/ordinaria non identificate e nessuna cancellazione duplicato effettuata. Alla ripresa leggere il checkpoint da concluso e correggere. Questa nota con STATO resta locale da raggruppare, niente push solo documentale.
 
 ## Evidenze precedenti — B3, ingresso Android/desktop
 

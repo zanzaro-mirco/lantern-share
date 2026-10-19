@@ -17,15 +17,12 @@ import lantern.domain.GroupTrustAnchor
 import lantern.domain.Peer
 import lantern.domain.PendingGroupAdoption
 import lantern.protocol.GroupAdmissionBridgeState
-import lantern.protocol.GroupAdmissionCertificate
 import lantern.protocol.GroupAdmissionConfirmationState
-import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupRootAdoptionState
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.Wire
 import java.io.Closeable
-import java.util.Base64
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -35,7 +32,7 @@ import kotlin.coroutines.cancellation.CancellationException
 /**
  * One explicit admission selection per Node. Uses its listener/discovery, but never wire 0,
  * peer trust or chat. All database/OS/network work runs on the supplied Node IO scope.
- * Only a founder can issue here; adopted members need the later delegated-proof producer.
+ * Founders and durably adopted members issue through the same verified local-proof producer.
  * Node closes this owner and joins its workers before the caller releases the database.
  */
 internal class GroupAdmissionService(
@@ -64,6 +61,7 @@ internal class GroupAdmissionService(
         @Volatile var ready = false
         @Volatile var comparison: GroupAdmissionState.Comparing? = null
         var anchor: GroupTrustAnchor? = null
+        var membership: PendingGroupAdoption? = null
         var replacing: PendingGroupAdoption? = null
         var expiry: Job? = null
     }
@@ -100,7 +98,7 @@ internal class GroupAdmissionService(
                 previousCleanup?.join()
                 val store = repository ?: error("Durable group repository unavailable")
                 selection.anchor = store.localGroup()
-                check(selection.anchor == null || selection.anchor?.founderId == identity.id) { "Delegated issuing not connected" }
+                selection.membership = store.committedGroupAdoption()
                 val interrupted = store.pendingGroupAdoption()
                 if (interrupted != null) {
                     if (!replaceInterrupted) {
@@ -173,16 +171,17 @@ internal class GroupAdmissionService(
     private suspend fun issue(selection: Selection, bootstrap: HandshakeV1Connection, anchor: GroupTrustAnchor) {
         val store = checkNotNull(repository)
         checkLive(selection)
-        check(store.localGroup() == anchor && anchor.founderId == identity.id)
-        val proof = prepareFounderGroupAdmission(identity, store, selection.peer.id)
-        val certificate = GroupAdmissionCertificate(identity.id, Base64.getEncoder().encodeToString(identity.certificate.encoded))
-        val group = checkNotNull(bootstrap.sendEvidenceAndTransfer(anchor, GroupAdmissionEvidence(proof, listOf(certificate))))
+        checkMembership(selection, store)
+        val evidence = prepareLocalGroupAdmission(identity, store, selection.peer.id)
+        checkLive(selection)
+        checkMembership(selection, store)
+        val group = checkNotNull(bootstrap.sendEvidenceAndTransfer(anchor, evidence))
         install(selection, group)
         check(group.prepare())
         val ticket = checkNotNull(group.comparison())
-        awaitComparison(selection, GroupAdmissionRole.FOUNDER, anchor.groupId, ticket.bytes)
+        awaitComparison(selection, GroupAdmissionRole.ISSUER, anchor.groupId, ticket.bytes)
         checkLive(selection)
-        check(store.localGroup() == anchor)
+        checkMembership(selection, store)
         check(group.confirm(ticket))
         publish(selection, GroupAdmissionState.AwaitingPeer(selection.peer))
         while (group.state != GroupAdmissionBridgeState.Active(GroupAdmissionConfirmationState.Confirmed)) {
@@ -201,6 +200,13 @@ internal class GroupAdmissionService(
         } catch (_: Exception) {
             // Both signatures were already observed, not a remote commit acknowledgement.
         }
+    }
+
+    private fun checkMembership(selection: Selection, store: GroupAdoptionRepository) {
+        check(store.localGroup() == selection.anchor)
+        val current = store.committedGroupAdoption()
+        val saved = selection.membership
+        check(if (saved == null) current == null else current != null && saved.sameRecord(current))
     }
 
     private suspend fun receive(selection: Selection, bootstrap: HandshakeV1Connection) {

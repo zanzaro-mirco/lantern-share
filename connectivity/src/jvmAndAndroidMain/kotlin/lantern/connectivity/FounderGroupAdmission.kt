@@ -9,8 +9,8 @@ import lantern.protocol.GroupAdmissionProof
  * The caller serializes this operation with identity/group changes and cancellation. It must
  * discard the result if its live connection/request ends; this helper owns neither lifecycle
  * nor transport and cannot establish membership, persist trust or commit remote admission.
- * Consumed by the explicit founder path in GroupAdmissionService. Delegated members require
- * a different, verified local proof path; a durable anchor alone is not sufficient.
+ * Founder-only helper retained for focused preparation tests. The app service now uses
+ * prepareLocalGroupAdmission, which also verifies committed delegated membership.
  */
 internal fun prepareFounderGroupAdmission(
     identity: Identity,

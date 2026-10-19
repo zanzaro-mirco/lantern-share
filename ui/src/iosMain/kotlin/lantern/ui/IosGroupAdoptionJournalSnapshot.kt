@@ -16,6 +16,9 @@ class IosGroupAdoptionJournalSnapshot internal constructor(internal val record: 
     val localIdentity: String get() = record.localIdentity
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES
 
+    /** Exact immutable-record comparison, not cryptographic verification or live consent. */
+    fun sameRecord(other: IosGroupAdoptionJournalSnapshot): Boolean = record.sameRecord(other.record)
+
     /**
      * Caller supplies the current OS identity and exact-DER OS verifier on its non-UI serial queue.
      * Exceptions propagate through the Swift boundary; no writes, cleanup or authorization occur.

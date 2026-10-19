@@ -18,7 +18,7 @@ final class GroupAdmissionSessionTests: XCTestCase {
 
     private final class Side {
         let identity: AppleIdentity
-        let store: IosPersistence
+        var store: IosPersistence
         let directory: URL
         let transport: AppleTLSTransport
         var presentation: IosGroupAdmissionController!
@@ -114,6 +114,86 @@ final class GroupAdmissionSessionTests: XCTestCase {
         }
     }
 
+    func testReopenedMemberInvitesThirdDeviceWithoutFounderInBothTLSOrders() throws {
+        for issuerInitiates in [true, false] {
+            let sorted = try [side(), side(), side()].sorted { $0.identity.id < $1.identity.id }
+            let founder = sorted[1], issuer = sorted[issuerInitiates ? 0 : 2], candidate = sorted[issuerInitiates ? 2 : 0]
+            try queue.sync {
+                let foundation = try LocalGroupFoundation(identity: founder.identity)
+                let ticket = try XCTUnwrap(foundation.prepare(persistence: founder.store))
+                XCTAssertEqual(try foundation.commit(ticket: ticket, currentIdentity: founder.identity, persistence: founder.store).name, "COMMITTED")
+            }
+            try connect(founder, issuer)
+            try confirmBoth(founder, issuer)
+            closeAndDrain(founder)
+            closeAndDrain(issuer)
+            try queue.sync {
+                // Founder no longer participates; the issuer's actual app store is reopened.
+                for listener in listeners {
+                    listener.stateUpdateHandler = nil
+                    listener.newConnectionHandler = nil
+                    listener.cancel()
+                }
+                listeners.removeAll()
+                issuer.store.close()
+                stores.removeAll { $0 === issuer.store }
+                issuer.store = try IosEntryKt.openIosPersistence(databaseDirectory: issuer.directory.path)
+                stores.append(issuer.store)
+                XCTAssertEqual(try GroupAdoptionJournalInspector.inspect(
+                    XCTUnwrap(issuer.store.committedGroupAdoption()), currentIdentityID: issuer.identity.id), .historicalSignaturesValid)
+                // A saved proof cannot be used with a different current OS identity.
+                XCTAssertThrowsError(try LocalGroupAdmission.prepare(identity: candidate.identity, persistence: issuer.store,
+                    memberID: founder.identity.id))
+            }
+            try connect(issuer, candidate)
+            try awaitComparison(issuer, candidate)
+            let groupID = try queue.sync { try XCTUnwrap(candidate.presentation.displayedComparison()).groupId }
+            try confirmBoth(issuer, candidate)
+            closeAndDrain(issuer)
+            closeAndDrain(candidate)
+            try queue.sync {
+                XCTAssertEqual(try candidate.store.localGroup()?.groupId, groupID)
+                XCTAssertEqual(try candidate.store.trusted(), [])
+                XCTAssertEqual(try candidate.store.history().count, 0)
+                XCTAssertNil(try candidate.store.pendingGroupAdoption())
+                candidate.store.close()
+                stores.removeAll { $0 === candidate.store }
+                candidate.store = try IosEntryKt.openIosPersistence(databaseDirectory: candidate.directory.path)
+                stores.append(candidate.store)
+                XCTAssertEqual(try GroupAdoptionJournalInspector.inspect(
+                    XCTUnwrap(candidate.store.committedGroupAdoption()), currentIdentityID: candidate.identity.id), .historicalSignaturesValid)
+                // A third member retains all certificates needed for a further delegation.
+                let next = try LocalGroupAdmission.prepare(identity: candidate.identity, persistence: candidate.store,
+                    memberID: String(repeating: "e", count: 64))
+                XCTAssertEqual(next.certificates.count, 3)
+                let display = IosLocalGroupController(requestCreate: { XCTFail("already adopted") }, requestReload: {})
+                try GroupAdoptionJournalInspector.loadLocalGroup(display, identityID: candidate.identity.id, persistence: candidate.store)
+                XCTAssertEqual(display.snapshot().phase, .adopted)
+            }
+        }
+    }
+
+    private func confirmBoth(_ issuer: Side, _ member: Side) throws {
+        try awaitComparison(issuer, member)
+        try queue.sync {
+            let offer = try XCTUnwrap(issuer.presentation.displayedComparison())
+            let accept = try XCTUnwrap(member.presentation.displayedComparison())
+            XCTAssertEqual(offer.code, accept.code)
+            member.presentation.confirmDisplayed(ticket: accept)
+        }
+        awaitState { member.presentation.snapshot().phase == .awaitingPeer }
+        try queue.sync {
+            XCTAssertNil(try member.store.localGroup())
+            XCTAssertNil(try member.store.pendingGroupAdoption())
+            issuer.presentation.confirmDisplayed(ticket: try XCTUnwrap(issuer.presentation.displayedComparison()))
+        }
+        awaitState { member.presentation.snapshot().phase == .completed && issuer.presentation.snapshot().phase == .completed }
+        queue.sync {
+            XCTAssertTrue(member.presentation.snapshot().adoptedLocally)
+            XCTAssertFalse(issuer.presentation.snapshot().adoptedLocally)
+        }
+    }
+
     func testCancelledSelectionOldClickCannotAdoptAndNewComparisonIsFresh() throws {
         let pair = try fixture(founderInitiates: true)
         try awaitComparison(pair.issuer, pair.member)
@@ -173,6 +253,11 @@ final class GroupAdmissionSessionTests: XCTestCase {
                 XCTAssertEqual(try foundation.commit(ticket: ticket, currentIdentity: issuer.identity, persistence: issuer.store).name, "COMMITTED")
             }
         }
+        try connect(issuer, member)
+        return (issuer, member)
+    }
+
+    private func connect(_ issuer: Side, _ member: Side) throws {
         let issuerListener = try listen(issuer, selectedPeer: member.identity.id)
         let memberListener = try listen(member, selectedPeer: issuer.identity.id)
         queue.sync {
@@ -200,7 +285,6 @@ final class GroupAdmissionSessionTests: XCTestCase {
             issuer.presentation.selectPeer(id: member.identity.id, name: "member", replaceInterrupted: false)
             member.presentation.selectPeer(id: issuer.identity.id, name: "founder", replaceInterrupted: false)
         }
-        return (issuer, member)
     }
 
     private func side() throws -> Side {

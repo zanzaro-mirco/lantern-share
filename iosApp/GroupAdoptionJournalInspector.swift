@@ -41,7 +41,7 @@ enum GroupAdoptionJournalInspector {
         } catch { throw verifier.failure ?? error }
     }
 
-    private final class CertificateVerifier {
+    final class CertificateVerifier {
         private var certificates: [String: SecCertificate] = [:]
         private let maximumDerBytes: Int
         private let now: Date

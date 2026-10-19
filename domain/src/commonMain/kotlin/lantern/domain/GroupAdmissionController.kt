@@ -2,7 +2,7 @@ package lantern.domain
 
 import kotlinx.coroutines.flow.StateFlow
 
-enum class GroupAdmissionRole { FOUNDER, NEW_MEMBER }
+enum class GroupAdmissionRole { ISSUER, NEW_MEMBER }
 enum class GroupAdmissionFailure { UNAVAILABLE, INTERRUPTED, FAILED, COMMIT_OUTCOME_UNKNOWN }
 
 /** Presentation only. Neither a comparison nor an issuer's completion grants application traffic. */

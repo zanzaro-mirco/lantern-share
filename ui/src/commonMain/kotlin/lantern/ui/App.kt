@@ -133,10 +133,10 @@ internal fun GroupAdmissionPanel(controller: GroupAdmissionController, localGrou
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Ammissione gruppo", style = MaterialTheme.typography.titleMedium)
             when (val current = state) {
-                GroupAdmissionState.Idle -> Text("Il fondatore crea un gruppo. Poi selezionate Ingresso gruppo sui due dispositivi; il nuovo membro deve essere senza gruppo. Gli inviti da membri non fondatori seguiranno in un incremento successivo.")
+                GroupAdmissionState.Idle -> Text("Un membro del gruppo può invitare un dispositivo senza gruppo. Selezionate Ingresso gruppo sui due dispositivi e confrontate il codice completo; il fondatore non deve essere online.")
                 is GroupAdmissionState.Selecting -> Text("Seleziona Ingresso gruppo anche su ${current.peer.name} (120 s).")
                 is GroupAdmissionState.Comparing -> {
-                    Text(if (current.role == GroupAdmissionRole.FOUNDER) "Autorizza il nuovo membro" else "Ingresso nel gruppo candidato")
+                    Text(if (current.role == GroupAdmissionRole.ISSUER) "Autorizza il nuovo membro" else "Ingresso nel gruppo candidato")
                     SelectionContainer { Text("Gruppo: ${current.groupId}\nCodice completo: ${current.code}") }
                     Text("Confronta TUTTO il codice sui due schermi. Conferma soltanto se coincide.")
                     Button(onClick = { controller.confirmGroup(current) }) { Text("Codice identico: confermo") }
@@ -147,7 +147,7 @@ internal fun GroupAdmissionPanel(controller: GroupAdmissionController, localGrou
                 else "Due conferme verificate. Il salvataggio sul nuovo membro NON è attestato da questo schermo.")
                 is GroupAdmissionState.Failed -> {
                     Text(when (current.reason) {
-                        GroupAdmissionFailure.UNAVAILABLE -> "Ammissione non disponibile: serve un fondatore oppure un dispositivo senza gruppo e un archivio leggibile."
+                        GroupAdmissionFailure.UNAVAILABLE -> "Ammissione non disponibile: servono un'appartenenza verificabile oppure un dispositivo senza gruppo e un archivio leggibile."
                         GroupAdmissionFailure.INTERRUPTED -> "Tentativo interrotto conservato. Serve un nuovo confronto; nessun consenso sarà ripreso."
                         GroupAdmissionFailure.COMMIT_OUTCOME_UNKNOWN -> "Esito del salvataggio incerto. Rilettura dello stato locale, nessun replay automatico."
                         GroupAdmissionFailure.FAILED -> "Ammissione interrotta o non valida. Riprova con una nuova selezione su entrambi."

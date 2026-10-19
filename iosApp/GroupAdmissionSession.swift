@@ -18,6 +18,7 @@ final class GroupAdmissionSession {
     private let selectedAt = HandshakeV1Channel.monotonicMillis()
     private let onMembershipChanged: () -> Void
     private var anchor: IosLocalGroupAnchor?
+    private var membership: IosGroupAdoptionJournalSnapshot?
     private var replacing: IosGroupAdoptionJournalSnapshot?
     private var pendingTLS: NWConnection?
     private var bootstrap: HandshakeV1Channel?
@@ -57,7 +58,7 @@ final class GroupAdmissionSession {
         source.resume()
         do {
             anchor = try persistence.localGroup()
-            guard anchor == nil || anchor?.founderId == identity.id else { fail(.unavailable); return }
+            membership = try persistence.committedGroupAdoption()
             if let old = try persistence.pendingGroupAdoption() {
                 guard selection.replaceInterrupted else { fail(.interrupted); return }
                 guard anchor == nil, old.localIdentity == identity.id else { fail(.unavailable); return }
@@ -79,9 +80,8 @@ final class GroupAdmissionSession {
         guard live, displayed === ticket, ticket.selection === selection, let comparison else { return }
         self.comparison = nil // One displayed click, never a replay to another owner.
         do {
-            if let anchor {
-                let current = try persistence.localGroup()
-                guard current?.groupId == anchor.groupId, current?.founderId == identity.id else { fail(.failed); return }
+            if anchor != nil {
+                guard try membershipUnchanged() else { fail(.failed); return }
                 issuer?.confirm(comparison)
             } else { root?.confirm(comparison) }
         } catch { fail(.failed) }
@@ -159,8 +159,9 @@ final class GroupAdmissionSession {
                 fail(.failed); return
             }
             if let anchor {
-                let evidence = try FounderGroupAdmission.prepare(identity: identity, persistence: persistence, memberID: selection.peerId)
-                guard live else { return }
+                guard try membershipUnchanged() else { fail(.failed); return }
+                let evidence = try LocalGroupAdmission.prepare(identity: identity, persistence: persistence, memberID: selection.peerId)
+                guard live, try membershipUnchanged() else { fail(.failed); return }
                 let callbacks = GroupAdmissionChannelCallbacks(
                     onSnapshot: { [weak self] snapshot in
                         guard let self, !self.ended, snapshot.phase == .confirmed else { return }
@@ -203,7 +204,15 @@ final class GroupAdmissionSession {
     private func show(_ ticket: IosGroupAdmissionComparison, code: String, groupID: String) {
         guard live else { return }
         comparison = ticket
-        displayed = presentation.comparing(value: selection, founder: anchor != nil, groupId: groupID, code: code)
+        displayed = presentation.comparing(value: selection, issuer: anchor != nil, groupId: groupID, code: code)
+    }
+
+    private func membershipUnchanged() throws -> Bool {
+        let current = try persistence.localGroup()
+        guard current?.groupId == anchor?.groupId, current?.founderId == anchor?.founderId else { return false }
+        let committed = try persistence.committedGroupAdoption()
+        if let membership { return committed.map { membership.sameRecord(other: $0) } ?? false }
+        return committed == nil
     }
 
     private func rootSnapshot(_ snapshot: IosGroupRootSnapshot) {

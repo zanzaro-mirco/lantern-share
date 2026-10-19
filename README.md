@@ -8,7 +8,9 @@ Il desktop contiene un percorso reale: identità persistente, mDNS, associazione
 
 Il pannello **Gruppo locale** legge il database senza creare nulla. **Crea gruppo locale** salva una nuova fondazione soltanto su richiesta esplicita e ne mostra l'ID dopo la persistenza; alla riapertura conserva lo stesso ID. Non crea sessioni, non associa automaticamente peer e non modifica le autorizzazioni della prova tecnica.
 
-In caso di errore, **Rileggi stato salvato** effettua solo una lettura: non ripete la scrittura. Dati invalidi o riferiti a un'altra identità non vengono sostituiti. Uscita durevole dal gruppo ancora non implementata; non cancellare identità/database per aggirare un errore. Pannello compilato Android/desktop e controller testato con SQLite reale; interazione fisica ancora da collaudare. Il pannello condiviso è collegato anche all'app iOS, con operazioni sulla coda del servizio e identità Apple esistente: nuova integrazione Swift/runtime ancora da verificare, distinta dall'owner Apple già verificato in simulatore.
+In caso di errore, **Rileggi stato salvato** effettua solo una lettura: non ripete la scrittura. Dati invalidi o riferiti a un'altra identità non vengono sostituiti. Uscita durevole dal gruppo ancora non implementata; non cancellare identità/database per aggirare un errore. Il pannello è collegato anche all'app iOS e verificato in simulatore sul checkpoint b0914a9; interazione fisica ancora da collaudare.
+
+**Ingresso gruppo** è separato dall'associazione della prova tecnica: selezionare l'altro dispositivo su entrambi gli schermi, confrontare il codice completo e confermare su entrambi. Il destinatario deve essere senza gruppo. Un membro già ammesso può invitare anche con il fondatore offline, usando la prova durevole verificata: nuovo percorso verificato con Node/TLS/SQLite su JVM, verifica Apple ancora pendente (vedere STATO). Il gruppo sopravvive alla riapertura, ma non abilita ancora chat/sessioni o riconnessione di gruppo. Il pendente interrotto non ripristina consenso: serve una riprova esplicita con nuovo confronto.
 
 ## Struttura
 

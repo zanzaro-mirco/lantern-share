@@ -17,7 +17,7 @@ internal object GroupRootAdoptionJournalInspector {
     fun presentation(anchor: GroupTrustAnchor?, currentIdentityId: String, committed: PendingGroupAdoption?): LocalGroupState =
         withVerifier { localGroupPresentation(anchor, currentIdentityId, committed, it) }
 
-    private fun <T> withVerifier(block: ((GroupAdmissionCertificate, ByteArray, String) -> Boolean) -> T): T {
+    internal fun <T> withVerifier(block: ((GroupAdmissionCertificate, ByteArray, String) -> Boolean) -> T): T {
         // Per-invocation only: no stale certificate/provider results survive a later inspection.
         val certificates = mutableMapOf<String, X509Certificate>()
         val verifier by lazy { GroupAdmissionCertificateVerifier(certificates::get) }
