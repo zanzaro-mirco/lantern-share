@@ -495,13 +495,13 @@ final class BonjourProbe: ObservableObject {
             self.channel = nil
             self.pairingGeneration += 1
             self.retryGeneration += 1
-            self.allowedPeers.selectGroup(selection.peerId)
             self.onMain {
                 self.state.updateConnected(peerId: "")
                 self.state.updatePairing(peerId: "", code: "")
             }
             let session = GroupAdmissionSession(identity: identity, persistence: persistence, transport: transport,
                 selection: selection, presentation: self.groupAdmission, endpoint: peer.endpoint, queue: self.queue,
+                onPrepared: { [weak self] in self?.allowedPeers.selectGroup(selection.peerId) },
                 onMembershipChanged: { [weak self] in self?.localGroup.refreshMembership() })
             self.admission = session
             self.admissionDrains.enter()

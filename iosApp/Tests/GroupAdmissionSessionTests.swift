@@ -26,6 +26,7 @@ final class GroupAdmissionSessionTests: XCTestCase {
         var selection: IosGroupAdmissionSelection?
         var endpoint: NWEndpoint?
         var membershipReads = 0
+        var prepared = 0
         init(identity: AppleIdentity, store: IosPersistence, directory: URL) {
             self.identity = identity
             self.store = store
@@ -170,6 +171,141 @@ final class GroupAdmissionSessionTests: XCTestCase {
                 try GroupAdoptionJournalInspector.loadLocalGroup(display, identityID: candidate.identity.id, persistence: candidate.store)
                 XCTAssertEqual(display.snapshot().phase, .adopted)
             }
+            // Both adopted stores have reopened; founder/listener remains offline.
+            beginMembershipCheck(issuer, candidate)
+            awaitMembershipVerified(issuer, candidate)
+            closeAndDrain(issuer)
+            closeAndDrain(candidate)
+            queue.sync {
+                XCTAssertEqual(issuer.membershipReads, 1)
+                XCTAssertEqual(candidate.membershipReads, 1)
+                XCTAssertNil(issuer.presentation.displayedComparison())
+                XCTAssertNil(candidate.presentation.displayedComparison())
+            }
+        }
+    }
+
+    func testMembershipCheckAfterReopenDoesNotInviteOrCommitInBothTLSOrders() throws {
+        for founderInitiates in [true, false] {
+            let pair = try fixture(founderInitiates: founderInitiates)
+            try confirmBoth(pair.issuer, pair.member)
+            closeAndDrain(pair.issuer)
+            closeAndDrain(pair.member)
+            let original = try queue.sync { () throws -> IosGroupAdoptionJournalSnapshot in
+                pair.member.store.close()
+                stores.removeAll { $0 === pair.member.store }
+                pair.member.store = try IosEntryKt.openIosPersistence(databaseDirectory: pair.member.directory.path)
+                stores.append(pair.member.store)
+                XCTAssertThrowsError(try GroupMembership.prepare(identity: pair.issuer.identity, persistence: pair.member.store))
+                return try XCTUnwrap(pair.member.store.committedGroupAdoption())
+            }
+            beginMembershipCheck(pair.issuer, pair.member)
+            awaitMembershipVerified(pair.issuer, pair.member)
+            closeAndDrain(pair.issuer)
+            closeAndDrain(pair.member)
+            try queue.sync {
+                XCTAssertTrue(original.sameRecord(other: try XCTUnwrap(pair.member.store.committedGroupAdoption())))
+                XCTAssertEqual(pair.member.membershipReads, 1) // Only the earlier admission.
+                XCTAssertEqual(pair.issuer.membershipReads, 0)
+                XCTAssertNil(try pair.issuer.store.committedGroupAdoption())
+                for side in [pair.issuer, pair.member] {
+                    XCTAssertNil(side.presentation.displayedComparison())
+                    XCTAssertNil(try side.store.pendingGroupAdoption())
+                    XCTAssertEqual(try side.store.trusted(), [])
+                    XCTAssertEqual(try side.store.history().count, 0)
+                    XCTAssertEqual(side.presentation.snapshot().phase, .idle)
+                }
+            }
+        }
+    }
+
+    func testMembershipCheckRejectsDifferentGroupsWithoutChangingEitherStore() throws {
+        let a = try side(), b = try side()
+        try found(a)
+        try found(b)
+        let roots = try queue.sync { (try a.store.localGroup()?.groupId, try b.store.localGroup()?.groupId) }
+        try connect(a, b, checking: [a.identity.id, b.identity.id])
+        awaitState { a.presentation.membershipSnapshot().phase == .failed && b.presentation.membershipSnapshot().phase == .failed }
+        try queue.sync {
+            XCTAssertEqual(try a.store.localGroup()?.groupId, roots.0)
+            XCTAssertEqual(try b.store.localGroup()?.groupId, roots.1)
+            for side in [a, b] {
+                XCTAssertNil(try side.store.committedGroupAdoption())
+                XCTAssertNil(try side.store.pendingGroupAdoption())
+                XCTAssertEqual(try side.store.trusted(), [])
+            }
+        }
+    }
+
+    func testMembershipAndAdmissionModesCannotBeConfused() throws {
+        let a = try side(), b = try side()
+        try found(a)
+        try connect(a, b, checking: [a.identity.id])
+        awaitState { a.presentation.membershipSnapshot().phase == .failed && b.presentation.snapshot().phase == .failed }
+        try queue.sync {
+            XCTAssertNil(try b.store.localGroup())
+            XCTAssertNil(try b.store.pendingGroupAdoption())
+            XCTAssertEqual(try a.store.trusted(), [])
+            XCTAssertEqual(try b.store.trusted(), [])
+        }
+    }
+
+    func testMembershipWithoutGroupFailsBeforeEnablingSelectedPin() throws {
+        let a = try side(), b = try side()
+        try connect(a, b, checking: [a.identity.id, b.identity.id])
+        awaitState { a.presentation.membershipSnapshot().phase == .failed && b.presentation.membershipSnapshot().phase == .failed }
+        try queue.sync {
+            for side in [a, b] {
+                XCTAssertEqual(side.prepared, 0)
+                XCTAssertNil(try side.store.localGroup())
+                XCTAssertNil(try side.store.pendingGroupAdoption())
+                XCTAssertEqual(try side.store.trusted(), [])
+            }
+        }
+    }
+
+    func testMembershipCancelAndNewSelectionCannotReviveOldResult() throws {
+        let pair = try fixture(founderInitiates: true)
+        try confirmBoth(pair.issuer, pair.member)
+        closeAndDrain(pair.issuer)
+        closeAndDrain(pair.member)
+        queue.sync {
+            pair.issuer.presentation.verifyPeer(id: pair.member.identity.id, name: "member")
+            pair.issuer.presentation.cancelGroup()
+        }
+        awaitState { pair.issuer.presentation.membershipSnapshot().phase == .idle }
+        closeAndDrain(pair.issuer)
+        beginMembershipCheck(pair.issuer, pair.member)
+        awaitMembershipVerified(pair.issuer, pair.member)
+        closeAndDrain(pair.issuer)
+        closeAndDrain(pair.member)
+        try queue.sync {
+            XCTAssertEqual(pair.member.membershipReads, 1)
+            XCTAssertNotNil(try pair.member.store.committedGroupAdoption())
+            XCTAssertNil(try pair.member.store.pendingGroupAdoption())
+        }
+    }
+
+    private func beginMembershipCheck(_ a: Side, _ b: Side) {
+        queue.sync {
+            a.presentation.verifyPeer(id: b.identity.id, name: "member")
+            b.presentation.verifyPeer(id: a.identity.id, name: "member")
+        }
+    }
+
+    private func awaitMembershipVerified(_ a: Side, _ b: Side) {
+        awaitState { a.presentation.membershipSnapshot().phase == .verified && b.presentation.membershipSnapshot().phase == .verified }
+        queue.sync {
+            XCTAssertEqual(a.presentation.membershipSnapshot().groupId, b.presentation.membershipSnapshot().groupId)
+            XCTAssertEqual(a.presentation.membershipSnapshot().groupId.count, 64)
+        }
+    }
+
+    private func found(_ side: Side) throws {
+        try queue.sync {
+            let foundation = try LocalGroupFoundation(identity: side.identity)
+            let ticket = try XCTUnwrap(foundation.prepare(persistence: side.store))
+            XCTAssertEqual(try foundation.commit(ticket: ticket, currentIdentity: side.identity, persistence: side.store).name, "COMMITTED")
         }
     }
 
@@ -257,7 +393,7 @@ final class GroupAdmissionSessionTests: XCTestCase {
         return (issuer, member)
     }
 
-    private func connect(_ issuer: Side, _ member: Side) throws {
+    private func connect(_ issuer: Side, _ member: Side, checking: Set<String> = []) throws {
         let issuerListener = try listen(issuer, selectedPeer: member.identity.id)
         let memberListener = try listen(member, selectedPeer: issuer.identity.id)
         queue.sync {
@@ -272,7 +408,9 @@ final class GroupAdmissionSessionTests: XCTestCase {
                         side.presentation.selected(value: selection)
                         let session = GroupAdmissionSession(identity: side.identity, persistence: side.store,
                             transport: side.transport, selection: selection, presentation: side.presentation,
-                            endpoint: side.endpoint!, queue: self.queue, onMembershipChanged: { [weak side] in side?.membershipReads += 1 })
+                            endpoint: side.endpoint!, queue: self.queue,
+                            onPrepared: { [weak side] in side?.prepared += 1 },
+                            onMembershipChanged: { [weak side] in side?.membershipReads += 1 })
                         side.session = session
                         session.start()
                     }
@@ -282,8 +420,10 @@ final class GroupAdmissionSessionTests: XCTestCase {
                     self?.queue.async { side?.session?.cancel(); side?.presentation.cancelled() }
                 })
             }
-            issuer.presentation.selectPeer(id: member.identity.id, name: "member", replaceInterrupted: false)
-            member.presentation.selectPeer(id: issuer.identity.id, name: "founder", replaceInterrupted: false)
+            for (side, peer) in [(issuer, member), (member, issuer)] {
+                if checking.contains(side.identity.id) { side.presentation.verifyPeer(id: peer.identity.id, name: "member") }
+                else { side.presentation.selectPeer(id: peer.identity.id, name: "member", replaceInterrupted: false) }
+            }
         }
     }
 

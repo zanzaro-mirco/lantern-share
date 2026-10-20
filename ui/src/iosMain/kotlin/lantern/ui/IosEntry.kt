@@ -232,6 +232,7 @@ fun ProbeViewController(
                 if (state.persistenceError.isNotEmpty()) Text(state.persistenceError, color = MaterialTheme.colorScheme.error)
                 LocalGroupPanel(localGroup)
                 GroupAdmissionPanel(groupAdmission, localGroup)
+                GroupMembershipCheckPanel(groupAdmission)
                 Text("TLS 1.3 con confronto completo del codice. Ricevuta dopo il salvataggio sul destinatario.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)
@@ -255,6 +256,9 @@ fun ProbeViewController(
                         OutlinedButton(onClick = {
                             groupAdmission.selectGroupPeer(Peer(peer.id, peer.name, "", 0))
                         }) { Text("Ingresso gruppo con ${peer.name}") }
+                        OutlinedButton(onClick = {
+                            groupAdmission.verifyGroupPeer(Peer(peer.id, peer.name, "", 0))
+                        }) { Text("Verifica membro ${peer.name}") }
                     }
                 }
                 Text("Testo cifrato", style = MaterialTheme.typography.titleLarge)

@@ -53,6 +53,21 @@ class GroupMembershipEvidenceTest {
     }
 
     @Test
+    fun sharedExchangeOrderRequiresBothOffersToRequireTheModeAndMatchLocalIdentity() {
+        val feature = GroupMembershipEvidenceCodec.FEATURE
+        val agreed = ProtocolCapabilities(1, setOf(feature), setOf(feature))
+        val optional = ProtocolCapabilities(1, setOf(feature), emptySet())
+        fun offers(local: String, remote: String, localCaps: ProtocolCapabilities = agreed, remoteCaps: ProtocolCapabilities = agreed) =
+            ProtocolHandshakeOffers(ProtocolHandshakeParticipant(local, "e".repeat(64), localCaps),
+                ProtocolHandshakeParticipant(remote, "f".repeat(64), remoteCaps), 0)
+        assertFalse(membership.sendsFirst(offers(member, founder)))
+        assertTrue(GroupMembershipEvidence(anchor, founder, null).sendsFirst(offers(founder, member)))
+        assertFailsWith<IllegalStateException> { membership.sendsFirst(offers(founder, member)) }
+        assertFailsWith<IllegalStateException> { membership.sendsFirst(offers(member, founder, localCaps = optional)) }
+        assertFailsWith<IllegalStateException> { membership.sendsFirst(offers(member, founder, remoteCaps = optional)) }
+    }
+
+    @Test
     fun fullChainVerificationAndProviderErrorsAreNotBooleansFromDiscovery() {
         assertFalse(membership.verify(anchor, member) { cert, bytes, signature ->
             assertEquals(founder, cert.identity)

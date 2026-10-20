@@ -18,7 +18,6 @@ import lantern.protocol.GroupAdmissionConfirmationContext
 import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupMembershipEvidence
-import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.ProtocolHandshakeComparison
@@ -161,15 +160,14 @@ internal class HandshakeV1Connection private constructor(
         if (!exclusive.tryLock()) return null
         try {
             return guarded {
-                synchronized(stateLock) {
+                val sendsFirst = synchronized(stateLock) {
                     requireEvidenceActiveLocked()
                     check(!exchangingEvidence) { "Membership exchange already started" }
                     val offers = checkNotNull(attempt.offersForGroupAdmission())
-                    check(GroupMembershipEvidenceCodec.FEATURE in offers.local.capabilities.requiredFeatures &&
-                        GroupMembershipEvidenceCodec.FEATURE in offers.remote.capabilities.requiredFeatures)
-                    check(local.memberIdentity == identity.id)
+                    val order = local.sendsFirst(offers)
                     exchangingEvidence = true
                     checkingMembership = true
+                    order
                 }
                 fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
                 fun receive() = stream.readMembership {
@@ -183,7 +181,7 @@ internal class HandshakeV1Connection private constructor(
                     stream.writeMembership(local)
                     checkLive()
                 }
-                val remote = if (identity.id < selectedPeerIdentity) {
+                val remote = if (sendsFirst) {
                     send()
                     receive()
                 } else {

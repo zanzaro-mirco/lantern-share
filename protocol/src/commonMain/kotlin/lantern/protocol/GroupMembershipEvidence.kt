@@ -19,6 +19,18 @@ class GroupMembershipEvidence(
         }
     }
 
+    /** Frozen TLS offers choose the I/O order, not membership authority. Shared by JVM and Apple. */
+    fun sendsFirst(offers: ProtocolHandshakeOffers): Boolean {
+        val local = offers.local
+        val remote = offers.remote
+        check(local.identity == memberIdentity) { "Local membership identity mismatch" }
+        val feature = GroupMembershipEvidenceCodec.FEATURE
+        check(listOf(local, remote).all {
+            feature in it.capabilities.requiredFeatures && feature in it.capabilities.supportedFeatures
+        }) { "Membership check not negotiated" }
+        return local.identity < remote.identity
+    }
+
     /** TLS already proves possession of the member's key. No received root becomes trusted here. */
     fun verify(
         expectedAnchor: GroupTrustAnchor,

@@ -13,7 +13,7 @@ targets:
   Lantern:
     type: application
     platform: iOS
-    sources: [LanternApp.swift, IosPairingService.swift, GroupAdmissionSession.swift, HandshakeV1Channel.swift, GroupAdmissionChannel.swift, GroupRootAdoptionChannel.swift, GroupAdmissionEvidenceCertificates.swift, GroupAdoptionJournalInspector.swift, LocalGroupFoundation.swift, FounderGroupAdmission.swift, LocalGroupAdmission.swift]
+    sources: [LanternApp.swift, IosPairingService.swift, GroupAdmissionSession.swift, HandshakeV1Channel.swift, GroupAdmissionChannel.swift, GroupRootAdoptionChannel.swift, GroupAdmissionEvidenceCertificates.swift, GroupAdoptionJournalInspector.swift, LocalGroupFoundation.swift, FounderGroupAdmission.swift, LocalGroupAdmission.swift, GroupMembership.swift]
     dependencies:
       - package: LanternIdentity
     settings:

@@ -84,3 +84,26 @@ SQLite riaperto: fondatore↔adottato e adottato↔adottato senza fondatore, ord
 opposti, radici diverse, modalità incompatibili, prova locale corrotta, nessun trust
 o nuovo commit. Owner con cancel/scadenza durante lettura TLS e rifiuto dei vecchi
 ticket/handover. Comandi, risultati effettivi e limiti Apple/hardware in STATO.
+
+## Integrazione iOS — 20 ottobre 2026
+
+BonjourProbe usa la stessa selezione opaca per invito o controllo membership, mai
+due owner paralleli. GroupAdmissionSession verifica il materiale committato fuori
+dalla UI e il servizio abilita il pin solo dal callback onPrepared; errori prima
+di quel punto non abilitano TLS. Sono invariati selezione esclusiva, sospensione
+PoC e drain cumulativo prima della chiusura SQLite.
+
+HandshakeV1Channel conserva socket, timer e callback durante l'intero controllo;
+nessun trasferimento al trasporto applicativo o all'ammissione. La facciata Kotlin
+verifica i requisiti di entrambi gli HELLO e decide l'ordine comune anche al JVM.
+Swift muove byte entro nextReadBytes, conferma la send soltanto da contentProcessed,
+rifiuta EOF prematuro/overread e attende unicamente EOF dopo l'ultima write. Non
+duplica framing, serializzazione, catena o firme in Swift. La verifica OS conserva
+gli errori originali e un errore callback interrompe Kotlin prima della pubblicazione.
+
+L'esito passa a un Flow separato e al pannello condiviso. Identità/selezione/marker
+e deadline sono ricontrollati prima di Verified; niente ripresa del consenso o
+incremento della revisione di membership. Termine EOF/cancel successivo non cambia
+una diagnosi già compiuta in una falsa attestazione remota; una selezione chiusa
+non può essere riattivata dal callback tardivo. Nuova integrazione implementata,
+compilazione/runtime Apple ancora da attestare: evidenze correnti in STATO.

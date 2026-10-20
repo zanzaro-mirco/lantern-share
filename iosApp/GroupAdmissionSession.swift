@@ -17,6 +17,7 @@ final class GroupAdmissionSession {
     private let queue: DispatchQueue
     private let selectedAt = HandshakeV1Channel.monotonicMillis()
     private let onMembershipChanged: () -> Void
+    private let onPrepared: () -> Void
     private var anchor: IosLocalGroupAnchor?
     private var membership: IosGroupAdoptionJournalSnapshot?
     private var replacing: IosGroupAdoptionJournalSnapshot?
@@ -30,13 +31,14 @@ final class GroupAdmissionSession {
     private var claimed = false
     private var ended = false
     private var issuerConfirmed = false
+    private var membershipVerified = false
     private var committing = false
     private var drained = false
     private var drainCallbacks: [() -> Void] = []
 
     init(identity: AppleIdentity, persistence: IosPersistence, transport: AppleTLSTransport,
          selection: IosGroupAdmissionSelection, presentation: IosGroupAdmissionController,
-         endpoint: NWEndpoint, queue: DispatchQueue, onMembershipChanged: @escaping () -> Void) {
+         endpoint: NWEndpoint, queue: DispatchQueue, onPrepared: @escaping () -> Void = {}, onMembershipChanged: @escaping () -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
         self.identity = identity
         self.persistence = persistence
@@ -46,6 +48,7 @@ final class GroupAdmissionSession {
         self.endpoint = endpoint
         self.queue = queue
         self.onMembershipChanged = onMembershipChanged
+        self.onPrepared = onPrepared
     }
 
     func start() {
@@ -59,12 +62,17 @@ final class GroupAdmissionSession {
         do {
             anchor = try persistence.localGroup()
             membership = try persistence.committedGroupAdoption()
-            if let old = try persistence.pendingGroupAdoption() {
+            if selection.mode == .membershipCheck {
+                guard anchor != nil else { fail(.unavailable); return }
+                _ = try GroupMembership.prepare(identity: identity, persistence: persistence)
+                guard try membershipUnchanged() else { fail(.unavailable); return }
+            } else if let old = try persistence.pendingGroupAdoption() {
                 guard selection.replaceInterrupted else { fail(.interrupted); return }
                 guard anchor == nil, old.localIdentity == identity.id else { fail(.unavailable); return }
                 replacing = old // Exact snapshot; no startup cleanup or deletion before fresh consent.
             }
             guard live else { return }
+            onPrepared() // Service enables only this selection's pin after the preflight.
             connectIfInitiator()
         } catch { fail(.unavailable) }
     }
@@ -77,7 +85,7 @@ final class GroupAdmissionSession {
 
     func confirm(_ ticket: IosGroupAdmissionDisplayTicket) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard live, displayed === ticket, ticket.selection === selection, let comparison else { return }
+        guard selection.mode == .admission, live, displayed === ticket, ticket.selection === selection, let comparison else { return }
         self.comparison = nil // One displayed click, never a replay to another owner.
         do {
             if anchor != nil {
@@ -136,16 +144,42 @@ final class GroupAdmissionSession {
     private func openBootstrap(_ connection: NWConnection) {
         do {
             let role = anchor == nil ? "group-candidate" : "group-issuer"
+            let feature = IosLocalGroupMembership.shared.feature
+            let capabilities = selection.mode == .membershipCheck
+                ? "{\"version\":1,\"supportedFeatures\":[\"\(feature)\"],\"requiredFeatures\":[\"\(feature)\"]}"
+                : "{\"version\":1,\"supportedFeatures\":[\"group-admission\",\"\(role)\"],\"requiredFeatures\":[\"group-admission\"]}"
             let owner = try HandshakeV1Channel(
                 connection: connection, identity: identity, transport: transport,
                 selectedPeerID: selection.peerId, selectedAtMillis: selectedAt, queue: queue,
-                continuation: .groupAdmission(onHello: { [weak self] in self?.exchangeEvidence() }),
-                capabilitiesJson: "{\"version\":1,\"supportedFeatures\":[\"group-admission\",\"\(role)\"],\"requiredFeatures\":[\"group-admission\"]}",
+                continuation: .groupAdmission(onHello: { [weak self] in
+                    guard let self else { return }
+                    if self.selection.mode == .membershipCheck { self.exchangeMembership() }
+                    else { self.exchangeEvidence() }
+                }),
+                capabilitiesJson: capabilities,
                 onSnapshot: { _ in }, onComparison: { _, _ in },
                 onClosed: { [weak self] _ in self?.fail(.failed) }
             )
             bootstrap = owner
             owner.start()
+        } catch { fail(.failed) }
+    }
+
+    private func exchangeMembership() {
+        guard live, let bootstrap else { return }
+        do {
+            guard try membershipUnchanged() else { fail(.failed); return }
+            let local = try GroupMembership.prepare(identity: identity, persistence: persistence)
+            guard live, try membershipUnchanged() else { fail(.failed); return }
+            guard bootstrap.exchangeMembership(local, onReceived: { [weak self] remote in
+                guard let self, self.live, let anchor = self.anchor else { return }
+                guard try self.membershipUnchanged(),
+                      try GroupMembership.verify(remote, anchor: anchor, peerID: self.selection.peerId),
+                      self.live, try self.membershipUnchanged() else { self.fail(.failed); return }
+                self.membershipVerified = true
+                self.presentation.membershipVerified(value: self.selection, groupId: anchor.groupId)
+                if self.identity.id < self.selection.peerId { self.retire() }
+            }) else { fail(.failed); return }
         } catch { fail(.failed) }
     }
 
@@ -255,7 +289,7 @@ final class GroupAdmissionSession {
 
     private func fail(_ failure: IosGroupServiceFailure) {
         guard !ended else { return }
-        if !issuerConfirmed { presentation.failed(value: selection, reason: failure) }
+        if !issuerConfirmed && !membershipVerified { presentation.failed(value: selection, reason: failure) }
         retire()
     }
 

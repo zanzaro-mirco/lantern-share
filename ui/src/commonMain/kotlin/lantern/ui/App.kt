@@ -129,7 +129,7 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
 }
 
 @Composable
-private fun GroupMembershipCheckPanel(controller: GroupMembershipController) {
+internal fun GroupMembershipCheckPanel(controller: GroupMembershipController) {
     val state by controller.membershipCheckState.collectAsState()
     if (state == GroupMembershipCheckState.Idle) return
     Card(Modifier.fillMaxWidth()) {

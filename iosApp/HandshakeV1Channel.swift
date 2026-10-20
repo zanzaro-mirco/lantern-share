@@ -44,6 +44,7 @@ final class HandshakeV1Channel {
     private var receivePending = false
     private var writePending = false
     private var evidenceDecoder: IosGroupAdmissionEvidenceDecoder?
+    private var membershipDecoder: IosGroupMembershipDecoder?
 
     /// Transfers connection ownership even if validation or initialization throws.
     /// TLS setup/listener ownership and the selection BEFORE TLS remain the caller's responsibility.
@@ -164,6 +165,114 @@ final class HandshakeV1Channel {
         dispatchPrecondition(condition: .onQueue(queue))
         guard canExchangeEvidence else { return nil }
         return try bridge.offersForGroupAdmission()?.remoteSupportedFeatures
+    }
+
+    /// Same selected connection, timer and exclusive bootstrap owner. No APPROVE/handover.
+    /// Kotlin checks negotiation/order and owns framing. Callback verifies against local storage.
+    @discardableResult
+    func exchangeMembership(
+        _ local: IosGroupMembershipEvidence,
+        onReceived: @escaping (IosGroupMembershipEvidence) throws -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard let offers = try bridge.offersForGroupAdmission(), try evidenceActive() else { return false }
+            let sendsFirst = try local.sendsFirst(offers: offers)
+            exchangingEvidence = true
+            membershipDecoder = IosGroupMembershipDecoder()
+            if sendsFirst {
+                sendMembership(local) { [weak self] in
+                    self?.receiveMembership { remote in try onReceived(remote) }
+                }
+            } else {
+                receiveMembership { [weak self] remote in
+                    self?.sendMembership(local) { [weak self] in
+                        try onReceived(remote)
+                        // Last writer stays alive until the first has consumed its proof and
+                        // closes. No queued TLS bytes lost, no ACK/traffic/remote success inferred.
+                        if let self, !self.closed { self.receiveMembershipEnd() }
+                    }
+                }
+            }
+            return !closed
+        } catch { adapterFailed(); return false }
+    }
+
+    private func sendMembership(_ evidence: IosGroupMembershipEvidence, completion: @escaping () throws -> Void) {
+        do {
+            guard try evidenceActive(), !writePending else { return }
+            let content = Self.data(try evidence.framedBytes())
+            writePending = true
+            connection.send(content: content, completion: .contentProcessed { [weak self] error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.writePending = false
+                    do {
+                        guard try self.evidenceActive() else { return }
+                        if error != nil { self.transportFailed(); return }
+                        try completion()
+                    } catch { self.adapterFailed() }
+                }
+            })
+        } catch { adapterFailed() }
+    }
+
+    private func receiveMembership(onReceived: @escaping (IosGroupMembershipEvidence) throws -> Void) {
+        guard !closed, !receivePending, let decoder = membershipDecoder else { return }
+        do {
+            guard try evidenceActive() else { return }
+            let budget = Int(try decoder.nextReadBytes())
+            receivePending = true
+            connection.receive(minimumIncompleteLength: 1, maximumLength: budget) { [weak self] data, _, complete, error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.receivePending = false
+                    do {
+                        guard try self.evidenceActive() else { return }
+                        if error != nil { self.transportFailed(); return }
+                        var evidence: IosGroupMembershipEvidence?
+                        if let data, !data.isEmpty {
+                            let read = try decoder.accept(chunk: Self.bytes(data))
+                            guard Int(read.consumedBytes) == data.count else { throw AdoptionError.invalidEvidence }
+                            evidence = read.evidence
+                        }
+                        if complete {
+                            if evidence == nil { try decoder.finish() }
+                            self.transportFailed()
+                            return
+                        }
+                        if let evidence {
+                            self.membershipDecoder = nil
+                            try onReceived(evidence)
+                        } else { self.receiveMembership(onReceived: onReceived) }
+                    } catch { self.adapterFailed() }
+                }
+            }
+        } catch { adapterFailed() }
+    }
+
+    private func receiveMembershipEnd() {
+        guard !closed, !receivePending else { return }
+        do {
+            guard try evidenceActive() else { return }
+            receivePending = true
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { [weak self] data, _, complete, error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.receivePending = false
+                    do {
+                        guard try self.evidenceActive() else { return }
+                        if error != nil { self.transportFailed(); return }
+                        guard data?.isEmpty != false else { self.adapterFailed(); return }
+                        if complete { self.transportFailed() } else { self.receiveMembershipEnd() }
+                    } catch { self.adapterFailed() }
+                }
+            }
+        } catch { adapterFailed() }
     }
 
     /// Issuer-only write. Success means exchange started, not sent, confirmed or authorized.
@@ -461,6 +570,8 @@ final class HandshakeV1Channel {
         timer = nil
         evidenceDecoder?.cancel()
         evidenceDecoder = nil
+        membershipDecoder?.cancel()
+        membershipDecoder = nil
         connection.stateUpdateHandler = nil
         connection.cancel()
         onClosed(failure)

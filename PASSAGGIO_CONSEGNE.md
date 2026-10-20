@@ -1,4 +1,4 @@
-# Passaggio di consegne — 19 ottobre 2026
+# Passaggio di consegne — 20 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -6,13 +6,25 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B4, verifica membership Android/desktop
+## Ripartenza corrente — B4, verifica membership iOS
+
+`7fe41ed`: [iOS ordinario 39324157172](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39324157172) success, framework/app/XCTest compilati, Native e simulatore SALTATI. [PoC 39324156210](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39324156210) cancelled: Android success, desktop cancellato durante JVM tests/application, non verde. Letture da concluse, nessun polling. Ultimo runtime Apple attestato resta a316ca5 / 162 XCTest, non hardware.
+
+Nuovo blocco implementato: Verifica membro nel servizio BonjourProbe e nella UI iPhone. Stesso owner TLS/timer, selezione esclusiva, preflight prima del pin, Kotlin comune per formato/negoziazione/ordine/prove, niente commit/trust o nuovo confronto. Rilettura del marker esatto prima della pubblicazione; callback vecchi inerti. Il risultato è solo diagnostico locale. Schema/wire/versioni/lock/workflow invariati; dettagli in ADR 013 e STATO. Nuovi Swift/Native/XCTest ancora da compilare/eseguire in Apple, non attestati dal controllo JVM.
+
+Locale definitivo: protocollo 392 JVM / 356 unit Android, connettività 207 passati + uno mDNS opt-in skipped, UI 6 per target, **967 passati**, app compilate; comandi in STATO. Sei nuovi XCTest mantenuti predisposti più estensione tra adottati con fondatore offline. Nessun nuovo hardware/harness o test soppresso.
+
+**Prossimo blocco unico:** prima risultato del checkpoint Apple concluso/correzioni; dopo verifica B4, negoziazione iniziale della sessione LAN fra membri sul trasporto vivo, riusando le regole di sessione già presenti. Il risultato diagnostico B4 NON diventa una credenziale o un handover implicito. Non estendere alla chat/riconnessione automatica; fase 1/hardware e gate UI completa invariati. Nessun polling; note locali post-push da raggruppare al prossimo codice.
+
+## Evidenze precedenti — B4, verifica membership Android/desktop
 
 `a316ca5`: [iOS completo 39317659570](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39317659570) e [PoC 39317643429](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39317643429) conclusi success, letti senza polling. Native/export/app e **162 XCTest passati**, incluso invito delegato A→B→C e riapertura. Bootstrap compilato soltanto, nessun nuovo hardware. B3 ammissione verificata automaticamente, non collaudo fisico né sessioni.
 
 Nuovo blocco utilizzabile su Node Android/desktop: **Verifica membro** su entrambi, stessa selezione esclusiva/pin/TLS e deadline; prova della propria appartenenza COMMITTATA, radice indipendente e identità TLS obbligatorie. Nessun nuovo invito, consenso ripreso, commit o trust PoC. Formato opzionale negoziato `group-membership-check`, additivo: decisione/confini in [ADR 013](docs/ADR-013-VERIFICA-APPARTENENZA-TLS.md), comandi ed esiti in STATO. Nessuna migrazione/variazione dei frame precedenti o workflow. Ultimo writer attende EOF entro deadline per non perdere byte TLS accodati; l'esito è solo una verifica locale diagnostica, non un ticket di sessione.
 
 **Prossimo blocco unico:** dopo la CI conclusa/correzioni, portare lo stesso controllo nell'owner iOS/BonjourProbe con core Kotlin, letture esatte, stesso trasporto e lifetime. UI Apple non espone ancora questa azione: non dichiarare B4 multipiattaforma completo. Checkpoint Native/simulatore completo a tale integrazione, non duplicare ora la CI ordinaria. Fase 1/hardware e gate UI invariati. Conservare note post-push locali e raggrupparle al prossimo codice, niente polling.
+
+Consegnato `7fe41ed0cea2e0c6b0a392c0dca5c49714605779`, 20 file, unico commit/push. [PoC 39324156210](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39324156210) e [iOS ordinario 39324157172](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39324157172) in_progress nella sola lettura post-push. Nessun dispatch completo duplicato/polling/attesa o nuovo esito remoto attestato. Leggere da concluse alla ripresa, poi integrazione iOS B4 e relativo checkpoint runtime. Nota locale con STATO da raggruppare al prossimo codice, niente ulteriore push documentale.
 
 ## Evidenze precedenti — B3, inviti da membri ammessi
 

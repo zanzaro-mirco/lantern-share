@@ -1045,6 +1045,57 @@ final class HandshakeV1ChannelTests: XCTestCase {
         wait(for: [paused, cancelled], timeout: 5)
     }
 
+    func testMembershipPendingActualTLSReadIsRevokedByCancelAndOriginalDeadline() throws {
+        for expire in [false, true] {
+            let pair = try readyPair()
+            let ownClient = pair.clientIdentity.id < pair.serverIdentity.id
+            let identity = ownClient ? pair.clientIdentity : pair.serverIdentity
+            let peerConnection = ownClient ? pair.server : pair.client
+            let (store, _) = try rootStore()
+            let paused = expectation(description: "membership header received on actual TLS")
+            let revoked = expectation(description: "membership pending read revoked")
+            try queue.sync {
+                let foundation = try LocalGroupFoundation(identity: identity)
+                let ticket = try XCTUnwrap(foundation.prepare(persistence: store))
+                XCTAssertEqual(try foundation.commit(ticket: ticket, currentIdentity: identity, persistence: store).name, "COMMITTED")
+                let local = try GroupMembership.prepare(identity: identity, persistence: store)
+                let feature = IosLocalGroupMembership.shared.feature
+                let capabilities = "{\"version\":1,\"supportedFeatures\":[\"\(feature)\"],\"requiredFeatures\":[\"\(feature)\"]}"
+                weak var owner: HandshakeV1Channel?
+                let peer = try adopt(pair, client: !ownClient, continuation: .groupAdmission(onHello: {
+                    // Consume only the header, then deliberately withhold any membership response.
+                    peerConnection.receive(minimumIncompleteLength: 1, maximumLength: 4) { data, _, _, error in
+                        self.queue.async {
+                            XCTAssertNil(error)
+                            XCTAssertFalse(data?.isEmpty ?? true)
+                            paused.fulfill()
+                            if !expire { self.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { owner?.cancel() } }
+                        }
+                    }
+                }), capabilitiesJson: capabilities, onComparison: { _, _ in XCTFail("No bootstrap approval in membership mode") },
+                    onClosed: { _ in })
+                owner = try adopt(pair, client: ownClient,
+                    selectedAt: expire ? HandshakeV1Channel.monotonicMillis() - 118_000 : pair.selectedAt,
+                    continuation: .groupAdmission(onHello: {
+                        XCTAssertTrue(owner?.exchangeMembership(local, onReceived: { _ in XCTFail("No peer proof was sent") }) ?? false)
+                    }), capabilitiesJson: capabilities,
+                    onComparison: { _, _ in XCTFail("No comparison required for an existing membership") },
+                    onClosed: { failure in
+                        if expire {
+                            if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
+                            else { XCTFail("Expected original deadline expiry") }
+                        } else {
+                            if case .cancelled = failure {} else { XCTFail("Expected cancellation") }
+                        }
+                        revoked.fulfill()
+                    })
+                peer.start()
+                owner?.start()
+            }
+            wait(for: [paused, revoked], timeout: 6)
+        }
+    }
+
     func testGroupBoundaryIdlePauseStillExpiresAtOriginalSelectionDeadline() throws {
         let pair = try readyPair()
         let paused = expectation(description: "paused before expiry")
@@ -1928,6 +1979,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
         _ pair: Pair, client: Bool, selectedAt: Int64? = nil,
         signingQueue: DispatchQueue = .global(qos: .userInitiated),
         continuation: HandshakeV1Continuation = .approvals,
+        capabilitiesJson: String = "{\"version\":1,\"supportedFeatures\":[\"text\",\"receipts\"],\"requiredFeatures\":[\"text\"]}",
         onSnapshot: @escaping (IosHandshakeV1Snapshot) -> Void = { _ in },
         onComparison: @escaping (IosHandshakeV1Comparison, String) -> Void = { _, _ in },
         onClosed: @escaping (HandshakeV1ChannelFailure) -> Void = { failure in
@@ -1940,7 +1992,7 @@ final class HandshakeV1ChannelTests: XCTestCase {
             transport: client ? pair.clientTransport : pair.serverTransport,
             selectedPeerID: client ? pair.serverIdentity.id : pair.clientIdentity.id,
             selectedAtMillis: selectedAt ?? pair.selectedAt, queue: queue, signingQueue: signingQueue,
-            continuation: continuation,
+            continuation: continuation, capabilitiesJson: capabilitiesJson,
             onSnapshot: onSnapshot, onComparison: onComparison, onClosed: onClosed
         )
         channels.append(channel)
