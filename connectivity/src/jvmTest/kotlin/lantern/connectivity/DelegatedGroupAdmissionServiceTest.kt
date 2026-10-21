@@ -9,6 +9,7 @@ import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupMembershipCheckState
+import lantern.domain.GroupSessionState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.LocalGroupState
@@ -21,6 +22,8 @@ import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -71,6 +74,9 @@ class DelegatedGroupAdmissionServiceTest {
                         // issuer->candidate credential or another comparison/commit.
                         val candidateMarker = assertNotNull(candidateStore.committedGroupAdoption())
                         verifyMembers(issuing, receiving)
+                        // Founder remains offline. A fresh live proof is required even after B4.
+                        val session = negotiateSession(issuing, receiving)
+                        assertEquals(anchor.groupId, session.session.groupId)
                         assertTrue(original.sameRecord(assertNotNull(issuerStore.committedGroupAdoption())))
                         assertTrue(candidateMarker.sameRecord(assertNotNull(candidateStore.committedGroupAdoption())))
                         assertEquals(0L, issuing.membershipRevision.value)
@@ -122,6 +128,209 @@ class DelegatedGroupAdmissionServiceTest {
                         assertEquals(GroupMembershipCheckState.Idle, b.membershipCheckState.value)
                     } }
                 }
+            }
+        }
+    }
+
+    @Test
+    fun reopenedMembersNegotiateKeepEmptySessionAndForgetItOnServiceRestartInBothTlsOrders() {
+        for (founderInitiates in listOf(true, false)) withDirectory { directory ->
+            val ids = List(2) { createDesktopIdentity().identity() }.sortedBy { it.id }
+            val founder = ids[if (founderInitiates) 0 else 1]
+            val member = ids[if (founderInitiates) 1 else 0]
+            val anchor = GroupTrustAnchor(randomNonce(), founder.id)
+            adoptFirst(directory, founder, member, anchor)
+            openDesktopRepository(directory.resolve("founder.db")).use { aStore ->
+                openDesktopRepository(directory.resolve("issuer.db")).use { bStore ->
+                    val original = assertNotNull(bStore.committedGroupAdoption())
+                    val archivedSession = randomNonce()
+                    // Historical SQL fixture, intentionally not a live authenticated observation.
+                    aStore.save("archived-a", founder.id, archivedSession, "solo cronologia A", "test-fixture")
+                    bStore.save("archived-b", member.id, archivedSession, "solo cronologia B", "test-fixture")
+                    val historyA = aStore.history()
+                    val historyB = bStore.history()
+                    val forbidHistory = AtomicBoolean()
+                    val boundaryA = object : DeviceRepository by aStore, GroupAdoptionRepository by aStore {
+                        override fun history(): List<lantern.domain.ChatLine> {
+                            check(!forbidHistory.get()) { "Negotiation must not read history" }
+                            return aStore.history()
+                        }
+                    }
+                    val boundaryB = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore {
+                        override fun history(): List<lantern.domain.ChatLine> {
+                            check(!forbidHistory.get()) { "Negotiation must not read history" }
+                            return bStore.history()
+                        }
+                    }
+                    node(founder, boundaryA).use { a -> node(member, boundaryB).use { b ->
+                        forbidHistory.set(true) // Node startup presentation already loaded history once.
+                        a.start()
+                        b.start()
+                        awaitPorts(a, b)
+                        val first = negotiateSession(a, b).session
+                        assertEquals(anchor.groupId, first.groupId)
+                        assertFalse(first.used)
+                        assertEquals(64, first.sessionId.length)
+                        assertNotEquals(archivedSession, first.sessionId)
+                        assertEquals(first, negotiateSession(a, b).session)
+                        // An unsuccessful new negotiation does not erase the running local session.
+                        a.cancelGroup()
+                        b.cancelGroup()
+                        a.negotiateGroupSession(peer(b))
+                        b.verifyGroupPeer(peer(a))
+                        awaitSession(a) { it is GroupSessionState.Failed }
+                        awaitMembership(b) { it is GroupMembershipCheckState.Failed }
+                        assertEquals(first, negotiateSession(a, b).session)
+                        // Returning one participant joins the session still held by the other.
+                        b.stop()
+                        b.start()
+                        awaitPorts(a, b)
+                        assertEquals(first, negotiateSession(a, b).session)
+                        a.stop()
+                        b.stop()
+                        assertEquals(GroupSessionState.Idle, a.groupSessionState.value)
+                        assertEquals(GroupSessionState.Idle, b.groupSessionState.value)
+                        a.start()
+                        b.start()
+                        awaitPorts(a, b)
+                        val fresh = negotiateSession(a, b).session
+                        assertNotEquals(first.sessionId, fresh.sessionId)
+                        assertTrue(original.sameRecord(assertNotNull(bStore.committedGroupAdoption())))
+                        assertEquals(0L, a.membershipRevision.value)
+                        assertEquals(0L, b.membershipRevision.value)
+                        for (store in listOf(aStore, bStore)) {
+                            assertEquals(anchor, store.localGroup())
+                            assertTrue(store.trusted().isEmpty())
+                            assertEquals(if (store === aStore) historyA else historyB, store.history())
+                            assertNull(store.pendingGroupAdoption())
+                        }
+                        assertTrue(a.state.value.connected.isEmpty())
+                        assertTrue(b.state.value.connected.isEmpty())
+                    } }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun exactMembershipChangeCannotRevivePreviousSessionEvenWithSameGroup() = withDirectory { directory ->
+        val founder = createDesktopIdentity().identity()
+        val member = createDesktopIdentity().identity()
+        val anchor = GroupTrustAnchor(randomNonce(), founder.id)
+        adoptFirst(directory, founder, member, anchor)
+        openDesktopRepository(directory.resolve("founder.db")).use { aStore ->
+            openDesktopRepository(directory.resolve("issuer.db")).use { bStore ->
+                val original = assertNotNull(bStore.committedGroupAdoption())
+                val current = AtomicReference(original)
+                val boundary = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore {
+                    override fun committedGroupAdoption() = current.get()
+                }
+                node(founder, aStore).use { a -> node(member, boundary).use { b ->
+                    a.start()
+                    b.start()
+                    awaitPorts(a, b)
+                    val previous = negotiateSession(a, b).session
+                    a.stop()
+                    // Independent boundary change: same group and historical proof, different
+                    // exact durable marker. Not a production migration/recovery operation.
+                    current.set(PendingGroupAdoption(randomNonce(), original.localIdentity,
+                        original.peerIdentity, original.anchor, original.payload()))
+                    a.start()
+                    awaitPorts(a, b)
+                    val fresh = negotiateSession(a, b).session
+                    assertNotEquals(previous.sessionId, fresh.sessionId)
+                    assertEquals(anchor.groupId, fresh.groupId)
+                    assertTrue(original.sameRecord(assertNotNull(bStore.committedGroupAdoption())))
+                    assertTrue(aStore.trusted().isEmpty())
+                    assertTrue(bStore.trusted().isEmpty())
+                    assertNull(aStore.pendingGroupAdoption())
+                    assertNull(bStore.pendingGroupAdoption())
+                } }
+            }
+        }
+    }
+
+    @Test
+    fun cancelledSlowSessionPreflightCannotPublishOrPreventFreshNegotiation() = withDirectory { directory ->
+        val founder = createDesktopIdentity().identity()
+        val member = createDesktopIdentity().identity()
+        val anchor = GroupTrustAnchor(randomNonce(), founder.id)
+        adoptFirst(directory, founder, member, anchor)
+        openDesktopRepository(directory.resolve("founder.db")).use { aStore ->
+            openDesktopRepository(directory.resolve("issuer.db")).use { bStore ->
+                val entered = CountDownLatch(1)
+                val released = CountDownLatch(1)
+                val armed = AtomicBoolean(true)
+                val caller = Thread.currentThread()
+                val boundary = object : DeviceRepository by aStore, GroupAdoptionRepository by aStore {
+                    override fun localGroup(): GroupTrustAnchor? {
+                        if (armed.compareAndSet(true, false)) {
+                            assertNotEquals(caller, Thread.currentThread())
+                            entered.countDown()
+                            check(released.await(5, TimeUnit.SECONDS))
+                        }
+                        return aStore.localGroup()
+                    }
+                    override fun pendingGroupAdoption(): PendingGroupAdoption? = error("Session never reads pending")
+                }
+                node(founder, boundary).use { a -> node(member, bStore).use { b ->
+                    a.start()
+                    b.start()
+                    awaitPorts(a, b)
+                    try {
+                        a.negotiateGroupSession(peer(b))
+                        assertTrue(entered.await(5, TimeUnit.SECONDS))
+                        // Must return while SQLite/provider work is still pending off the UI thread.
+                        a.cancelGroup()
+                        assertEquals(GroupSessionState.Idle, a.groupSessionState.value)
+                        a.stop()
+                        assertEquals(GroupSessionState.Idle, a.groupSessionState.value)
+                    } finally { released.countDown() }
+                    a.start()
+                    awaitPorts(a, b)
+                    val selected = negotiateSession(a, b)
+                    assertEquals(anchor.groupId, selected.session.groupId)
+                    assertEquals(anchor, aStore.localGroup())
+                    assertTrue(aStore.trusted().isEmpty())
+                    assertTrue(bStore.trusted().isEmpty())
+                    assertNull(aStore.pendingGroupAdoption())
+                    assertNull(bStore.pendingGroupAdoption())
+                } }
+            }
+        }
+    }
+
+    @Test
+    fun sessionRejectsDifferentGroupsAndEmptyLocalMembershipWithoutWriting() = withDirectory { directory ->
+        val left = createDesktopIdentity().identity()
+        val right = createDesktopIdentity().identity()
+        openDesktopRepository(directory.resolve("left.db")).use { aStore ->
+            openDesktopRepository(directory.resolve("right.db")).use { bStore ->
+                val aRoot = GroupTrustAnchor(randomNonce(), left.id)
+                val bRoot = GroupTrustAnchor(randomNonce(), right.id)
+                aStore.foundLocalGroup(aRoot, left.id)
+                node(left, aStore).use { a -> node(right, bStore).use { b ->
+                    a.start()
+                    b.start()
+                    awaitPorts(a, b)
+                    b.negotiateGroupSession(peer(a))
+                    val empty = awaitSession(b) { it is GroupSessionState.Failed } as GroupSessionState.Failed
+                    assertEquals(GroupAdmissionFailure.UNAVAILABLE, empty.reason)
+                    b.cancelGroup()
+                    bStore.foundLocalGroup(bRoot, right.id)
+                    a.negotiateGroupSession(peer(b))
+                    b.negotiateGroupSession(peer(a))
+                    awaitSession(a) { it is GroupSessionState.Failed }
+                    awaitSession(b) { it is GroupSessionState.Failed }
+                    assertEquals(aRoot, aStore.localGroup())
+                    assertEquals(bRoot, bStore.localGroup())
+                    for (store in listOf(aStore, bStore)) {
+                        assertTrue(store.trusted().isEmpty())
+                        assertTrue(store.history().isEmpty())
+                        assertNull(store.pendingGroupAdoption())
+                        assertNull(store.committedGroupAdoption())
+                    }
+                } }
             }
         }
     }
@@ -315,6 +524,36 @@ class DelegatedGroupAdmissionServiceTest {
 
     private fun awaitMembership(node: Node, predicate: (GroupMembershipCheckState) -> Boolean) = runBlocking {
         withTimeout(12_000) { node.membershipCheckState.first(predicate) }
+    }
+
+    private fun awaitPorts(a: Node, b: Node) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (a.port == 0 || b.port == 0) {
+            check(System.nanoTime() < deadline)
+            Thread.sleep(10)
+        }
+    }
+
+    private fun negotiateSession(a: Node, b: Node): GroupSessionState.Selected {
+        a.cancelGroup()
+        b.cancelGroup()
+        awaitPorts(a, b)
+        a.negotiateGroupSession(peer(b))
+        b.negotiateGroupSession(peer(a))
+        val local = awaitSession(a) { it is GroupSessionState.Selected } as GroupSessionState.Selected
+        val remote = awaitSession(b) { it is GroupSessionState.Selected } as GroupSessionState.Selected
+        assertEquals(local.session, remote.session)
+        assertEquals(b.identity.id, local.peer.id)
+        assertEquals(a.identity.id, remote.peer.id)
+        assertEquals(GroupMembershipCheckState.Idle, a.membershipCheckState.value)
+        assertEquals(GroupMembershipCheckState.Idle, b.membershipCheckState.value)
+        assertEquals(GroupAdmissionState.Idle, a.admissionState.value)
+        assertEquals(GroupAdmissionState.Idle, b.admissionState.value)
+        return local
+    }
+
+    private fun awaitSession(node: Node, predicate: (GroupSessionState) -> Boolean) = runBlocking {
+        withTimeout(12_000) { node.groupSessionState.first(predicate) }
     }
 
     private fun comparisons(a: Node, b: Node): Pair<GroupAdmissionState.Comparing, GroupAdmissionState.Comparing> {

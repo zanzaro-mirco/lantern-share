@@ -11,7 +11,10 @@ import kotlinx.coroutines.launch
 import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
-import lantern.domain.GroupMembershipController
+import lantern.domain.GroupSessionController
+import lantern.domain.GroupSessionState
+import lantern.domain.SessionCandidate
+import lantern.domain.SessionSelection
 import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.GroupTrustAnchor
@@ -21,6 +24,8 @@ import lantern.protocol.GroupAdmissionBridgeState
 import lantern.protocol.GroupAdmissionConfirmationState
 import lantern.protocol.GroupRootAdoptionState
 import lantern.protocol.GroupMembershipEvidenceCodec
+import lantern.protocol.GroupSessionOffer
+import lantern.protocol.GroupSessionOfferCodec
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.Wire
@@ -31,10 +36,10 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLSocket
 import kotlin.coroutines.cancellation.CancellationException
 
-internal enum class GroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK }
+internal enum class GroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION }
 
 /**
- * One exclusive admission or membership-check selection per Node. Uses its listener/discovery, but never wire 0,
+ * One exclusive admission, membership-check or session selection per Node. Uses its listener/discovery, but never wire 0,
  * peer trust or chat. All database/OS/network work runs on the supplied Node IO scope.
  * Founders and durably adopted members issue through the same verified local-proof producer.
  * Node closes this owner and joins its workers before the caller releases the database.
@@ -44,13 +49,19 @@ internal class GroupAdmissionService(
     private val repository: GroupAdoptionRepository?,
     private val scope: CoroutineScope,
     private val running: () -> Boolean,
-) : GroupMembershipController, AutoCloseable {
+) : GroupSessionController, AutoCloseable {
     private val mutable = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     override val admissionState = mutable.asStateFlow()
     private val revision = MutableStateFlow(0L)
     override val membershipRevision = revision.asStateFlow()
     private val membershipCheck = MutableStateFlow<GroupMembershipCheckState>(GroupMembershipCheckState.Idle)
     override val membershipCheckState = membershipCheck.asStateFlow()
+    private val sessionState = MutableStateFlow<GroupSessionState>(GroupSessionState.Idle)
+    override val groupSessionState = sessionState.asStateFlow()
+    private val sessionLock = Any()
+    // Only current-run, authenticated observations. Never read from history/discovery/SQLite.
+    private var localSession: LocalSession? = null
+    private class LocalSession(val anchor: GroupTrustAnchor, val membership: PendingGroupAdoption?, val candidate: SessionCandidate)
     private val selected = AtomicReference<Selection?>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "lantern-group-deadline").apply { isDaemon = true }
@@ -70,6 +81,7 @@ internal class GroupAdmissionService(
         var membership: PendingGroupAdoption? = null
         var replacing: PendingGroupAdoption? = null
         var expiry: Job? = null
+        var sessionOffer: GroupSessionOffer? = null
     }
 
     val active: Boolean get() = selected.get() != null
@@ -84,15 +96,19 @@ internal class GroupAdmissionService(
 
     override fun selectGroupPeer(peer: Peer, replaceInterrupted: Boolean) = select(peer, replaceInterrupted, null)
     override fun verifyGroupPeer(peer: Peer) = select(peer, false, null, GroupSelectionMode.MEMBERSHIP_CHECK)
+    override fun negotiateGroupSession(peer: Peer) = select(peer, false, null, GroupSelectionMode.SESSION)
 
     /** Wait for Node's old PoC sockets to drain before permitting a different protocol. */
     fun select(peer: Peer, replaceInterrupted: Boolean, previousCleanup: Job?, mode: GroupSelectionMode = GroupSelectionMode.ADMISSION) {
         if (!running() || peer.id == identity.id || !Wire.isFingerprint(peer.id) || peer.port !in 1..65535) return
         cancelGroup()
         val selection = Selection(peer, now(), mode)
-        selected.set(selection)
-        if (mode == GroupSelectionMode.ADMISSION) mutable.value = GroupAdmissionState.Selecting(peer)
-        else membershipCheck.value = GroupMembershipCheckState.Checking(peer)
+        synchronized(sessionLock) { selected.set(selection) }
+        when (mode) {
+            GroupSelectionMode.ADMISSION -> mutable.value = GroupAdmissionState.Selecting(peer)
+            GroupSelectionMode.MEMBERSHIP_CHECK -> membershipCheck.value = GroupMembershipCheckState.Checking(peer)
+            GroupSelectionMode.SESSION -> sessionState.value = GroupSessionState.Negotiating(peer)
+        }
         selection.expiry = scope.launch {
             delay(ProtocolHandshakeAttempt.TIMEOUT_MILLIS)
             if (selection.phase.compareAndSet(Phase.LIVE, Phase.CANCELLED)) {
@@ -107,12 +123,23 @@ internal class GroupAdmissionService(
                 val store = repository ?: error("Durable group repository unavailable")
                 selection.anchor = store.localGroup()
                 selection.membership = store.committedGroupAdoption()
-                if (mode == GroupSelectionMode.MEMBERSHIP_CHECK) {
+                if (mode != GroupSelectionMode.ADMISSION) {
                     check(selection.anchor != null) { "No local membership" }
                     // Reject unusable local credentials before enabling a selected TLS pin.
                     // The live exchange revalidates OS certificates, which may expire meanwhile.
                     prepareLocalMembership(identity, store)
                     checkMembership(selection, store)
+                    if (mode == GroupSelectionMode.SESSION) {
+                        val anchor = checkNotNull(selection.anchor)
+                        val previous = synchronized(sessionLock) {
+                            localSession?.takeIf {
+                                it.anchor == anchor && sameMembership(it.membership, selection.membership)
+                            }?.candidate
+                        }
+                        // OS randomness may initialize/block: never hold the cancellation lock here.
+                        selection.sessionOffer = GroupSessionOffer(previous ?: SessionCandidate(anchor.groupId, randomNonce(), false),
+                            established = previous != null)
+                    }
                 }
                 val interrupted = if (mode == GroupSelectionMode.ADMISSION) store.pendingGroupAdoption() else null
                 if (interrupted != null) {
@@ -140,7 +167,7 @@ internal class GroupAdmissionService(
     }
 
     override fun cancelGroup() {
-        selected.getAndSet(null)?.let { previous ->
+        synchronized(sessionLock) { selected.getAndSet(null) }?.let { previous ->
             previous.phase.compareAndSet(Phase.LIVE, Phase.CANCELLED)
             previous.expiry?.cancel()
             previous.click.cancel()
@@ -148,7 +175,11 @@ internal class GroupAdmissionService(
         }
         mutable.value = GroupAdmissionState.Idle
         membershipCheck.value = GroupMembershipCheckState.Idle
+        sessionState.value = GroupSessionState.Idle
     }
+
+    /** Called by Node.stop under its run lock. A later LAN/run never revives this observation. */
+    fun resetSessions() = synchronized(sessionLock) { localSession = null }
 
     fun block(peerId: String) {
         if (selected.get()?.peer?.id == peerId) cancelGroup()
@@ -164,8 +195,11 @@ internal class GroupAdmissionService(
             val anchor = selection.anchor
             val localRole = if (anchor == null) CANDIDATE_FEATURE else ISSUER_FEATURE
             val remoteRole = if (anchor == null) ISSUER_FEATURE else CANDIDATE_FEATURE
-            val capabilities = if (selection.mode == GroupSelectionMode.MEMBERSHIP_CHECK)
-                ProtocolCapabilities(1, setOf(GroupMembershipEvidenceCodec.FEATURE), setOf(GroupMembershipEvidenceCodec.FEATURE))
+            val membershipFeatures = if (selection.mode == GroupSelectionMode.SESSION)
+                setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE)
+            else setOf(GroupMembershipEvidenceCodec.FEATURE)
+            val capabilities = if (selection.mode != GroupSelectionMode.ADMISSION)
+                ProtocolCapabilities(1, membershipFeatures, membershipFeatures)
             else ProtocolCapabilities(1, setOf(ADMISSION_FEATURE, localRole), setOf(ADMISSION_FEATURE))
             val bootstrap = HandshakeV1Connection.adopt(socket, identity, capabilities,
                 peerId, selection.selectedAt, scheduler)
@@ -173,6 +207,10 @@ internal class GroupAdmissionService(
             check(bootstrap.start() && bootstrap.readNext())
             if (selection.mode == GroupSelectionMode.MEMBERSHIP_CHECK) {
                 verifyMembership(selection, bootstrap)
+                return
+            }
+            if (selection.mode == GroupSelectionMode.SESSION) {
+                negotiateSession(selection, bootstrap)
                 return
             }
             val remoteFeatures = checkNotNull(bootstrap.remoteCapabilitiesForGroup()).supportedFeatures
@@ -206,7 +244,43 @@ internal class GroupAdmissionService(
         membershipCheck.update { if (current(selection)) GroupMembershipCheckState.Verified(selection.peer, anchor.groupId) else it }
         // A local result only. Last writer must not reset queued TLS bytes before the peer
         // consumes them. Peer close/invalid data/timer/cancel all reach finally and close.
-        if (identity.id > selection.peer.id) bootstrap.awaitMembershipPeerClose()
+        if (identity.id > selection.peer.id) bootstrap.awaitGroupExchangePeerClose()
+    }
+
+    private fun negotiateSession(selection: Selection, bootstrap: HandshakeV1Connection) {
+        val store = checkNotNull(repository)
+        val anchor = checkNotNull(selection.anchor)
+        val offer = checkNotNull(selection.sessionOffer)
+        checkLive(selection)
+        checkMembership(selection, store)
+        val local = prepareLocalMembership(identity, store)
+        checkLive(selection)
+        checkMembership(selection, store)
+        val remote = checkNotNull(bootstrap.negotiateSession(local, offer) { evidence ->
+            checkLive(selection)
+            checkMembership(selection, store)
+            val verified = verifyPeerMembership(evidence, anchor, selection.peer.id)
+            checkLive(selection)
+            checkMembership(selection, store)
+            verified
+        })
+        val result = offer.select(anchor, remote)
+        checkLive(selection)
+        checkMembership(selection, store)
+        synchronized(sessionLock) {
+            checkLive(selection)
+            check(selection.phase.compareAndSet(Phase.LIVE, Phase.FINISHED))
+            when (result) {
+                is SessionSelection.Join -> {
+                    localSession = LocalSession(anchor, selection.membership, result.session)
+                    sessionState.value = GroupSessionState.Selected(selection.peer, result.session)
+                }
+                is SessionSelection.Choose -> sessionState.value = GroupSessionState.NeedsChoice(selection.peer, result.sessions)
+                SessionSelection.Create -> error("Two session offers cannot require creation")
+            }
+        }
+        // A local decision, not an ACK or authorization for chat. Keep the last writer alive.
+        if (identity.id > selection.peer.id) bootstrap.awaitGroupExchangePeerClose()
     }
 
     private suspend fun issue(selection: Selection, bootstrap: HandshakeV1Connection, anchor: GroupTrustAnchor) {
@@ -249,6 +323,9 @@ internal class GroupAdmissionService(
         val saved = selection.membership
         check(if (saved == null) current == null else current != null && saved.sameRecord(current))
     }
+
+    private fun sameMembership(a: PendingGroupAdoption?, b: PendingGroupAdoption?) =
+        if (a == null) b == null else b != null && a.sameRecord(b)
 
     private suspend fun receive(selection: Selection, bootstrap: HandshakeV1Connection) {
         val store = checkNotNull(repository)
@@ -324,8 +401,17 @@ internal class GroupAdmissionService(
     }
 
     private fun publishFailure(selection: Selection, reason: GroupAdmissionFailure) {
-        if (selection.mode == GroupSelectionMode.ADMISSION) publish(selection, GroupAdmissionState.Failed(selection.peer, reason))
-        else membershipCheck.update { if (current(selection)) GroupMembershipCheckState.Failed(selection.peer, reason) else it }
+        when (selection.mode) {
+            GroupSelectionMode.ADMISSION -> publish(selection, GroupAdmissionState.Failed(selection.peer, reason))
+            GroupSelectionMode.MEMBERSHIP_CHECK ->
+                membershipCheck.update { if (current(selection)) GroupMembershipCheckState.Failed(selection.peer, reason) else it }
+            GroupSelectionMode.SESSION -> synchronized(sessionLock) {
+                // Checking selection inside a Flow CAS is not enough: cancelling then selecting
+                // the same peer can restore an equal presentation value (ABA). Order publication
+                // with the exact selection identity, just like successful session installation.
+                if (current(selection)) sessionState.value = GroupSessionState.Failed(selection.peer, reason)
+            }
+        }
     }
 
     private fun retire(selection: Selection) {
@@ -340,6 +426,7 @@ internal class GroupAdmissionService(
 
     override fun close() {
         cancelGroup()
+        resetSessions()
         scheduler.shutdownNow()
     }
 

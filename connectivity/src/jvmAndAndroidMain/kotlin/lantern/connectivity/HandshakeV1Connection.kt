@@ -18,6 +18,7 @@ import lantern.protocol.GroupAdmissionConfirmationContext
 import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupMembershipEvidence
+import lantern.protocol.GroupSessionOffer
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.ProtocolHandshakeComparison
@@ -196,11 +197,61 @@ internal class HandshakeV1Connection private constructor(
     }
 
     /**
+     * Same owner, TLS endpoints and original deadline throughout both exchanges. The verifier
+     * runs before ANY session bytes, without the state lock; cancellation can abort pending I/O.
+     * No diagnostic snapshot can enter here in place of the live membership proof.
+     */
+    fun negotiateSession(
+        membership: GroupMembershipEvidence,
+        local: GroupSessionOffer,
+        verifyRemote: (GroupMembershipEvidence) -> Boolean,
+    ): GroupSessionOffer? {
+        val exclusive = operations.writeLock()
+        if (!exclusive.tryLock()) return null
+        try {
+            return guarded {
+                val sendsFirst = synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    check(!exchangingEvidence)
+                    check(local.session.groupId == membership.anchor.groupId)
+                    local.sendsFirst(checkNotNull(attempt.offersForGroupAdmission()))
+                }
+                val remoteMembership = checkNotNull(exchangeMembership(membership))
+                synchronized(stateLock) { requireEvidenceActiveLocked() }
+                check(verifyRemote(remoteMembership)) { "Invalid peer membership" }
+                synchronized(stateLock) { requireEvidenceActiveLocked() }
+                fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
+                fun receive() = stream.readSessionOffer {
+                    synchronized(stateLock) {
+                        requireEvidenceActiveLocked()
+                        socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+                    }
+                }
+                fun send() {
+                    checkLive()
+                    stream.writeSessionOffer(local)
+                    checkLive()
+                }
+                val remote = if (sendsFirst) {
+                    send()
+                    receive()
+                } else {
+                    val received = receive()
+                    send()
+                    received
+                }
+                checkLive()
+                remote
+            }
+        } finally { exclusive.unlock() }
+    }
+
+    /**
      * Last writer stays alive until the first writer closes after its complete read/verification.
      * Avoid an abortive close racing queued TLS bytes. No data, ACK or new authorization follows;
      * cancel and the original timer still abort the blocked receive independently.
      */
-    fun awaitMembershipPeerClose() = socketOperation {
+    fun awaitGroupExchangePeerClose() = socketOperation {
         synchronized(readerLock) {
             stream.awaitMembershipEnd {
                 synchronized(stateLock) {

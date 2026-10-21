@@ -17,7 +17,7 @@ import lantern.domain.DeviceController
 import lantern.domain.DeviceRepository
 import lantern.domain.DeviceState
 import lantern.domain.DiscoveryService
-import lantern.domain.GroupMembershipController
+import lantern.domain.GroupSessionController
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Peer
@@ -38,7 +38,7 @@ class Node(
     private val discovery: DiscoveryService,
     private val address: InetAddress,
     private val requestedPort: Int = 0,
-) : DeviceController, GroupMembershipController, AutoCloseable {
+) : DeviceController, GroupSessionController, AutoCloseable {
     private val mutable = MutableStateFlow(DeviceState(
         name = repository.name(),
         id = identity.id,
@@ -59,6 +59,7 @@ class Node(
     override val admissionState = admissions.admissionState
     override val membershipRevision = admissions.membershipRevision
     override val membershipCheckState = admissions.membershipCheckState
+    override val groupSessionState = admissions.groupSessionState
 
     val port: Int get() = activeRun?.server?.localPort ?: 0
 
@@ -318,6 +319,7 @@ class Node(
         val run = activeRun
         activeRun = null
         admissions.cancelGroup()
+        admissions.resetSessions()
         authorization.cancel()
         run?.job?.cancel()
         run?.let {
@@ -353,6 +355,9 @@ class Node(
 
     @Synchronized
     override fun verifyGroupPeer(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.MEMBERSHIP_CHECK)
+
+    @Synchronized
+    override fun negotiateGroupSession(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.SESSION)
 
     private fun selectGroupConnection(peer: Peer, replaceInterrupted: Boolean, mode: GroupSelectionMode) {
         val run = activeRun ?: return

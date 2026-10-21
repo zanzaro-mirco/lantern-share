@@ -36,6 +36,13 @@ import lantern.protocol.ProtocolNegotiationResult
 import lantern.protocol.GroupMembershipEvidence
 import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.SessionCandidate
+import lantern.protocol.GroupSessionOffer
+import lantern.protocol.GroupSessionOfferCodec
+import lantern.protocol.FounderGroupAdmissionDraft
+import lantern.protocol.GroupAdmissionEvidence
+import lantern.protocol.GroupAdmissionCertificate
+import java.util.Base64
 
 /** Real pinned mutual TLS and JCA signatures; only UI confirmation and selected clocks are simulated. */
 class HandshakeV1ConnectionTest {
@@ -434,6 +441,169 @@ class HandshakeV1ConnectionTest {
         assertTrue(right.start())
         assertTrue(left.readNext())
         assertTrue(right.readNext())
+    }
+
+    @Test
+    fun sessionRequiresBothFeaturesOnBothHelloOffersBeforeAnyProofIo() = withPeers { client, server ->
+        val membership = GroupMembershipEvidenceCodec.FEATURE
+        val session = GroupSessionOfferCodec.FEATURE
+        val supported = setOf(membership, session)
+        val agreed = ProtocolCapabilities(1, supported, supported)
+        val onlyMembership = ProtocolCapabilities(1, supported, setOf(membership))
+        val onlySession = ProtocolCapabilities(1, supported, setOf(session))
+        for ((localCaps, remoteCaps) in listOf(onlyMembership to agreed, agreed to onlyMembership,
+            onlySession to agreed, agreed to onlySession)) {
+            withSockets(client, server) { sockets ->
+                sockets.clientOwner(supported = localCaps).use { left ->
+                    sockets.serverOwner(supported = remoteCaps).use { right ->
+                        exchangeHellos(left, right)
+                        val anchor = GroupTrustAnchor(randomNonce(), client.id)
+                        val local = GroupMembershipEvidence(anchor, client.id, null)
+                        val offer = GroupSessionOffer(SessionCandidate(anchor.groupId, randomNonce(), false))
+                        var verified = false
+                        assertFailsWith<IllegalStateException> {
+                            left.negotiateSession(local, offer) { verified = true; true }
+                        }
+                        assertFalse(verified)
+                        assertTrue(sockets.client.isClosed)
+                        assertFailsWith<IOException> {
+                            HandshakeV1FrameStream(sockets.server.inputStream, sockets.server.outputStream).readMembership {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun liveSessionExchangeKeepsUsedChoiceAndPermanentlyDisablesBootstrapAndAdmission() = withPeers { client, server ->
+        withSockets(client, server) { sockets ->
+            val features = setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE)
+            val caps = ProtocolCapabilities(1, features, features)
+            sockets.clientOwner(supported = caps).use { left -> sockets.serverOwner(supported = caps).use { right ->
+                exchangeHellos(left, right)
+                val oldLeft = assertNotNull(left.comparison())
+                val oldRight = assertNotNull(right.comparison())
+                val anchor = GroupTrustAnchor(randomNonce(), client.id)
+                val local = GroupMembershipEvidence(anchor, client.id, null)
+                val draft = FounderGroupAdmissionDraft.prepare(anchor, client.id, server.id)
+                val proof = draft.withSignature(client.sign(draft.signedBytes()))
+                val remote = GroupMembershipEvidence(anchor, server.id, GroupAdmissionEvidence(proof, listOf(
+                    GroupAdmissionCertificate(client.id, Base64.getEncoder().encodeToString(client.certificate.encoded)))))
+                val a = GroupSessionOffer(SessionCandidate(anchor.groupId, "a".repeat(64), true))
+                val b = GroupSessionOffer(SessionCandidate(anchor.groupId, "b".repeat(64), true))
+                val workers = Executors.newFixedThreadPool(2)
+                try {
+                    val x = workers.submit<GroupSessionOffer?> {
+                        left.negotiateSession(local, a) { verifyPeerMembership(it, anchor, server.id) }
+                    }
+                    val y = workers.submit<GroupSessionOffer?> {
+                        right.negotiateSession(remote, b) { verifyPeerMembership(it, anchor, client.id) }
+                    }
+                    assertEquals(b, x.get(5, TimeUnit.SECONDS))
+                    assertEquals(a, y.get(5, TimeUnit.SECONDS))
+                    assertIs<lantern.domain.SessionSelection.Choose>(a.select(anchor, b))
+                    assertNull(left.comparison())
+                    assertNull(right.comparison())
+                    assertFalse(left.confirm(oldLeft))
+                    assertFalse(right.confirm(oldRight))
+                    assertFalse(left.readNext())
+                    assertNull(left.transferToGroup(anchor, proof, emptyMap()))
+                    assertFailsWith<IllegalStateException> { left.negotiateSession(local, a) { true } }
+                    assertTrue(left.state is HandshakeV1ConnectionState.Closed)
+                } finally {
+                    workers.shutdownNow()
+                    assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            } }
+        }
+    }
+
+    @Test
+    fun sessionCancelAndOriginalDeadlineAbortAfterLiveMembershipBeforeRemoteSessionArrives() = withPeers { client, server ->
+        for (expire in listOf(false, true)) withSockets(client, server) { sockets ->
+            val features = setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE)
+            val caps = ProtocolCapabilities(1, features, features)
+            val selectedAt = if (expire) monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 2_000 else sockets.selectedAt
+            sockets.clientOwner(selectedAt = selectedAt, supported = caps).use { left ->
+                sockets.serverOwner(selectedAt = selectedAt, supported = caps).use { right ->
+                    exchangeHellos(left, right)
+                    val ownIdentity = if (client.id < server.id) client else server
+                    val peerIdentity = if (client.id < server.id) server else client
+                    val owner = if (client.id < server.id) left else right
+                    val ownSocket = if (client.id < server.id) sockets.client else sockets.server
+                    val peerSocket = if (client.id < server.id) sockets.server else sockets.client
+                    val anchor = GroupTrustAnchor(randomNonce(), ownIdentity.id)
+                    val local = GroupMembershipEvidence(anchor, ownIdentity.id, null)
+                    val draft = FounderGroupAdmissionDraft.prepare(anchor, ownIdentity.id, peerIdentity.id)
+                    val remote = GroupMembershipEvidence(anchor, peerIdentity.id,
+                        GroupAdmissionEvidence(draft.withSignature(ownIdentity.sign(draft.signedBytes())), listOf(
+                            GroupAdmissionCertificate(ownIdentity.id, Base64.getEncoder().encodeToString(ownIdentity.certificate.encoded)))))
+                    val offer = GroupSessionOffer(SessionCandidate(anchor.groupId, randomNonce(), false), established = false)
+                    val stream = HandshakeV1FrameStream(peerSocket.inputStream, peerSocket.outputStream)
+                    val worker = Executors.newSingleThreadExecutor()
+                    try {
+                        val result = worker.submit<GroupSessionOffer?> {
+                            try { owner.negotiateSession(local, offer) { verifyPeerMembership(it, anchor, peerIdentity.id) } }
+                            catch (_: IOException) { null }
+                        }
+                        assertEquals(ownIdentity.id, stream.readMembership {}.memberIdentity)
+                        stream.writeMembership(remote)
+                        // Actual session bytes imply the real P-256 membership was verified first.
+                        assertEquals(offer, stream.readSessionOffer {})
+                        if (!expire) owner.close()
+                        assertNull(result.get(5, TimeUnit.SECONDS))
+                        assertTrue(ownSocket.isClosed)
+                        assertNull(owner.comparison())
+                        assertFalse(sockets.scheduler.isShutdown)
+                        if (expire) assertHandshakeClosed(owner, ProtocolHandshakeFailure.Expired)
+                    } finally {
+                        worker.shutdownNow()
+                        assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun wrongMembershipNeverWritesSessionEvenWhenPeerPrequeuesAnOffer() = withPeers { client, server ->
+        withSockets(client, server) { sockets ->
+            val features = setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE)
+            val caps = ProtocolCapabilities(1, features, features)
+            sockets.clientOwner(supported = caps).use { left -> sockets.serverOwner(supported = caps).use { right ->
+                exchangeHellos(left, right)
+                val ownIdentity = if (client.id < server.id) client else server
+                val peerIdentity = if (client.id < server.id) server else client
+                val owner = if (client.id < server.id) left else right
+                val peerSocket = if (client.id < server.id) sockets.server else sockets.client
+                val anchor = GroupTrustAnchor(randomNonce(), ownIdentity.id)
+                val other = GroupTrustAnchor(randomNonce(), peerIdentity.id)
+                val local = GroupMembershipEvidence(anchor, ownIdentity.id, null)
+                val remote = GroupMembershipEvidence(other, peerIdentity.id, null)
+                val offer = GroupSessionOffer(SessionCandidate(anchor.groupId, randomNonce(), false))
+                val stream = HandshakeV1FrameStream(peerSocket.inputStream, peerSocket.outputStream)
+                val worker = Executors.newSingleThreadExecutor()
+                try {
+                    val result = worker.submit<Boolean> {
+                        assertFailsWith<IllegalStateException> {
+                            owner.negotiateSession(local, offer) { verifyPeerMembership(it, anchor, peerIdentity.id) }
+                        }
+                        true
+                    }
+                    stream.readMembership {}
+                    stream.writeMembership(remote)
+                    // Coalesced/early untrusted bytes cannot bypass proof verification.
+                    try { stream.writeSessionOffer(offer) } catch (_: IOException) { /* Owner already rejected. */ }
+                    assertTrue(result.get(5, TimeUnit.SECONDS))
+                    assertFailsWith<IOException> { stream.readSessionOffer {} }
+                    assertTrue(owner.state is HandshakeV1ConnectionState.Closed)
+                } finally {
+                    worker.shutdownNow()
+                    assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            } }
+        }
     }
 
     private fun active(state: ProtocolHandshakeState) = HandshakeV1ConnectionState.Active(state)

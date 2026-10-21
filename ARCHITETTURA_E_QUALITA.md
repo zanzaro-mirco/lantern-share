@@ -108,6 +108,8 @@ Verifica dell'appartenenza B4: [ADR 013](docs/ADR-013-VERIFICA-APPARTENENZA-TLS.
 
 Incremento successivo: [ADR 001 — identità Mac](docs/ADR-001-IDENTITA-MAC.md). Adattatore KeychainStore separato dalla migrazione e dal motore; riferimento locale con pin, importazione conservativa, verifica della chiave dopo rilettura, nessuna rotazione automatica in caso di errore. Dipendenze e protocollo invariati. Test portabili distinti dalla prova nativa Mac ancora non eseguita.
 
+Negoziazione iniziale B5: [ADR 014](docs/ADR-014-NEGOZIAZIONE-INIZIALE-SESSIONE.md). Node riusa lo stesso owner TLS per prove e offerte; nessuna autorizzazione dal risultato B4. Formato e selezione Kotlin comuni, proposta nuova distinta da sessione mantenuta, memoria associata al marker esatto e limitata alla run; cancel/stop arbitrati senza I/O sotto lock. Ingresso Android/desktop e pannello diagnostico, non sessioni complete/chat. Ingresso iOS ancora da integrare; l'ultimo runtime Apple attestato copre B4, non B5. Hardware aperto, evidenze in STATO.
+
 ## 10. Revisione applicata al codice esistente
 
 Incremento iOS: [ADR 002](docs/ADR-002-IDENTITA-IOS.md). Certificati affidati alla libreria Apple, accesso Keychain isolato, errore esplicito su persistenza incoerente, inizializzazione fuori dal thread UI e test nativi separati dai test Kotlin. Il modulo non replica il protocollo di rete.

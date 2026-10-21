@@ -13,6 +13,8 @@ import lantern.protocol.GroupAdmissionEvidenceFrameDecoder
 import lantern.protocol.GroupAdmissionEvidenceFraming
 import lantern.protocol.GroupMembershipEvidence
 import lantern.protocol.GroupMembershipEvidenceCodec
+import lantern.protocol.GroupSessionOffer
+import lantern.protocol.GroupSessionOfferCodec
 
 internal class InvalidHandshakeV1FrameException : IOException("Invalid v1 bootstrap frame")
 internal class InvalidGroupEvidenceFrameException : IOException("Invalid group evidence frame")
@@ -91,6 +93,25 @@ internal class HandshakeV1FrameStream(private val input: InputStream, private va
         val payload = GroupMembershipEvidenceCodec.encode(evidence)
         output.write(GroupMembershipEvidenceCodec.header(payload.size))
         output.write(payload)
+        output.flush()
+    }
+
+    fun readSessionOffer(beforeRead: () -> Unit): GroupSessionOffer {
+        try {
+            val header = ByteArray(4)
+            readFully(header, beforeRead)
+            GroupSessionOfferCodec.checkHeader(header)
+            val payload = ByteArray(GroupSessionOfferCodec.PAYLOAD_BYTES)
+            readFully(payload, beforeRead)
+            return GroupSessionOfferCodec.decode(payload)
+        } catch (_: IllegalArgumentException) {
+            throw InvalidGroupEvidenceFrameException()
+        }
+    }
+
+    fun writeSessionOffer(offer: GroupSessionOffer) {
+        output.write(GroupSessionOfferCodec.header())
+        output.write(GroupSessionOfferCodec.encode(offer))
         output.flush()
     }
 

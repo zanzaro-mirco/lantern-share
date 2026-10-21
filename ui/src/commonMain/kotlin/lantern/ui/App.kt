@@ -40,6 +40,8 @@ import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupMembershipController
 import lantern.domain.GroupMembershipCheckState
+import lantern.domain.GroupSessionController
+import lantern.domain.GroupSessionState
 
 @Composable
 fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? = null) {
@@ -65,6 +67,7 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 if (localGroup != null) LocalGroupPanel(localGroup)
                 if (admission != null) GroupAdmissionPanel(admission, localGroup)
                 if (admission is GroupMembershipController) GroupMembershipCheckPanel(admission)
+                if (admission is GroupSessionController) GroupSessionPanel(admission)
                 PairingPanel(state.pairingPeer, state.comparisonCode, controller::confirm, controller::reject)
                 Text("Dispositivi scoperti", style = MaterialTheme.typography.titleLarge)
                 if (state.peers.isEmpty()) Text("Nessun dispositivo. Verifica rete locale e firewall.")
@@ -85,6 +88,11 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                         if (admission is GroupMembershipController) {
                             OutlinedButton(onClick = { admission.verifyGroupPeer(peer) }) { Text("Verifica membro ${peer.name}") }
                         }
+                        if (admission is GroupSessionController) {
+                            OutlinedButton(onClick = { admission.negotiateGroupSession(peer) }) {
+                                Text("Negozia sessione con ${peer.name}")
+                            }
+                        }
                     }
                 }
                 MessageComposer(
@@ -94,6 +102,26 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 MessageHistory(state.id, state.messages)
                 Text("Autorizzati: ${state.trusted.size}. Cronologia locale: ultimi 200 messaggi. Nessun recupero automatico in questa prova.")
             }
+        }
+    }
+}
+
+@Composable
+internal fun GroupSessionPanel(controller: GroupSessionController) {
+    val state by controller.groupSessionState.collectAsState()
+    if (state == GroupSessionState.Idle) return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Negoziazione sessione LAN", style = MaterialTheme.typography.titleMedium)
+            when (val current = state) {
+                GroupSessionState.Idle -> Unit
+                is GroupSessionState.Negotiating -> Text("Seleziona Negozia sessione anche su ${current.peer.name} (120 s). L'appartenenza viene verificata su questo TLS.")
+                is GroupSessionState.Selected -> SelectionContainer { Text("Sessione selezionata localmente: ${current.session.sessionId}") }
+                is GroupSessionState.NeedsChoice -> Text("Sessioni già utilizzate: serve una scelta esplicita. Nessuna fusione automatica.")
+                is GroupSessionState.Failed -> Text("Negoziazione non riuscita o interrotta. Nessun trust o dato persistente modificato.")
+            }
+            Text("Prima negoziazione esplicita Android/desktop. Nessuna chat, riconnessione o conferma dell'esito remoto. Lo stop del servizio elimina la sessione in memoria, non il gruppo.")
+            TextButton(onClick = controller::cancelGroup) { Text("Chiudi negoziazione") }
         }
     }
 }

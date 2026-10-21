@@ -106,4 +106,7 @@ e deadline sono ricontrollati prima di Verified; niente ripresa del consenso o
 incremento della revisione di membership. Termine EOF/cancel successivo non cambia
 una diagnosi già compiuta in una falsa attestazione remota; una selezione chiusa
 non può essere riattivata dal callback tardivo. Nuova integrazione implementata,
-compilazione/runtime Apple ancora da attestare: evidenze correnti in STATO.
+compilazione/runtime Apple attestati sul checkpoint 80710c6 / 39473042848, 168
+XCTest complessivi senza fallimenti; non hardware. Evidenze correnti in STATO.
+La continuazione di sessione successiva è un percorso esplicito distinto descritto
+in [ADR 014](ADR-014-NEGOZIAZIONE-INIZIALE-SESSIONE.md), non riuso del risultato B4.

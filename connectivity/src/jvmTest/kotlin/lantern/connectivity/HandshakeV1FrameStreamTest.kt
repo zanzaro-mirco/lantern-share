@@ -21,6 +21,9 @@ import lantern.protocol.ProtocolHandshakeParticipant
 import lantern.protocol.GroupMembershipEvidence
 import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.SessionCandidate
+import lantern.protocol.GroupSessionOffer
+import lantern.protocol.GroupSessionOfferCodec
 
 class HandshakeV1FrameStreamTest {
     private val hello = ProtocolHandshakeFrame.Hello(
@@ -161,6 +164,51 @@ class HandshakeV1FrameStreamTest {
     private fun framed(payload: ByteArray): ByteArray = ByteArrayOutputStream().also { bytes ->
         DataOutputStream(bytes).apply { writeInt(payload.size); write(payload) }
     }.toByteArray()
+
+    @Test
+    fun sessionReadIsExactFragmentedBoundedAndDoesNotOverread() {
+        val value = GroupSessionOffer(SessionCandidate("a".repeat(64), "b".repeat(64), true))
+        val bytes = GroupSessionOfferCodec.header() + GroupSessionOfferCodec.encode(value)
+        val input = ByteArrayInputStream(bytes + byteArrayOf(7))
+        val fragmented = object : FilterInputStream(input) {
+            override fun read(bytes: ByteArray, offset: Int, length: Int) = super.read(bytes, offset, minOf(1, length))
+        }
+        var checks = 0
+        assertEquals(value, HandshakeV1FrameStream(fragmented, ByteArrayOutputStream()).readSessionOffer { checks++ })
+        assertEquals(bytes.size, checks)
+        assertEquals(7, input.read())
+        for (size in 0 until bytes.size) assertFailsWith<EOFException> {
+            HandshakeV1FrameStream(ByteArrayInputStream(bytes.copyOf(size)), ByteArrayOutputStream()).readSessionOffer {}
+        }
+        for (bad in listOf(0, -1, Int.MIN_VALUE, GroupSessionOfferCodec.PAYLOAD_BYTES + 1)) {
+            val header = ByteArrayOutputStream().also { DataOutputStream(it).writeInt(bad) }.toByteArray()
+            val invalid = ByteArrayInputStream(header + byteArrayOf(7))
+            assertFailsWith<InvalidGroupEvidenceFrameException> {
+                HandshakeV1FrameStream(invalid, ByteArrayOutputStream()).readSessionOffer {}
+            }
+            assertEquals(7, invalid.read())
+        }
+    }
+
+    @Test
+    fun sessionIoChecksDeadlineAndPropagatesWriteFlushFailure() {
+        val value = GroupSessionOffer(SessionCandidate("a".repeat(64), "b".repeat(64), false))
+        val output = ByteArrayOutputStream()
+        HandshakeV1FrameStream(ByteArrayInputStream(byteArrayOf()), output).writeSessionOffer(value)
+        assertContentEquals(GroupSessionOfferCodec.header() + GroupSessionOfferCodec.encode(value), output.toByteArray())
+        val input = ByteArrayInputStream(output.toByteArray())
+        val remaining = input.available()
+        val error = IOException("Test session deadline/flush")
+        assertSame(error, assertFailsWith<IOException> {
+            HandshakeV1FrameStream(input, output).readSessionOffer { throw error }
+        })
+        assertEquals(remaining, input.available())
+        val failing = object : OutputStream() {
+            override fun write(value: Int) = Unit
+            override fun flush(): Unit = throw error
+        }
+        assertSame(error, assertFailsWith<IOException> { HandshakeV1FrameStream(input, failing).writeSessionOffer(value) })
+    }
 
     private fun reader(bytes: ByteArray) = HandshakeV1FrameStream(ByteArrayInputStream(bytes), ByteArrayOutputStream())
 

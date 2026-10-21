@@ -1,4 +1,4 @@
-# Passaggio di consegne — 20 ottobre 2026
+# Passaggio di consegne — 21 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -6,7 +6,21 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B4, verifica membership iOS
+## Ripartenza corrente — B5, negoziazione iniziale Android/desktop
+
+Checkpoint `80710c6` letto da concluso: [iOS completo 39473042848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39473042848) success, Native/export/app e **168 XCTest senza fallimenti**, non hardware. Bootstrap compilato soltanto. B4 verificato automaticamente, non fase 1 chiusa; nessun polling. Note post-push precedenti conservate sotto.
+
+Nuovo ingresso Node/UI **Negozia sessione**, esplicito su entrambi: nuova prova committata sul TLS vivo, nessuna autorità dal vecchio B4. Kotlin comune per formato e regola SessionSelector; proposta nuova distinta da sessione mantenuta, continuità se uno resta attivo e nuovi ID dopo stop di entrambi. Owner/scadenza invariati, radice/marker esatti e selezione ricontrollati, cancel/stop arbitrati senza I/O sotto lock. Una sola sessione in memoria per run; nessuna storia ripubblicata, commit/trust o chat. ADR 014 documenta nuovo percorso opzionale compatibile e limiti, senza migrazioni/versioni/lock/workflow nuovi.
+
+Locale: checkpoint integrato riuscito in 1m 33s e controlli successivi pertinenti, app Android/desktop compilate. Definitivo connettività esclusivo 1m 27s: 218 casi, 217 passati e un mDNS opt-in skipped; con gli altri target **1035 esecuzioni passate** complessivamente, zero failure/error. Cronologia preservata/non letta dal negoziato, marker esatto e capability opzionali non sufficienti coperti. Comandi, fixture corretta e contesa locale del report risolta senza sopprimere test in STATO. [PoC precedente 39473021145](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39473021145), 80710c6, success Android/Windows letto da concluso, non B5. Nessun Swift/Native/hardware nuovo attestato da Windows. Lista fisica B5 in SESSIONI predisposta ma non eseguita.
+
+**Prossimo blocco unico:** leggere CI conclusa/correggere, poi stesso ingresso Bonjour/iOS con core condiviso, sessione limitata alla run e owner/timer conservati, checkpoint Native/simulatore completo. Non estendere a chat/reconnect/cambio rete automatico o gestione completa multipartecipante; fase 1/hardware e gate UI invariati. Il risultato è una decisione locale, non un'autorizzazione riusabile. Niente polling; un solo push raggruppato, note post-push locali da preservare.
+
+Ultima revisione: nonce OS fuori dal lock e pubblicazione errori della nuova sessione arbitrata con la selezione esatta, evitando ABA annulla/riseleziona lo stesso peer. Ripetuti soltanto 10 casi servizio e compilazione Android/desktop: **53 s**, poi **48 s success** sul definitivo; il resto non cambiato, XML connettività ora selettivi. Nessun ulteriore codice dopo il controllo di 48 s; dettagli in STATO.
+
+Punti mirati per B5 iOS: IosGroupAdmissionController/IosEntry per modalità e pannello, facciata del codec/regole Kotlin, GroupAdmissionSession per preflight/verifica viva, HandshakeV1Channel per la continuazione e BonjourProbe (IosPairingService.swift) per memoria della run e reset allo stop. **Non** chiamare semplicemente exchangeMembership e aggiungere una read dopo: nel ramo writer finale accoda già receiveMembershipEnd, mentre la sessione B4 ritira il primo writer. Il nuovo modo deve scegliere la continuazione prima dell'I/O, conservando lo stesso owner senza attese EOF/retire premature o un secondo reader. Questa è la prossima integrazione, non codice B5 Apple già disponibile.
+
+## Evidenze precedenti — B4, verifica membership iOS
 
 `7fe41ed`: [iOS ordinario 39324157172](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39324157172) success, framework/app/XCTest compilati, Native e simulatore SALTATI. [PoC 39324156210](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39324156210) cancelled: Android success, desktop cancellato durante JVM tests/application, non verde. Letture da concluse, nessun polling. Ultimo runtime Apple attestato resta a316ca5 / 162 XCTest, non hardware.
 
@@ -15,6 +29,8 @@ Nuovo blocco implementato: Verifica membro nel servizio BonjourProbe e nella UI 
 Locale definitivo: protocollo 392 JVM / 356 unit Android, connettività 207 passati + uno mDNS opt-in skipped, UI 6 per target, **967 passati**, app compilate; comandi in STATO. Sei nuovi XCTest mantenuti predisposti più estensione tra adottati con fondatore offline. Nessun nuovo hardware/harness o test soppresso.
 
 **Prossimo blocco unico:** prima risultato del checkpoint Apple concluso/correzioni; dopo verifica B4, negoziazione iniziale della sessione LAN fra membri sul trasporto vivo, riusando le regole di sessione già presenti. Il risultato diagnostico B4 NON diventa una credenziale o un handover implicito. Non estendere alla chat/riconnessione automatica; fase 1/hardware e gate UI completa invariati. Nessun polling; note locali post-push da raggruppare al prossimo codice.
+
+Consegnato `80710c6a73dd141ee3d6cc5fbe5bbfcad177939c`, 23 file, unico commit/push. Dispatch [iOS completo 39473042848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39473042848) riuscito, bootstrap_interop=false, esito non letto. [PoC 39473021145](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39473021145) in_progress nella sola lista post-push; completo non ancora indicizzato in quella lista, non ripetuta. Richiesta cancellazione duplicato ordinario iOS 39473021103 (queued), senza ricontrollo. Nuovo Apple non attestato, niente polling. Nota locale con STATO da raggruppare al prossimo codice, nessun push solo documentale.
 
 ## Evidenze precedenti — B4, verifica membership Android/desktop
 

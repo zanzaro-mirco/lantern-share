@@ -1,8 +1,8 @@
 # Selezione della sessione LAN
 
-Prima regola di dominio per gruppi/sessioni del piano, implementata in `domain/SessionSelection.kt`. Non è ancora collegata al servizio wire 0 e non definisce un nuovo formato di rete o schema SQLite.
+Regola di dominio per gruppi/sessioni del piano, implementata in `domain/SessionSelection.kt`. Il primo ingresso esplicito Node Android/desktop è descritto in [ADR 014](ADR-014-NEGOZIAZIONE-INIZIALE-SESSIONE.md): formato opzionale separato dal wire 0 e nessun nuovo schema SQLite. Non è la gestione completa delle sessioni o un'autorizzazione alla chat.
 
-`SessionSelector.select` riceve il gruppo dell'installazione e uno snapshot di sessioni attive della LAN corrente, inclusa quella locale se attiva. Le offerte di altri gruppi sono escluse. Gli ID sono opachi, non vuoti, non normalizzati: non derivano da SSID, IP o nome dispositivo. Generazione casuale e autenticazione delle offerte saranno responsabilità dei futuri adattatori.
+`SessionSelector.select` riceve il gruppo dell'installazione e uno snapshot di sessioni attive della LAN corrente, inclusa quella locale se attiva. Le offerte di altri gruppi sono escluse dalla regola pura; l'ingresso di rete rifiuta invece un'offerta con gruppo diverso. Gli ID di dominio sono opachi, non vuoti, non normalizzati: non derivano da SSID, IP o nome dispositivo. L'adattatore Node genera ID casuali a 256 bit e verifica l'appartenenza sullo stesso TLS prima dello scambio. Le proposte nuove sono fallback soltanto se nessuno mantiene una sessione, non un motivo per cambiare quella rimasta attiva.
 
 | Snapshot del gruppo | Decisione |
 |---|---|
@@ -17,4 +17,34 @@ Il selettore non conosce archivi o messaggi: non ripubblica né unisce cronologi
 
 Verifica locale: `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, otto casi condivisi per target. Coprono creazione, separazione gruppi, convergenza indipendente dall'ordine, priorità della sessione utilizzata, scelta esplicita, duplicati, conflitti e ID vuoti. Non equivalgono a convergenza distribuita su rete o a collaudo hardware. I test Native sono inclusi nel checkpoint iOS manuale, non eseguiti localmente su Windows.
 
-Restano da implementare credenziali di gruppo, snapshot autenticato e ciclo di vita/cambio rete, persistenza e UI della scelta. Nessuna autorizzazione derivata da mDNS o da `READY` del bootstrap.
+Le credenziali di gruppo e il primo confronto autenticato tra due Node sono integrati. Restano l'ingresso iOS, uno snapshot multipartecipante aggiornato, ciclo di vita/cambio rete automatico, dati delle sessioni utilizzate e UI operativa della scelta. La sola decisione locale non autorizza traffico; nessuna autorizzazione derivata da mDNS, dal precedente B4 o da `READY` del bootstrap. La sessione vuota di questo blocco vive soltanto nella run del servizio, mai ripristinata dal database. Comandi e risultati correnti in STATO.
+
+## Collaudo fisico B5 ancora da eseguire — Android ↔ Windows
+
+Questa lista non è un'evidenza di collaudo riuscito. Usare build dello stesso
+checkpoint e dispositivi di prova già ammessi allo stesso gruppo tramite il
+confronto completo su entrambi. Non cancellare database/identità per riprovare.
+I file e i messaggi della prova tecnica restano distinti dalla nuova negoziazione.
+
+1. Attivare entrambi sulla stessa LAN, anche senza WAN, e selezionare **Negozia
+   sessione** su entrambi. Attendere il risultato locale su ciascuno e confrontare
+   gli ID completi: devono coincidere. Non aspettarsi chat di gruppo abilitata.
+2. Chiudere i pannelli, lasciando i servizi attivi, e ripetere: stesso ID. Chiudere
+   il pannello non equivale a uscire dal gruppo o arrestare il servizio.
+3. Arrestare/riattivare soltanto un servizio, poi ripetere su entrambi: il rientrante
+   raggiunge l'ID mantenuto dall'altro, anche se la sessione è ancora vuota.
+4. Arrestare entrambi, riattivare e negoziare: nuovo ID comune, diverso da quello
+   precedente. Gruppo e vecchia cronologia devono restare salvati; la cronologia
+   non viene ripubblicata e il suo ID non viene usato come sessione corrente.
+5. Annullare una negoziazione prima del risultato e riprovare con una nuova
+   selezione su entrambi. Nessun callback precedente deve riaprire il pannello
+   annullato. Provare anche stop e blocco locale durante la selezione.
+6. Selezionare **Negozia sessione** da un lato e **Verifica membro** dall'altro:
+   incompatibilità, nessuna autorizzazione o modifica del gruppo. Chiudere entrambi
+   e riprovare nello stesso modo corretto. Non serve un nuovo invito.
+
+Registrare commit/build, OS, rete/WAN, ordine delle azioni, esito per dispositivo
+ed eventuale errore senza contenuti, credenziali o chiavi. Il cambio LAN automatico
+non è implementato: arrestare il servizio prima di cambiare rete e riattivarlo
+dopo. iPhone/Mac Intel/Apple Silicon restano nei collaudi obbligatori di fase 1;
+l'ingresso B5 iOS non è ancora disponibile, non provarlo come se fosse integrato.
