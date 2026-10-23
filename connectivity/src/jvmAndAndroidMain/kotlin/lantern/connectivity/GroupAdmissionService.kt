@@ -11,7 +11,13 @@ import kotlinx.coroutines.launch
 import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
-import lantern.domain.GroupSessionController
+import lantern.domain.GroupTextController
+import lantern.domain.GroupTextState
+import lantern.domain.GroupTextFailure
+import lantern.domain.GroupTextRepository
+import lantern.domain.GroupTextContent
+import lantern.domain.SignedGroupText
+import lantern.domain.ContentLimits
 import lantern.domain.GroupSessionState
 import lantern.domain.SessionCandidate
 import lantern.domain.SessionSelection
@@ -26,6 +32,10 @@ import lantern.protocol.GroupRootAdoptionState
 import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
+import lantern.protocol.GroupTextTransferCodec
+import lantern.protocol.GroupTextTransferContext
+import lantern.protocol.GroupTextCodec
+import lantern.protocol.GroupTextReceiver
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.Wire
@@ -33,14 +43,15 @@ import java.io.Closeable
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.UUID
 import javax.net.ssl.SSLSocket
 import kotlin.coroutines.cancellation.CancellationException
 
-internal enum class GroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION }
+internal enum class GroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION, TEXT }
 
 /**
- * One exclusive admission, membership-check or session selection per Node. Uses its listener/discovery, but never wire 0,
- * peer trust or chat. All database/OS/network work runs on the supplied Node IO scope.
+ * One exclusive group selection per Node. Uses its listener/discovery, never wire 0
+ * or PoC peer trust. All database/OS/network work runs on the supplied Node IO scope.
  * Founders and durably adopted members issue through the same verified local-proof producer.
  * Node closes this owner and joins its workers before the caller releases the database.
  */
@@ -49,7 +60,7 @@ internal class GroupAdmissionService(
     private val repository: GroupAdoptionRepository?,
     private val scope: CoroutineScope,
     private val running: () -> Boolean,
-) : GroupSessionController, AutoCloseable {
+) : GroupTextController, AutoCloseable {
     private val mutable = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     override val admissionState = mutable.asStateFlow()
     private val revision = MutableStateFlow(0L)
@@ -58,10 +69,13 @@ internal class GroupAdmissionService(
     override val membershipCheckState = membershipCheck.asStateFlow()
     private val sessionState = MutableStateFlow<GroupSessionState>(GroupSessionState.Idle)
     override val groupSessionState = sessionState.asStateFlow()
+    private val textState = MutableStateFlow<GroupTextState>(GroupTextState.Idle)
+    override val groupTextState = textState.asStateFlow()
     private val sessionLock = Any()
     // Only current-run, authenticated observations. Never read from history/discovery/SQLite.
     private var localSession: LocalSession? = null
-    private class LocalSession(val anchor: GroupTrustAnchor, val membership: PendingGroupAdoption?, val candidate: SessionCandidate)
+    private class LocalSession(val anchor: GroupTrustAnchor, val membership: PendingGroupAdoption?, val candidate: SessionCandidate,
+        val participants: Set<String>? = null)
     private val selected = AtomicReference<Selection?>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "lantern-group-deadline").apply { isDaemon = true }
@@ -69,7 +83,7 @@ internal class GroupAdmissionService(
 
     private enum class Phase { LIVE, COMMITTING, FINISHED, CANCELLED }
 
-    private class Selection(val peer: Peer, val selectedAt: Long, val mode: GroupSelectionMode) {
+    private class Selection(val peer: Peer, val selectedAt: Long, val mode: GroupSelectionMode, val text: String?) {
         val phase = AtomicReference(Phase.LIVE)
         val claimed = AtomicBoolean()
         val click = CompletableDeferred<Unit>()
@@ -82,6 +96,8 @@ internal class GroupAdmissionService(
         var replacing: PendingGroupAdoption? = null
         var expiry: Job? = null
         var sessionOffer: GroupSessionOffer? = null
+        @Volatile var attemptedMessageId: String? = null
+        @Volatile var textFailure = GroupTextFailure.FAILED
     }
 
     val active: Boolean get() = selected.get() != null
@@ -97,17 +113,24 @@ internal class GroupAdmissionService(
     override fun selectGroupPeer(peer: Peer, replaceInterrupted: Boolean) = select(peer, replaceInterrupted, null)
     override fun verifyGroupPeer(peer: Peer) = select(peer, false, null, GroupSelectionMode.MEMBERSHIP_CHECK)
     override fun negotiateGroupSession(peer: Peer) = select(peer, false, null, GroupSelectionMode.SESSION)
+    override fun sendGroupText(peer: Peer, text: String) {
+        require(ContentLimits.isValidText(text))
+        select(peer, false, null, GroupSelectionMode.TEXT, text)
+    }
+    override fun receiveGroupText(peer: Peer) = select(peer, false, null, GroupSelectionMode.TEXT)
 
     /** Wait for Node's old PoC sockets to drain before permitting a different protocol. */
-    fun select(peer: Peer, replaceInterrupted: Boolean, previousCleanup: Job?, mode: GroupSelectionMode = GroupSelectionMode.ADMISSION) {
+    fun select(peer: Peer, replaceInterrupted: Boolean, previousCleanup: Job?, mode: GroupSelectionMode = GroupSelectionMode.ADMISSION,
+        text: String? = null) {
         if (!running() || peer.id == identity.id || !Wire.isFingerprint(peer.id) || peer.port !in 1..65535) return
         cancelGroup()
-        val selection = Selection(peer, now(), mode)
+        val selection = Selection(peer, now(), mode, text)
         synchronized(sessionLock) { selected.set(selection) }
         when (mode) {
             GroupSelectionMode.ADMISSION -> mutable.value = GroupAdmissionState.Selecting(peer)
             GroupSelectionMode.MEMBERSHIP_CHECK -> membershipCheck.value = GroupMembershipCheckState.Checking(peer)
             GroupSelectionMode.SESSION -> sessionState.value = GroupSessionState.Negotiating(peer)
+            GroupSelectionMode.TEXT -> textState.value = GroupTextState.Waiting(peer, text != null)
         }
         selection.expiry = scope.launch {
             delay(ProtocolHandshakeAttempt.TIMEOUT_MILLIS)
@@ -129,7 +152,8 @@ internal class GroupAdmissionService(
                     // The live exchange revalidates OS certificates, which may expire meanwhile.
                     prepareLocalMembership(identity, store)
                     checkMembership(selection, store)
-                    if (mode == GroupSelectionMode.SESSION) {
+                    if (mode == GroupSelectionMode.TEXT) check(store is GroupTextRepository) { "Group text repository unavailable" }
+                    if (mode == GroupSelectionMode.SESSION || mode == GroupSelectionMode.TEXT) {
                         val anchor = checkNotNull(selection.anchor)
                         val previous = synchronized(sessionLock) {
                             localSession?.takeIf {
@@ -176,6 +200,7 @@ internal class GroupAdmissionService(
         mutable.value = GroupAdmissionState.Idle
         membershipCheck.value = GroupMembershipCheckState.Idle
         sessionState.value = GroupSessionState.Idle
+        textState.value = GroupTextState.Idle
     }
 
     /** Called by Node.stop under its run lock. A later LAN/run never revives this observation. */
@@ -195,10 +220,14 @@ internal class GroupAdmissionService(
             val anchor = selection.anchor
             val localRole = if (anchor == null) CANDIDATE_FEATURE else ISSUER_FEATURE
             val remoteRole = if (anchor == null) ISSUER_FEATURE else CANDIDATE_FEATURE
-            val membershipFeatures = if (selection.mode == GroupSelectionMode.SESSION)
+            val membershipFeatures = if (selection.mode == GroupSelectionMode.SESSION || selection.mode == GroupSelectionMode.TEXT)
                 setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE)
             else setOf(GroupMembershipEvidenceCodec.FEATURE)
-            val capabilities = if (selection.mode != GroupSelectionMode.ADMISSION)
+            val capabilities = if (selection.mode == GroupSelectionMode.TEXT) {
+                val required = membershipFeatures + GroupTextTransferCodec.FEATURE
+                val role = if (selection.text == null) GroupTextTransferCodec.RECEIVER_FEATURE else GroupTextTransferCodec.SENDER_FEATURE
+                ProtocolCapabilities(1, required + role, required)
+            } else if (selection.mode != GroupSelectionMode.ADMISSION)
                 ProtocolCapabilities(1, membershipFeatures, membershipFeatures)
             else ProtocolCapabilities(1, setOf(ADMISSION_FEATURE, localRole), setOf(ADMISSION_FEATURE))
             val bootstrap = HandshakeV1Connection.adopt(socket, identity, capabilities,
@@ -211,6 +240,10 @@ internal class GroupAdmissionService(
             }
             if (selection.mode == GroupSelectionMode.SESSION) {
                 negotiateSession(selection, bootstrap)
+                return
+            }
+            if (selection.mode == GroupSelectionMode.TEXT) {
+                transferText(selection, bootstrap)
                 return
             }
             val remoteFeatures = checkNotNull(bootstrap.remoteCapabilitiesForGroup()).supportedFeatures
@@ -272,7 +305,9 @@ internal class GroupAdmissionService(
             check(selection.phase.compareAndSet(Phase.LIVE, Phase.FINISHED))
             when (result) {
                 is SessionSelection.Join -> {
-                    localSession = LocalSession(anchor, selection.membership, result.session)
+                    val participants = localSession?.takeIf { it.anchor == anchor && sameMembership(it.membership, selection.membership) &&
+                        it.candidate.sessionId == result.session.sessionId }?.participants
+                    localSession = LocalSession(anchor, selection.membership, result.session, participants)
                     sessionState.value = GroupSessionState.Selected(selection.peer, result.session)
                 }
                 is SessionSelection.Choose -> sessionState.value = GroupSessionState.NeedsChoice(selection.peer, result.sessions)
@@ -281,6 +316,104 @@ internal class GroupAdmissionService(
         }
         // A local decision, not an ACK or authorization for chat. Keep the last writer alive.
         if (identity.id > selection.peer.id) bootstrap.awaitGroupExchangePeerClose()
+    }
+
+    private fun transferText(selection: Selection, bootstrap: HandshakeV1Connection) {
+        val store = checkNotNull(repository)
+        val texts = store as GroupTextRepository
+        val anchor = checkNotNull(selection.anchor)
+        val offer = checkNotNull(selection.sessionOffer)
+        fun checkContext() {
+            checkLive(selection)
+            checkMembership(selection, store)
+        }
+        fun markUsed(context: GroupTextTransferContext) = synchronized(sessionLock) {
+            checkLive(selection)
+            val held = checkNotNull(localSession)
+            check(held.anchor == anchor && sameMembership(held.membership, selection.membership) &&
+                held.candidate.sessionId == context.sessionId && held.participants == context.recipients)
+            // Conservative before a potentially ambiguous commit. Never clear on failure/cancel.
+            localSession = LocalSession(anchor, selection.membership, held.candidate.copy(used = true), held.participants)
+        }
+        checkContext()
+        val local = prepareLocalMembership(identity, store)
+        checkContext()
+        checkNotNull(bootstrap.transferGroupText(local, offer, selection.text != null,
+            verifyRemote = { evidence ->
+                checkContext()
+                val valid = verifyPeerMembership(evidence, anchor, selection.peer.id)
+                checkContext()
+                valid
+            },
+            selectSession = { remote ->
+                checkContext()
+                val result = offer.select(anchor, remote)
+                if (result !is SessionSelection.Join) {
+                    selection.textFailure = GroupTextFailure.SESSION_CHOICE_REQUIRED
+                    error("Explicit session choice required")
+                }
+                val context = GroupTextTransferContext(anchor.groupId, result.session.sessionId,
+                    if (selection.text != null) identity.id else selection.peer.id,
+                    if (selection.text != null) selection.peer.id else identity.id)
+                synchronized(sessionLock) {
+                    checkLive(selection)
+                    val held = localSession?.takeIf { it.anchor == anchor && sameMembership(it.membership, selection.membership) &&
+                        it.candidate.sessionId == result.session.sessionId }
+                    // Initial direct-transfer scope only. Do not invent an incomplete snapshot of
+                    // an already-used session, or silently omit earlier/offline participants.
+                    if (result.session.used && held?.participants != context.recipients) {
+                        selection.textFailure = GroupTextFailure.ROSTER_REQUIRED
+                        error("Authenticated session roster required")
+                    }
+                    localSession = LocalSession(anchor, selection.membership, result.session, context.recipients)
+                    textState.value = GroupTextState.Transferring(selection.peer)
+                }
+                context
+            },
+            outgoing = { context ->
+                checkContext()
+                val counters = texts.reserveGroupTextCounters(anchor.groupId, identity.id)
+                val content = GroupTextContent(UUID.randomUUID().toString(), anchor.groupId, context.sessionId, identity.id,
+                    counters.authorSequence, counters.logicalTime, context.recipients, checkNotNull(selection.text))
+                val signed = SignedGroupText(content, identity.sign(GroupTextCodec.signedBytes(content)))
+                GroupTextCodec.encode(signed)
+                checkContext()
+                markUsed(context)
+                selection.attemptedMessageId = content.id
+                checkContext()
+                texts.saveGroupText(signed, identity.id)
+                checkContext()
+                signed
+            },
+            incoming = { context, received, certificate ->
+                checkContext()
+                val inboxStore = object : GroupTextRepository by texts {
+                    override fun saveGroupText(message: SignedGroupText, localIdentity: String): Boolean {
+                        checkContext()
+                        // Admission to this durable step is ordered with cancel/stop. Once it
+                        // starts, SQLite may finish; revocation still prevents every later ACK.
+                        markUsed(context)
+                        selection.attemptedMessageId = message.content.id
+                        return texts.saveGroupText(message, localIdentity)
+                    }
+                }
+                GroupTextReceiver(inboxStore).receive(received, anchor.groupId, context.sessionId, identity.id, selection.peer.id,
+                    context.recipients, {
+                        checkContext()
+                        true
+                    }) { bytes, signature -> Identity.verify(certificate, bytes, signature) }
+            },
+            completed = { saved ->
+                checkContext()
+                if (selection.text != null) texts.acknowledgeGroupText(saved, selection.peer.id)
+                checkContext()
+                synchronized(sessionLock) {
+                    checkLive(selection)
+                    check(selection.phase.compareAndSet(Phase.LIVE, Phase.FINISHED))
+                    textState.value = if (selection.text != null) GroupTextState.Sent(selection.peer, saved)
+                        else GroupTextState.Received(selection.peer, saved)
+                }
+            }))
     }
 
     private suspend fun issue(selection: Selection, bootstrap: HandshakeV1Connection, anchor: GroupTrustAnchor) {
@@ -410,6 +543,11 @@ internal class GroupAdmissionService(
                 // the same peer can restore an equal presentation value (ABA). Order publication
                 // with the exact selection identity, just like successful session installation.
                 if (current(selection)) sessionState.value = GroupSessionState.Failed(selection.peer, reason)
+            }
+            GroupSelectionMode.TEXT -> synchronized(sessionLock) {
+                if (current(selection)) textState.value = GroupTextState.Failed(selection.peer,
+                    if (reason == GroupAdmissionFailure.UNAVAILABLE) GroupTextFailure.UNAVAILABLE else selection.textFailure,
+                    selection.attemptedMessageId)
             }
         }
     }

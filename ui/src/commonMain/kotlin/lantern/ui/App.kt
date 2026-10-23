@@ -42,6 +42,10 @@ import lantern.domain.GroupMembershipController
 import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupSessionController
 import lantern.domain.GroupSessionState
+import lantern.domain.GroupTextController
+import lantern.domain.GroupTextState
+import lantern.domain.GroupTextFailure
+import lantern.domain.SignedGroupText
 
 @Composable
 fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? = null) {
@@ -68,6 +72,7 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 if (admission != null) GroupAdmissionPanel(admission, localGroup)
                 if (admission is GroupMembershipController) GroupMembershipCheckPanel(admission)
                 if (admission is GroupSessionController) GroupSessionPanel(admission)
+                if (controller is GroupTextController && state.active) GroupTextPanel(controller, state.peers)
                 PairingPanel(state.pairingPeer, state.comparisonCode, controller::confirm, controller::reject)
                 Text("Dispositivi scoperti", style = MaterialTheme.typography.titleLarge)
                 if (state.peers.isEmpty()) Text("Nessun dispositivo. Verifica rete locale e firewall.")
@@ -102,6 +107,62 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 MessageHistory(state.id, state.messages)
                 Text("Autorizzati: ${state.trusted.size}. Cronologia locale: ultimi 200 messaggi. Nessun recupero automatico in questa prova.")
             }
+        }
+    }
+}
+
+@Composable
+internal fun GroupTextPanel(controller: GroupTextController, peers: List<Peer>) {
+    val state by controller.groupTextState.collectAsState()
+    var body by remember { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Testo di gruppo · primo trasferimento", style = MaterialTheme.typography.titleMedium)
+            Text("Gruppo già ammesso richiesto. Su un dispositivo scegli Invia, sull'altro Ricevi (120 s). Non usa l'associazione PoC.")
+            OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth(), label = { Text("Testo di gruppo (massimo 8192 byte)") })
+            for (peer in peers) {
+                OutlinedButton(onClick = { controller.sendGroupText(peer, body) }, enabled = ContentLimits.isValidText(body)) {
+                    Text("Invia testo gruppo a ${peer.name}")
+                }
+                OutlinedButton(onClick = { controller.receiveGroupText(peer) }) { Text("Ricevi testo gruppo da ${peer.name}") }
+            }
+            when (val current = state) {
+                GroupTextState.Idle -> Unit
+                is GroupTextState.Waiting -> Text("In attesa di ${current.peer.name}: scegli ${if (current.sending) "Ricevi" else "Invia"} sull'altro dispositivo.")
+                is GroupTextState.Transferring -> Text("Sessione verificata, trasferimento con ${current.peer.name}…")
+                is GroupTextState.Sent -> {
+                    Text("Salvato sul destinatario ${current.peer.name}.")
+                    GroupTextResult(current.message)
+                }
+                is GroupTextState.Received -> {
+                    Text("Salvato localmente da ${current.peer.name}.")
+                    GroupTextResult(current.message)
+                }
+                is GroupTextState.Failed -> {
+                    Text(when (current.reason) {
+                        GroupTextFailure.UNAVAILABLE -> "Gruppo o archivio non disponibile/verificabile."
+                        GroupTextFailure.ROSTER_REQUIRED -> "Serve il roster autenticato della sessione utilizzata; questo percorso iniziale non lo ricostruisce."
+                        GroupTextFailure.SESSION_CHOICE_REQUIRED -> "Più sessioni utilizzate: serve una scelta esplicita."
+                        GroupTextFailure.FAILED -> "Trasferimento interrotto o incompatibile; nessuna ricezione remota confermata."
+                    })
+                    current.attemptedMessageId?.let { id ->
+                        SelectionContainer { Text("Tentativo $id: una copia locale potrebbe essere salvata. Nessuna ritrasmissione automatica.") }
+                    }
+                }
+            }
+            Text("Percorso iniziale esplicito, non chat multipartecipante completa o recupero. Stop elimina la sessione attiva, non la storia salvata.")
+            if (state != GroupTextState.Idle) TextButton(onClick = controller::cancelGroup) { Text("Chiudi trasferimento gruppo") }
+        }
+    }
+}
+
+@Composable
+private fun GroupTextResult(message: SignedGroupText) {
+    SelectionContainer {
+        Column {
+            Text(message.content.body)
+            Text("Sessione: ${message.content.sessionId}")
+            Text("Messaggio: ${message.content.id}")
         }
     }
 }

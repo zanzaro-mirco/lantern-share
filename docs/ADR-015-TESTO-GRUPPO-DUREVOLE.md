@@ -92,3 +92,10 @@ nessuna riapertura del socket diagnostico B5, assunzione di ACK EOF o consenso
 derivato dalla cronologia. Mancano ancora servizio/UI, trasporto/ACK di gruppo,
 recupero, reconnect automatico e gestione completa delle sessioni. Nessun requisito
 di prodotto è rimosso e nessuna nuova disponibilità fisica è attestata.
+
+Integrazione successiva Android/desktop: [ADR 016](ADR-016-PRIMO-TRASFERIMENTO-TESTO-GRUPPO.md).
+Il prerequisito qui descritto è verificato anche nel checkpoint Apple completo
+2f74f5f / 39932526334 (Native, export/app e 175 XCTest riusciti), non hardware.
+Il nuovo trasferimento ha negoziazione distinta, lifetime originale e guardie
+contro snapshot incompleti di sessioni utilizzate; non è il protocollo di roster
+o la chat completa. Le sezioni sopra descrivono il checkpoint del prerequisito.

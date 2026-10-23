@@ -19,6 +19,11 @@ import lantern.protocol.GroupAdmissionProof
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupMembershipEvidence
 import lantern.protocol.GroupSessionOffer
+import lantern.protocol.GroupTextTransferCodec
+import lantern.protocol.GroupTextTransferContext
+import lantern.protocol.GroupTextCodec
+import lantern.protocol.GroupTextSavedReceipt
+import lantern.domain.SignedGroupText
 import lantern.protocol.ProtocolCapabilities
 import lantern.protocol.ProtocolHandshakeAttempt
 import lantern.protocol.ProtocolHandshakeComparison
@@ -242,6 +247,93 @@ internal class HandshakeV1Connection private constructor(
                 }
                 checkLive()
                 remote
+            }
+        } finally { exclusive.unlock() }
+    }
+
+    /**
+     * One explicit text exchange on the SAME selected TLS, within its original deadline.
+     * No bootstrap APPROVE, diagnostic result, owner transfer, timer reset or socket reuse.
+     * Callbacks perform OS/SQLite work without the state lock; close still aborts pending I/O.
+     */
+    fun transferGroupText(
+        membership: GroupMembershipEvidence,
+        offer: GroupSessionOffer,
+        sending: Boolean,
+        verifyRemote: (GroupMembershipEvidence) -> Boolean,
+        selectSession: (GroupSessionOffer) -> GroupTextTransferContext,
+        outgoing: (GroupTextTransferContext) -> SignedGroupText,
+        incoming: (GroupTextTransferContext, SignedGroupText, X509Certificate) -> GroupTextSavedReceipt,
+        completed: (SignedGroupText) -> Unit,
+    ): SignedGroupText? {
+        val exclusive = operations.writeLock()
+        if (!exclusive.tryLock()) return null
+        try {
+            return guarded {
+                val sendsFirst = synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    check(!exchangingEvidence)
+                    GroupTextTransferCodec.sendsFirst(checkNotNull(attempt.offersForGroupAdmission()), sending)
+                }
+                fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
+                fun beforeRead() = synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+                }
+                val remote = checkNotNull(negotiateSession(membership, offer, verifyRemote))
+                checkLive()
+                val context = selectSession(remote)
+                require(context.groupId == membership.anchor.groupId &&
+                    context.senderId == (if (sending) identity.id else selectedPeerIdentity) &&
+                    context.recipientId == (if (sending) selectedPeerIdentity else identity.id))
+                val scope = GroupTextTransferCodec.scope(context)
+                fun sendScope() {
+                    checkLive()
+                    stream.writeTextControl(scope)
+                    checkLive()
+                }
+                fun readScope() {
+                    check(stream.readTextControl(GroupTextTransferCodec.SCOPE_BYTES, ::beforeRead).contentEquals(scope))
+                }
+                if (sendsFirst) {
+                    sendScope()
+                    readScope()
+                } else {
+                    readScope()
+                    sendScope()
+                }
+                checkLive()
+                if (sending) {
+                    val message = outgoing(context)
+                    context.checkMessage(message)
+                    val bytes = GroupTextCodec.encode(message)
+                    checkLive()
+                    stream.writeTextControl(bytes)
+                    checkLive()
+                    val ack = stream.readTextControl(GroupTextTransferCodec.ACK_BYTES, ::beforeRead)
+                    check(ack.contentEquals(GroupTextTransferCodec.acknowledgement(context, message, digest(bytes)))) {
+                        "Group text receipt mismatch"
+                    }
+                    checkLive()
+                    completed(message)
+                    checkLive()
+                    message
+                } else {
+                    val message = stream.readGroupText(::beforeRead)
+                    context.checkMessage(message)
+                    checkLive()
+                    val certificate = socket.session.peerCertificates.single() as X509Certificate
+                    val receipt = incoming(context, message, certificate)
+                    check(receipt.recipientId == identity.id && receipt.message.sameMessage(message))
+                    checkLive()
+                    stream.writeTextControl(GroupTextTransferCodec.acknowledgement(context, message, digest(GroupTextCodec.encode(message))))
+                    checkLive()
+                    completed(message)
+                    // Last writer drains until the sender closes after reading its ACK. EOF is
+                    // only transport cleanup; no receipt is inferred from it.
+                    stream.awaitMembershipEnd(::beforeRead)
+                    message
+                }
             }
         } finally { exclusive.unlock() }
     }
@@ -507,7 +599,7 @@ internal class HandshakeV1Connection private constructor(
                 require(digest(session.localCertificates.single().encoded) == identity.id) { "Local TLS identity mismatch" }
                 // Prepare abort while the transport is live. macOS can reject SO_LINGER changes
                 // after a peer reset, even when SSLSocket.isClosed still reports false.
-                // This owner never hands the socket to application traffic or graceful reuse.
+                // Bounded group exchanges keep the same owner; no external socket reuse.
                 socket.setSoLinger(true, 0)
                 val attempt = ProtocolHandshakeAttempt(
                     ProtocolHandshakeParticipant(identity.id, randomNonce(), capabilities),

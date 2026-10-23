@@ -5,7 +5,8 @@ import lantern.domain.SignedGroupText
 
 /**
  * Narrow inbox step for the future live control owner, not a transport or permission factory.
- * The caller serializes this step with revocation/stop, supplies the current authenticated
+ * The caller arbitrates admission to the durable save with revocation/stop (an entered
+ * transaction may finish, but cannot produce a receipt after revocation), supplies the current authenticated
  * session and expected frozen recipient snapshot independently, and keeps the repository open
  * through completion. It must NOT substitute discovery, history or a diagnostic B5 result.
  */

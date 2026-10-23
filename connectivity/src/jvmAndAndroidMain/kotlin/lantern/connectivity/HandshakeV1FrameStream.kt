@@ -15,11 +15,14 @@ import lantern.protocol.GroupMembershipEvidence
 import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
+import lantern.protocol.GroupTextTransferCodec
+import lantern.protocol.GroupTextCodec
+import lantern.domain.SignedGroupText
 
 internal class InvalidHandshakeV1FrameException : IOException("Invalid v1 bootstrap frame")
 internal class InvalidGroupEvidenceFrameException : IOException("Invalid group evidence frame")
 
-/** Bootstrap-only uint32 big-endian framing; no changes to the active v0 FrameStream. */
+/** Selected v1 exchanges, including bounded text; never the active wire-0 FrameStream. */
 internal class HandshakeV1FrameStream(private val input: InputStream, private val output: OutputStream) {
     /** Called before EVERY underlying read, so fragmented/slow input cannot reset the deadline. */
     fun read(beforeRead: () -> Unit = {}): ProtocolHandshakeFrame {
@@ -114,6 +117,27 @@ internal class HandshakeV1FrameStream(private val input: InputStream, private va
         output.write(GroupSessionOfferCodec.encode(offer))
         output.flush()
     }
+
+    fun writeTextControl(payload: ByteArray) {
+        output.write(GroupTextTransferCodec.header(payload.size))
+        output.write(payload)
+        output.flush()
+    }
+
+    fun readTextControl(expectedBytes: Int?, beforeRead: () -> Unit): ByteArray {
+        try {
+            val header = ByteArray(4)
+            readFully(header, beforeRead)
+            if (expectedBytes != null) GroupTextTransferCodec.checkFixedHeader(header, expectedBytes)
+            val payload = ByteArray(GroupTextTransferCodec.payloadBytes(header))
+            readFully(payload, beforeRead)
+            return payload
+        } catch (_: IllegalArgumentException) { throw InvalidGroupEvidenceFrameException() }
+    }
+
+    fun readGroupText(beforeRead: () -> Unit): SignedGroupText = try {
+        GroupTextCodec.decode(readTextControl(null, beforeRead))
+    } catch (_: IllegalArgumentException) { throw InvalidGroupEvidenceFrameException() }
 
     /** No follow-on data is permitted in this diagnostic protocol. EOF is not a remote ACK. */
     fun awaitMembershipEnd(beforeRead: () -> Unit) {

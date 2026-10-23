@@ -6,13 +6,25 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B6, prerequisito durevole testo di gruppo
+## Ripartenza corrente — B6, primo trasferimento Android/desktop
+
+`2f74f5f`: [iOS completo 39932526334](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39932526334) e [PoC 39932496757](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39932496757) success, letti da conclusi senza polling. Native/export/app e **175 XCTest riusciti**; bootstrap soltanto compilato, non hardware. Prerequisito storage di ADR 015 verificato automaticamente anche Apple.
+
+Nuovo **Invia/Ricevi testo gruppo** nel servizio Node/UI Android/desktop: nuova prova sullo stesso TLS, sessione, scope indipendente, firma/salvataggio e ACK esatto post-commit. Un solo messaggio entro i 120 s originali, no handover o reconnect. Limiti, formato additivo e used conservativo in [ADR 016](docs/ADR-016-PRIMO-TRASFERIMENTO-TESTO-GRUPPO.md). Non è chat multipartecipante completa: sessione usata con scope perso/diverso rifiutata, non inventare destinatari o ripristinarli da B5/storia. Schema/lock/versioni/workflow invariati; note locali precedenti preservate sotto.
+
+Verificato localmente l'intero checkpoint e la revisione terminale: **1114 passati**, un mDNS opt-in skipped, zero errori, APK/classi desktop compilati. TLS/P-256/SQLite veri, entrambi gli ordini/direzioni, delegati col fondatore offline, fault e interruzioni. Received locale pubblicato dopo commit/write ACK e prima di attendere EOF: il solo cleanup non annulla il fatto durevole. Comandi e limiti in STATO. Nuovo Native/Swift/hardware non attestato. Nessun full Apple duplicato adesso: ordinario compila, completo al nuovo ingresso Apple.
+
+**Prossimo blocco unico:** leggere CI conclusa/correggere, poi portare lo stesso trasferimento esplicito in Bonjour/iOS con codec/regole Kotlin, scope posseduto dalla run e owner Swift esistente, checkpoint completo Native/simulatore raggruppato. Non riusare il socket diagnostico B5 o il trust PoC. Roster multipartecipante, continuità completa/recupero e cronologia UI restano obbligatori e aperti; fase 1/hardware e gate UI invariati. Nessun polling.
+
+## Evidenze precedenti — B6, prerequisito durevole testo di gruppo
 
 `c938980`: [iOS completo 39923555251](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39923555251) e [PoC 39923554705](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39923554705) success, letti da conclusi senza polling. Native/export/app e **175 XCTest riusciti**; bootstrap solo compilato, nessun nuovo hardware. B5 verificato automaticamente anche Apple.
 
 Nuovo prerequisito: busta firmata comune e inbox post-commit, archivio separato dal PoC nei repository JVM/Android/iOS, schema 5 additivo. Nessun owner di rete/UI usa ancora il testo di gruppo: non dichiarare chat implementata. Decisioni/criterio d'integrazione in [ADR 015](docs/ADR-015-TESTO-GRUPPO-DUREVOLE.md); comandi ed evidenze locali in STATO. Nessun workflow/versione/lock modificato. Note post-push precedenti preservate sotto.
 
 **Prossimo blocco unico:** leggere il nuovo checkpoint Apple completo da concluso/correggere, poi integrare la prima inbox sul canale di controllo vivo con capability distinta, nuova verifica TLS/membership/sessione, destinatari congelati indipendenti e ACK autenticato soltanto dopo commit. Non riusare il risultato diagnostico B5, non ridurre il requisito multipartecipante a una chat PoC fra due. Fase 1/hardware e gate UI restano aperti. Un solo push raggruppato, nessun polling.
+
+Consegnato `2f74f5f7e55ffc7f430b3ae87f40d3ddc2f34687`, 25 file, unico commit/push. Dispatch [iOS completo 39932526334](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39932526334), bootstrap_interop=false, esito non letto; [PoC 39932496757](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39932496757) in_progress nell'unica lista post-push. Richiesta cancellazione ordinario iOS duplicato 39932496732, senza ricontrollo. Nuovo Native/runtime Apple non attestato, nessun polling. Questa nota e STATO locali da raggruppare al prossimo codice, niente secondo push documentale.
 
 ## Evidenze precedenti — B5, ingresso Bonjour/iOS
 

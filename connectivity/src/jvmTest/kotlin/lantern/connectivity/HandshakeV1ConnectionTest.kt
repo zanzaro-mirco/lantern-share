@@ -39,6 +39,11 @@ import lantern.domain.GroupTrustAnchor
 import lantern.domain.SessionCandidate
 import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
+import lantern.protocol.GroupTextTransferCodec
+import lantern.protocol.GroupTextTransferContext
+import lantern.protocol.GroupTextCodec
+import lantern.domain.GroupTextContent
+import lantern.domain.SignedGroupText
 import lantern.protocol.FounderGroupAdmissionDraft
 import lantern.protocol.GroupAdmissionEvidence
 import lantern.protocol.GroupAdmissionCertificate
@@ -607,6 +612,78 @@ class HandshakeV1ConnectionTest {
     }
 
     private fun active(state: ProtocolHandshakeState) = HandshakeV1ConnectionState.Active(state)
+
+    @Test
+    fun groupTextScopeMismatchWrongAckCancelAndOriginalDeadlineNeverAcknowledge() = withPeers { client, server ->
+        for (action in listOf("scope", "ack", "cancel", "expiry")) withSockets(client, server) { sockets ->
+            val senderIdentity = if (client.id < server.id) client else server
+            val recipientIdentity = if (client.id < server.id) server else client
+            val features = setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE, GroupTextTransferCodec.FEATURE)
+            val senderCaps = ProtocolCapabilities(1, features + GroupTextTransferCodec.SENDER_FEATURE, features)
+            val receiverCaps = ProtocolCapabilities(1, features + GroupTextTransferCodec.RECEIVER_FEATURE, features)
+            val selectedAt = if (action == "expiry") monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 2_000 else sockets.selectedAt
+            sockets.clientOwner(selectedAt = selectedAt, supported = if (client === senderIdentity) senderCaps else receiverCaps).use { left ->
+                sockets.serverOwner(selectedAt = selectedAt, supported = if (server === senderIdentity) senderCaps else receiverCaps).use { right ->
+                    exchangeHellos(left, right)
+                    val owner = if (client === senderIdentity) left else right
+                    val peerSocket = if (client === senderIdentity) sockets.server else sockets.client
+                    val anchor = GroupTrustAnchor(randomNonce(), senderIdentity.id)
+                    val membership = GroupMembershipEvidence(anchor, senderIdentity.id, null)
+                    val draft = FounderGroupAdmissionDraft.prepare(anchor, senderIdentity.id, recipientIdentity.id)
+                    val peerMembership = GroupMembershipEvidence(anchor, recipientIdentity.id,
+                        GroupAdmissionEvidence(draft.withSignature(senderIdentity.sign(draft.signedBytes())), listOf(
+                            GroupAdmissionCertificate(senderIdentity.id, Base64.getEncoder().encodeToString(senderIdentity.certificate.encoded)))))
+                    val offer = GroupSessionOffer(SessionCandidate(anchor.groupId, randomNonce(), false), established = false)
+                    val context = GroupTextTransferContext(anchor.groupId, offer.session.sessionId, senderIdentity.id, recipientIdentity.id)
+                    val outgoingCalled = java.util.concurrent.atomic.AtomicBoolean()
+                    val acknowledged = java.util.concurrent.atomic.AtomicBoolean()
+                    val worker = Executors.newSingleThreadExecutor()
+                    val stream = HandshakeV1FrameStream(peerSocket.inputStream, peerSocket.outputStream)
+                    try {
+                        val result = worker.submit<Boolean> {
+                            try {
+                                owner.transferGroupText(membership, offer, true,
+                                    verifyRemote = { verifyPeerMembership(it, anchor, recipientIdentity.id) },
+                                    selectSession = { assertEquals(offer, it); context },
+                                    outgoing = {
+                                        outgoingCalled.set(true)
+                                        val c = GroupTextContent("00000000-0000-0000-0000-000000000001", anchor.groupId,
+                                            context.sessionId, senderIdentity.id, 1, 1, context.recipients, "No falso ACK")
+                                        SignedGroupText(c, senderIdentity.sign(GroupTextCodec.signedBytes(c)))
+                                    }, incoming = { _, _, _ -> error("Sender cannot receive") },
+                                    completed = { acknowledged.set(true) })
+                                true
+                            } catch (_: Exception) { false }
+                        }
+                        stream.readMembership {}
+                        stream.writeMembership(peerMembership)
+                        assertEquals(offer, stream.readSessionOffer {})
+                        stream.writeSessionOffer(offer)
+                        val scope = stream.readTextControl(GroupTextTransferCodec.SCOPE_BYTES) {}
+                        stream.writeTextControl(if (action == "scope") ByteArray(scope.size) else scope)
+                        if (action != "scope") {
+                            val message = stream.readGroupText {}
+                            assertTrue(Identity.verify(senderIdentity.certificate, GroupTextCodec.signedBytes(message.content), message.signature))
+                            when (action) {
+                                "ack" -> stream.writeTextControl(ByteArray(GroupTextTransferCodec.ACK_BYTES))
+                                "cancel" -> owner.close()
+                                "expiry" -> Unit // Original timer must abort the pending ACK read itself.
+                            }
+                        }
+                        assertFalse(result.get(5, TimeUnit.SECONDS))
+                        assertEquals(action != "scope", outgoingCalled.get())
+                        assertFalse(acknowledged.get())
+                        assertNull(owner.comparison())
+                        if (action == "expiry") assertHandshakeClosed(owner, ProtocolHandshakeFailure.Expired)
+                    } finally {
+                        owner.close()
+                        worker.shutdownNow()
+                        assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
 
     private fun assertReady(owner: HandshakeV1Connection) = assertEquals(
         active(ProtocolHandshakeState.Ready(ProtocolNegotiationResult.Compatible(1, setOf("receipts", "text")))), owner.state,

@@ -50,3 +50,32 @@ dopo. iPhone/Mac Intel/Apple Silicon restano nei collaudi obbligatori di fase 1;
 l'ingresso B5 iOS è verificato automaticamente, non su hardware.
 Applicare anche a iPhone la stessa lista con build dello stesso checkpoint,
 registrando separatamente interoperabilità Apple ↔ Android/desktop.
+
+## Collaudo fisico B6 ancora da eseguire — Android ↔ Windows
+
+Nuovo percorso di [ADR 016](ADR-016-PRIMO-TRASFERIMENTO-TESTO-GRUPPO.md), NON prova
+già eseguita. Build dello stesso checkpoint, dispositivi già ammessi allo stesso
+gruppo tramite il percorso di ingresso gruppo, non la sola associazione PoC.
+
+1. Attivare entrambi sulla LAN; nel pannello **Testo di gruppo · primo trasferimento**
+   digitare un testo e scegliere Invia verso l'altro dispositivo. Sul destinatario
+   scegliere Ricevi dal mittente entro 120 s. Verificare testo e ID uguali e la
+   conferma «Salvato sul destinatario» soltanto dopo il risultato.
+2. Ripetere in direzione opposta senza fermare i servizi: stessa sessione, altro
+   ID messaggio. La chiusura del pannello non azzera la sessione usata.
+3. Arrestare entrambi e riattivare: nuovo ID sessione. Gruppo, identità e vecchie
+   copie salvate non devono essere eliminate o ripubblicate. La UI completa della
+   cronologia di gruppo non è ancora disponibile: non usare la lista PoC come
+   evidenza della storia di gruppo; la riapertura dello storage è test automatico.
+4. Provare due Invia, oppure Ricevi contro Negozia sessione: errore compatibilità,
+   nessuna ricevuta falsa. Riprovare con ruoli corretti.
+5. Annullare/fermare/bloccare durante il tentativo: nessuna conferma tardiva. Una
+   copia locale può rimanere dopo un commit iniziato; non si ritrasmette da sola.
+6. Dopo aver usato una sessione, fermare solo uno dei servizi, riattivarlo e
+   negoziare B5. Il trasferimento può rifiutare lo scope perso con «roster
+   autenticato richiesto»: limite attuale esplicito, NON errore da aggirare
+   cancellando il database. Ripristino del roster e continuità completa restano aperti.
+
+Ripetere senza WAN e registrare commit, OS, rete, ordine delle azioni, ID/esiti ed
+eventuali errori senza contenuti o chiavi. Nessun nuovo collaudo iPhone B6 prima
+dell'integrazione Apple; iPhone/Mac e hardware di fase 1 rimangono obbligatori.

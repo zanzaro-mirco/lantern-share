@@ -24,6 +24,8 @@ import lantern.domain.GroupTrustAnchor
 import lantern.domain.SessionCandidate
 import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
+import lantern.protocol.GroupTextTransferCodec
+import lantern.protocol.GroupTextTransferContext
 
 class HandshakeV1FrameStreamTest {
     private val hello = ProtocolHandshakeFrame.Hello(
@@ -211,6 +213,40 @@ class HandshakeV1FrameStreamTest {
     }
 
     private fun reader(bytes: ByteArray) = HandshakeV1FrameStream(ByteArrayInputStream(bytes), ByteArrayOutputStream())
+
+    @Test
+    fun textControlFramesAreExactBoundedAndCheckOriginalBudgetOnEveryRead() {
+        val scope = GroupTextTransferCodec.scope(GroupTextTransferContext("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)))
+        val frame = GroupTextTransferCodec.header(scope.size) + scope
+        val raw = ByteArrayInputStream(frame + byteArrayOf(7))
+        val fragmented = object : FilterInputStream(raw) {
+            override fun read(bytes: ByteArray, offset: Int, length: Int) = super.read(bytes, offset, minOf(1, length))
+        }
+        var checks = 0
+        assertContentEquals(scope, HandshakeV1FrameStream(fragmented, ByteArrayOutputStream()).readTextControl(scope.size) { checks++ })
+        assertEquals(frame.size, checks)
+        assertEquals(7, raw.read())
+        for (size in 0 until frame.size) assertFailsWith<EOFException> {
+            reader(frame.copyOf(size)).readTextControl(scope.size) {}
+        }
+        for (size in listOf(0, -1, Int.MAX_VALUE, scope.size + 1)) {
+            val header = ByteArrayOutputStream().also {
+                DataOutputStream(it).writeInt(size)
+            }.toByteArray()
+            val invalid = ByteArrayInputStream(header + byteArrayOf(7))
+            assertFailsWith<InvalidGroupEvidenceFrameException> {
+                HandshakeV1FrameStream(invalid, ByteArrayOutputStream()).readTextControl(scope.size) {}
+            }
+            assertEquals(7, invalid.read())
+        }
+        val error = IOException("test deadline")
+        assertSame(error, assertFailsWith<IOException> { reader(frame).readTextControl(scope.size) { throw error } })
+        val failing = object : OutputStream() {
+            override fun write(value: Int) = Unit
+            override fun flush(): Unit = throw error
+        }
+        assertSame(error, assertFailsWith<IOException> { HandshakeV1FrameStream(raw, failing).writeTextControl(scope) })
+    }
 
     private fun assertFrameEquals(expected: ProtocolHandshakeFrame, actual: ProtocolHandshakeFrame) = assertContentEquals(
         ProtocolHandshakeFrameCodec.encode(expected), ProtocolHandshakeFrameCodec.encode(actual),
