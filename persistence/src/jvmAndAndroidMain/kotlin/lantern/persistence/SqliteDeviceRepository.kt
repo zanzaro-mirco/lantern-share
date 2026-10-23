@@ -5,9 +5,11 @@ import lantern.domain.DeviceRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.PendingGroupAdoption
 import lantern.domain.GroupAdoptionRepository
+import lantern.domain.GroupTextRepository
+import lantern.domain.SignedGroupText
 
 /** Owns an initialized driver. Close after all repository consumers stop. */
-class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, GroupAdoptionRepository, AutoCloseable {
+class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, GroupAdoptionRepository, GroupTextRepository, AutoCloseable {
     private val store = SqliteDeviceStore(driver)
 
     @Synchronized
@@ -58,6 +60,19 @@ class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, 
 
     @Synchronized
     override fun acknowledge(id: String) { store.acknowledge(id) }
+
+    @Synchronized
+    override fun reserveGroupTextCounters(groupId: String, localIdentity: String) = store.reserveGroupTextCounters(groupId, localIdentity)
+    @Synchronized
+    override fun saveGroupText(message: SignedGroupText, localIdentity: String) = store.saveGroupText(message, localIdentity)
+    @Synchronized
+    override fun groupText(id: String) = store.groupText(id)
+    @Synchronized
+    override fun groupTextHistory(groupId: String, sessionId: String, limit: Int) = store.groupTextHistory(groupId, sessionId, limit)
+    @Synchronized
+    override fun acknowledgeGroupText(message: SignedGroupText, recipientId: String) = store.acknowledgeGroupText(message, recipientId)
+    @Synchronized
+    override fun groupSessionWasUsed(groupId: String, sessionId: String) = store.groupSessionWasUsed(groupId, sessionId)
 
     @Synchronized
     override fun close() = driver.close()

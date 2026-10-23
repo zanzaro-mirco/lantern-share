@@ -1,0 +1,62 @@
+CREATE TABLE group_text (
+  id TEXT NOT NULL PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  author_sequence INTEGER NOT NULL CHECK (author_sequence > 0),
+  logical_time INTEGER NOT NULL CHECK (logical_time > 0),
+  body TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  UNIQUE (group_id, author_id, author_sequence)
+);
+CREATE INDEX group_text_history ON group_text(group_id, session_id, logical_time, author_id, author_sequence, id);
+CREATE TABLE group_text_recipient (
+  message_id TEXT NOT NULL,
+  recipient_id TEXT NOT NULL,
+  received INTEGER NOT NULL DEFAULT 0 CHECK (received IN (0, 1)),
+  PRIMARY KEY (message_id, recipient_id)
+);
+CREATE TABLE group_text_clock (
+  group_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL DEFAULT 0 CHECK (sequence >= 0),
+  logical_time INTEGER NOT NULL DEFAULT 0 CHECK (logical_time >= 0),
+  PRIMARY KEY (group_id, author_id)
+);
+CREATE TABLE group_text_used_session (
+  group_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (group_id, session_id)
+);
+
+touchClock:
+INSERT OR IGNORE INTO group_text_clock(group_id, author_id) VALUES (?, ?);
+clock:
+SELECT sequence, logical_time FROM group_text_clock WHERE group_id = ? AND author_id = ?;
+maxClock:
+SELECT MAX(value) FROM (
+  SELECT COALESCE(MAX(logical_time), 0) AS value FROM group_text_clock WHERE group_id = :groupId
+  UNION ALL SELECT COALESCE(MAX(logical_time), 0) AS value FROM group_text WHERE group_id = :groupId
+);
+maxAuthorSequence:
+SELECT MAX(author_sequence) FROM group_text WHERE group_id = ? AND author_id = ?;
+updateClock:
+UPDATE group_text_clock SET sequence = ?, logical_time = ? WHERE group_id = ? AND author_id = ?;
+insertText:
+INSERT INTO group_text(id, group_id, session_id, author_id, author_sequence, logical_time, body, signature)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+text:
+SELECT * FROM group_text WHERE id = ?;
+recipients:
+SELECT recipient_id, received FROM group_text_recipient WHERE message_id = ? ORDER BY recipient_id;
+insertRecipient:
+INSERT INTO group_text_recipient(message_id, recipient_id, received) VALUES (?, ?, ?);
+acknowledgeRecipient:
+UPDATE group_text_recipient SET received = 1 WHERE message_id = ? AND recipient_id = ? AND received = 0;
+history:
+SELECT * FROM group_text WHERE group_id = ? AND session_id = ?
+ORDER BY logical_time DESC, author_id DESC, author_sequence DESC, id DESC LIMIT ?;
+markUsed:
+INSERT OR IGNORE INTO group_text_used_session(group_id, session_id) VALUES (?, ?);
+wasUsed:
+SELECT session_id FROM group_text_used_session WHERE group_id = ? AND session_id = ?;

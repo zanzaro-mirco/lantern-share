@@ -41,6 +41,9 @@ class IosRepositoryTest {
                 legacy.execute(null, "DROP TABLE local_group", 0)
                 legacy.execute(null, "DROP TABLE group_adoption_journal", 0)
                 legacy.execute(null, "DROP TABLE group_adoption", 0)
+                for (table in listOf("group_text", "group_text_recipient", "group_text_clock", "group_text_used_session")) {
+                    legacy.execute(null, "DROP TABLE $table", 0)
+                }
                 legacy.execute(null, "PRAGMA user_version=1", 0)
             } finally { legacy.close() }
             val migrated = openIosRepository(directory)

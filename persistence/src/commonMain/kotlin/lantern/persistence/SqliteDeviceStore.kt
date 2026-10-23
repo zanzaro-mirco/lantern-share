@@ -4,11 +4,21 @@ import app.cash.sqldelight.db.SqlDriver
 import lantern.domain.ChatLine
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.PendingGroupAdoption
+import lantern.domain.GroupTextRepository
+import lantern.domain.SignedGroupText
 
 /** Shared SQLDelight operations. Platform repositories provide their own synchronization and lifecycle. */
-internal class SqliteDeviceStore(driver: SqlDriver) {
+internal class SqliteDeviceStore(driver: SqlDriver) : GroupTextRepository {
     private val database = LanternDatabase(driver)
     private val queries = database.storeQueries
+    private val groupTexts = SqliteGroupTextStore(database)
+
+    override fun reserveGroupTextCounters(groupId: String, localIdentity: String) = groupTexts.reserve(groupId, localIdentity)
+    override fun saveGroupText(message: SignedGroupText, localIdentity: String) = groupTexts.save(message, localIdentity)
+    override fun groupText(id: String) = groupTexts.text(id)
+    override fun groupTextHistory(groupId: String, sessionId: String, limit: Int) = groupTexts.history(groupId, sessionId, limit)
+    override fun acknowledgeGroupText(message: SignedGroupText, recipientId: String) = groupTexts.acknowledge(message, recipientId)
+    override fun groupSessionWasUsed(groupId: String, sessionId: String) = groupTexts.wasUsed(groupId, sessionId)
 
     fun trusted(): Set<String> = queries.peers().executeAsList().map { it.id }.toSet()
 

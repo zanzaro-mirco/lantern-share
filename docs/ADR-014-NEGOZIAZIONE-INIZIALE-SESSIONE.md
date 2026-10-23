@@ -113,3 +113,8 @@ regole memoria con marker intero e conflitti. Scenario delegato con fondatore
 offline esteso a LSN. Core decoder e presentazione verificati su JVM/Android,
 facciate compilate sul controllo host: NON export Native o Swift. Checkpoint Apple
 completo necessario; nessun collaudo fisico nuovo o sessione completa dichiarata.
+
+Checkpoint successivo letto da concluso: `c938980`, iOS completo 39923555251 success,
+Native/export/app e 175 XCTest senza fallimenti, inclusi i sette nuovi casi.
+Bootstrap compilato soltanto. Ingresso B5 verificato automaticamente anche iOS,
+non hardware o chat. Il prerequisito durevole successivo è in [ADR 015](ADR-015-TESTO-GRUPPO-DUREVOLE.md).

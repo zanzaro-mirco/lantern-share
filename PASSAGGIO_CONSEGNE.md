@@ -6,7 +6,15 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B5, ingresso Bonjour/iOS
+## Ripartenza corrente — B6, prerequisito durevole testo di gruppo
+
+`c938980`: [iOS completo 39923555251](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39923555251) e [PoC 39923554705](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39923554705) success, letti da conclusi senza polling. Native/export/app e **175 XCTest riusciti**; bootstrap solo compilato, nessun nuovo hardware. B5 verificato automaticamente anche Apple.
+
+Nuovo prerequisito: busta firmata comune e inbox post-commit, archivio separato dal PoC nei repository JVM/Android/iOS, schema 5 additivo. Nessun owner di rete/UI usa ancora il testo di gruppo: non dichiarare chat implementata. Decisioni/criterio d'integrazione in [ADR 015](docs/ADR-015-TESTO-GRUPPO-DUREVOLE.md); comandi ed evidenze locali in STATO. Nessun workflow/versione/lock modificato. Note post-push precedenti preservate sotto.
+
+**Prossimo blocco unico:** leggere il nuovo checkpoint Apple completo da concluso/correggere, poi integrare la prima inbox sul canale di controllo vivo con capability distinta, nuova verifica TLS/membership/sessione, destinatari congelati indipendenti e ACK autenticato soltanto dopo commit. Non riusare il risultato diagnostico B5, non ridurre il requisito multipartecipante a una chat PoC fra due. Fase 1/hardware e gate UI restano aperti. Un solo push raggruppato, nessun polling.
+
+## Evidenze precedenti — B5, ingresso Bonjour/iOS
 
 Letti da conclusi `699a78c`: [PoC 39674164342](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164342) e [iOS ordinario 39674164345](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164345) success. Ordinario Apple non è runtime; ultimo simulatore attestato rimane 80710c6 / 168 XCTest. Nessun polling. Le due note post-push locali precedenti sono conservate e raggruppate qui.
 
@@ -15,6 +23,8 @@ Implementato **Negozia sessione** nel servizio e pannello iPhone: stesso TLS/pin
 Locale: mirato core/UI 37 s; integrato protocollo JVM/Android e UI, APK/classi desktop **11 s success, 786 test passati**. Facciate iOS compilate con il controllo host esistente, NON Native/export/Swift. Sette nuovi XCTest mantenuti predisposti (incluso LSN pendente dopo prove vere, cancel/deadline), scenario delegato esteso; nuova compilazione/runtime Apple ancora da verificare. Comandi/limiti in STATO. Nessun workflow/versione/schema/lock nuovo; nessun collaudo fisico eseguito.
 
 **Prossimo blocco unico:** leggere da concluso il checkpoint Apple completo e correggere prima di estendere B5. Dopo verifica, primo percorso di testo di gruppo sulla sessione autenticata: dovrà integrare canale vivo, destinatari e ricevuta dopo commit, senza riusare questa decisione diagnostica come permesso. Non iniziarlo finché il nuovo ingresso Apple non è verificato. Sessioni complete, fase 1/hardware e gate UI restano aperti. Un solo push raggruppato; niente polling o attesa CI.
+
+Consegnato `c93898091403bb1dab5e5f497ec43a66052324a7`, 19 file, unico commit/push. [iOS completo 39923555251](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39923555251) queued, bootstrap_interop=false; [PoC 39923554705](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39923554705) in_progress nella sola lettura post-push. Richiesta cancellazione ordinario iOS duplicato 39923554617, nessun ricontrollo/polling. Nuovo Apple non attestato. Questa nota e STATO restano locali da raggruppare al prossimo codice, nessun secondo push documentale.
 
 ## Evidenze precedenti — B5, negoziazione iniziale Android/desktop
 

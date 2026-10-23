@@ -6,12 +6,14 @@ import lantern.domain.DeviceRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.PendingGroupAdoption
 import lantern.domain.GroupAdoptionRepository
+import lantern.domain.GroupTextRepository
+import lantern.domain.SignedGroupText
 import platform.Foundation.NSLock
 
 /** Owns the native SQLDelight driver. Call [close] after all consumers stop. */
 class IosDeviceRepository internal constructor(
     private val driver: NativeSqliteDriver,
-) : DeviceRepository, GroupAdoptionRepository {
+) : DeviceRepository, GroupAdoptionRepository, GroupTextRepository {
     private val lock = NSLock()
     private val store = SqliteDeviceStore(driver)
 
@@ -43,6 +45,12 @@ class IosDeviceRepository internal constructor(
         locked { store.save(id, sender, session, body, signature) }
     override fun history(): List<ChatLine> = locked(store::history)
     override fun acknowledge(id: String) { locked { store.acknowledge(id) } }
+    override fun reserveGroupTextCounters(groupId: String, localIdentity: String) = locked { store.reserveGroupTextCounters(groupId, localIdentity) }
+    override fun saveGroupText(message: SignedGroupText, localIdentity: String) = locked { store.saveGroupText(message, localIdentity) }
+    override fun groupText(id: String) = locked { store.groupText(id) }
+    override fun groupTextHistory(groupId: String, sessionId: String, limit: Int) = locked { store.groupTextHistory(groupId, sessionId, limit) }
+    override fun acknowledgeGroupText(message: SignedGroupText, recipientId: String) = locked { store.acknowledgeGroupText(message, recipientId) }
+    override fun groupSessionWasUsed(groupId: String, sessionId: String) = locked { store.groupSessionWasUsed(groupId, sessionId) }
 
     fun close() = locked(driver::close)
 }

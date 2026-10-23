@@ -116,6 +116,9 @@ class GroupAdoptionRepositoryTest {
         }
         JdbcSqliteDriver("jdbc:sqlite:$path").use {
             it.execute(null, "DROP TABLE group_adoption", 0)
+            for (table in listOf("group_text", "group_text_recipient", "group_text_clock", "group_text_used_session")) {
+                it.execute(null, "DROP TABLE $table", 0)
+            }
             it.execute(null, "PRAGMA user_version=3", 0)
         }
         openDesktopRepository(path).use {

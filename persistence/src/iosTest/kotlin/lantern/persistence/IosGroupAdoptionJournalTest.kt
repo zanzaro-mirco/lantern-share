@@ -58,6 +58,7 @@ class IosGroupAdoptionJournalTest {
         try {
             legacy.execute(null, "DROP TABLE group_adoption_journal", 0)
             legacy.execute(null, "DROP TABLE group_adoption", 0)
+            dropGroupTextTables(legacy)
             legacy.execute(null, "PRAGMA user_version=2", 0)
         } finally { legacy.close() }
         val migrated = openIosRepository(directory)
@@ -139,6 +140,7 @@ class IosGroupAdoptionJournalTest {
         val legacy = openFaultInjectionDriver(directory)
         try {
             legacy.execute(null, "DROP TABLE group_adoption", 0)
+            dropGroupTextTables(legacy)
             legacy.execute(null, "PRAGMA user_version=3", 0)
         } finally { legacy.close() }
         val migrated = openIosRepository(directory)
@@ -148,6 +150,12 @@ class IosGroupAdoptionJournalTest {
             assertNull(migrated.localGroup())
             assertNull(migrated.committedGroupAdoption())
         } finally { migrated.close() }
+    }
+
+    private fun dropGroupTextTables(driver: app.cash.sqldelight.driver.native.NativeSqliteDriver) {
+        for (table in listOf("group_text", "group_text_recipient", "group_text_clock", "group_text_used_session")) {
+            driver.execute(null, "DROP TABLE $table", 0)
+        }
     }
 
     private fun withDirectory(block: (String) -> Unit) {
