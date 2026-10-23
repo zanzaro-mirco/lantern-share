@@ -17,7 +17,7 @@ Il selettore non conosce archivi o messaggi: non ripubblica né unisce cronologi
 
 Verifica locale: `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, otto casi condivisi per target. Coprono creazione, separazione gruppi, convergenza indipendente dall'ordine, priorità della sessione utilizzata, scelta esplicita, duplicati, conflitti e ID vuoti. Non equivalgono a convergenza distribuita su rete o a collaudo hardware. I test Native sono inclusi nel checkpoint iOS manuale, non eseguiti localmente su Windows.
 
-Le credenziali di gruppo e il primo confronto autenticato tra due Node sono integrati. Restano l'ingresso iOS, uno snapshot multipartecipante aggiornato, ciclo di vita/cambio rete automatico, dati delle sessioni utilizzate e UI operativa della scelta. La sola decisione locale non autorizza traffico; nessuna autorizzazione derivata da mDNS, dal precedente B4 o da `READY` del bootstrap. La sessione vuota di questo blocco vive soltanto nella run del servizio, mai ripristinata dal database. Comandi e risultati correnti in STATO.
+Le credenziali di gruppo e il primo confronto autenticato tra due Node sono integrati. Lo stesso ingresso Bonjour/iOS è implementato con facciate Kotlin, ma la nuova compilazione/runtime Apple non sono ancora attestati. Restano uno snapshot multipartecipante aggiornato, ciclo di vita/cambio rete automatico, dati delle sessioni utilizzate e UI operativa della scelta. La sola decisione locale non autorizza traffico; nessuna autorizzazione derivata da mDNS, dal precedente B4 o da `READY` del bootstrap. La sessione vuota di questo blocco vive soltanto nella run del servizio, mai ripristinata dal database. Comandi e risultati correnti in STATO.
 
 ## Collaudo fisico B5 ancora da eseguire — Android ↔ Windows
 
@@ -47,4 +47,6 @@ Registrare commit/build, OS, rete/WAN, ordine delle azioni, esito per dispositiv
 ed eventuale errore senza contenuti, credenziali o chiavi. Il cambio LAN automatico
 non è implementato: arrestare il servizio prima di cambiare rete e riattivarlo
 dopo. iPhone/Mac Intel/Apple Silicon restano nei collaudi obbligatori di fase 1;
-l'ingresso B5 iOS non è ancora disponibile, non provarlo come se fosse integrato.
+l'ingresso B5 iOS è implementato ma attende verifica Apple automatica prima del
+collaudo fisico. Applicare anche a iPhone la stessa lista dopo quel checkpoint,
+registrando separatamente interoperabilità Apple ↔ Android/desktop.

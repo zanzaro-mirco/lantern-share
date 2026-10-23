@@ -120,7 +120,7 @@ internal fun GroupSessionPanel(controller: GroupSessionController) {
                 is GroupSessionState.NeedsChoice -> Text("Sessioni già utilizzate: serve una scelta esplicita. Nessuna fusione automatica.")
                 is GroupSessionState.Failed -> Text("Negoziazione non riuscita o interrotta. Nessun trust o dato persistente modificato.")
             }
-            Text("Prima negoziazione esplicita Android/desktop. Nessuna chat, riconnessione o conferma dell'esito remoto. Lo stop del servizio elimina la sessione in memoria, non il gruppo.")
+            Text("Prima negoziazione esplicita. Nessuna chat, riconnessione o conferma dell'esito remoto. Lo stop del servizio elimina la sessione in memoria, non il gruppo.")
             TextButton(onClick = controller::cancelGroup) { Text("Chiudi negoziazione") }
         }
     }

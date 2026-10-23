@@ -45,6 +45,7 @@ final class HandshakeV1Channel {
     private var writePending = false
     private var evidenceDecoder: IosGroupAdmissionEvidenceDecoder?
     private var membershipDecoder: IosGroupMembershipDecoder?
+    private var sessionDecoder: IosGroupSessionDecoder?
 
     /// Transfers connection ownership even if validation or initialization throws.
     /// TLS setup/listener ownership and the selection BEFORE TLS remain the caller's responsibility.
@@ -174,6 +175,47 @@ final class HandshakeV1Channel {
         _ local: IosGroupMembershipEvidence,
         onReceived: @escaping (IosGroupMembershipEvidence) throws -> Void
     ) -> Bool {
+        beginMembershipExchange(local, awaitPeerClose: true, onReceived: onReceived)
+    }
+
+    /// Continuation chosen BEFORE any proof I/O. No B4 EOF reader or reusable B4 authority.
+    @discardableResult
+    func negotiateSession(
+        membership: IosGroupMembershipEvidence, offer: IosGroupSessionOffer,
+        verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
+        onReceived: @escaping (IosGroupSessionOffer) throws -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard let offers = try bridge.offersForGroupAdmission(), try evidenceActive() else { return false }
+            let sendsFirst = try offer.sendsFirst(offers: offers, membership: membership)
+            return beginMembershipExchange(membership, awaitPeerClose: false) { [weak self] remote in
+                guard let self, !self.closed else { return }
+                // No session read/write until the actual TLS peer's proof has been verified.
+                guard try verifyRemote(remote), try self.evidenceActive() else { self.adapterFailed(); return }
+                self.sessionDecoder = IosGroupSessionDecoder()
+                if sendsFirst {
+                    self.sendGroupFrame(try offer.framedBytes()) { [weak self] in
+                        self?.receiveSession(onReceived: onReceived)
+                    }
+                } else {
+                    self.receiveSession { [weak self] remoteOffer in
+                        guard let self else { return }
+                        self.sendGroupFrame(try offer.framedBytes()) { [weak self] in
+                            try onReceived(remoteOffer)
+                            if let self, !self.closed { self.receiveMembershipEnd() }
+                        }
+                    }
+                }
+            }
+        } catch { adapterFailed(); return false }
+    }
+
+    private func beginMembershipExchange(
+        _ local: IosGroupMembershipEvidence, awaitPeerClose: Bool,
+        onReceived: @escaping (IosGroupMembershipEvidence) throws -> Void
+    ) -> Bool {
         dispatchPrecondition(condition: .onQueue(queue))
         guard canExchangeEvidence else { return false }
         do {
@@ -182,16 +224,16 @@ final class HandshakeV1Channel {
             exchangingEvidence = true
             membershipDecoder = IosGroupMembershipDecoder()
             if sendsFirst {
-                sendMembership(local) { [weak self] in
+                sendGroupFrame(try local.framedBytes()) { [weak self] in
                     self?.receiveMembership { remote in try onReceived(remote) }
                 }
             } else {
                 receiveMembership { [weak self] remote in
-                    self?.sendMembership(local) { [weak self] in
+                    self?.sendGroupFrame(try local.framedBytes()) { [weak self] in
                         try onReceived(remote)
                         // Last writer stays alive until the first has consumed its proof and
                         // closes. No queued TLS bytes lost, no ACK/traffic/remote success inferred.
-                        if let self, !self.closed { self.receiveMembershipEnd() }
+                        if awaitPeerClose, let self, !self.closed { self.receiveMembershipEnd() }
                     }
                 }
             }
@@ -199,10 +241,10 @@ final class HandshakeV1Channel {
         } catch { adapterFailed(); return false }
     }
 
-    private func sendMembership(_ evidence: IosGroupMembershipEvidence, completion: @escaping () throws -> Void) {
+    private func sendGroupFrame(_ bytes: KotlinByteArray, completion: @escaping () throws -> Void) {
         do {
             guard try evidenceActive(), !writePending else { return }
-            let content = Self.data(try evidence.framedBytes())
+            let content = Self.data(bytes)
             writePending = true
             connection.send(content: content, completion: .contentProcessed { [weak self] error in
                 guard let self else { return }
@@ -269,6 +311,41 @@ final class HandshakeV1Channel {
                         if error != nil { self.transportFailed(); return }
                         guard data?.isEmpty != false else { self.adapterFailed(); return }
                         if complete { self.transportFailed() } else { self.receiveMembershipEnd() }
+                    } catch { self.adapterFailed() }
+                }
+            }
+        } catch { adapterFailed() }
+    }
+
+    private func receiveSession(onReceived: @escaping (IosGroupSessionOffer) throws -> Void) {
+        guard !closed, !receivePending, let decoder = sessionDecoder else { return }
+        do {
+            guard try evidenceActive() else { return }
+            let budget = Int(try decoder.nextReadBytes())
+            receivePending = true
+            connection.receive(minimumIncompleteLength: 1, maximumLength: budget) { [weak self] data, _, complete, error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.receivePending = false
+                    do {
+                        guard try self.evidenceActive() else { return }
+                        if error != nil { self.transportFailed(); return }
+                        var offer: IosGroupSessionOffer?
+                        if let data, !data.isEmpty {
+                            let read = try decoder.accept(chunk: Self.bytes(data))
+                            guard Int(read.consumedBytes) == data.count else { throw AdoptionError.invalidEvidence }
+                            offer = read.offer
+                        }
+                        if complete {
+                            if offer == nil { try decoder.finish() }
+                            self.transportFailed()
+                            return
+                        }
+                        if let offer {
+                            self.sessionDecoder = nil
+                            try onReceived(offer)
+                        } else { self.receiveSession(onReceived: onReceived) }
                     } catch { self.adapterFailed() }
                 }
             }
@@ -572,6 +649,8 @@ final class HandshakeV1Channel {
         evidenceDecoder = nil
         membershipDecoder?.cancel()
         membershipDecoder = nil
+        sessionDecoder?.cancel()
+        sessionDecoder = nil
         connection.stateUpdateHandler = nil
         connection.cancel()
         onClosed(failure)

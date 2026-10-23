@@ -18,6 +18,8 @@ final class GroupAdmissionSession {
     private let selectedAt = HandshakeV1Channel.monotonicMillis()
     private let onMembershipChanged: () -> Void
     private let onPrepared: () -> Void
+    private let sessionMemory: IosGroupSessionMemory
+    private var sessionOffer: IosGroupSessionOffer?
     private var anchor: IosLocalGroupAnchor?
     private var membership: IosGroupAdoptionJournalSnapshot?
     private var replacing: IosGroupAdoptionJournalSnapshot?
@@ -32,13 +34,15 @@ final class GroupAdmissionSession {
     private var ended = false
     private var issuerConfirmed = false
     private var membershipVerified = false
+    private var sessionSelected = false
     private var committing = false
     private var drained = false
     private var drainCallbacks: [() -> Void] = []
 
     init(identity: AppleIdentity, persistence: IosPersistence, transport: AppleTLSTransport,
          selection: IosGroupAdmissionSelection, presentation: IosGroupAdmissionController,
-         endpoint: NWEndpoint, queue: DispatchQueue, onPrepared: @escaping () -> Void = {}, onMembershipChanged: @escaping () -> Void) {
+         endpoint: NWEndpoint, queue: DispatchQueue, sessionMemory: IosGroupSessionMemory = IosGroupSessionMemory(),
+         onPrepared: @escaping () -> Void = {}, onMembershipChanged: @escaping () -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
         self.identity = identity
         self.persistence = persistence
@@ -49,6 +53,7 @@ final class GroupAdmissionSession {
         self.queue = queue
         self.onMembershipChanged = onMembershipChanged
         self.onPrepared = onPrepared
+        self.sessionMemory = sessionMemory
     }
 
     func start() {
@@ -62,10 +67,14 @@ final class GroupAdmissionSession {
         do {
             anchor = try persistence.localGroup()
             membership = try persistence.committedGroupAdoption()
-            if selection.mode == .membershipCheck {
-                guard anchor != nil else { fail(.unavailable); return }
+            if selection.mode != .admission {
+                guard let anchor else { fail(.unavailable); return }
                 _ = try GroupMembership.prepare(identity: identity, persistence: persistence)
                 guard try membershipUnchanged() else { fail(.unavailable); return }
+                if selection.mode == .session {
+                    sessionOffer = try sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
+                        marker: membership, newSessionId: Self.randomSessionID())
+                }
             } else if let old = try persistence.pendingGroupAdoption() {
                 guard selection.replaceInterrupted else { fail(.interrupted); return }
                 guard anchor == nil, old.localIdentity == identity.id else { fail(.unavailable); return }
@@ -145,15 +154,22 @@ final class GroupAdmissionSession {
         do {
             let role = anchor == nil ? "group-candidate" : "group-issuer"
             let feature = IosLocalGroupMembership.shared.feature
-            let capabilities = selection.mode == .membershipCheck
-                ? "{\"version\":1,\"supportedFeatures\":[\"\(feature)\"],\"requiredFeatures\":[\"\(feature)\"]}"
-                : "{\"version\":1,\"supportedFeatures\":[\"group-admission\",\"\(role)\"],\"requiredFeatures\":[\"group-admission\"]}"
+            let capabilities: String
+            switch selection.mode {
+            case .membershipCheck:
+                capabilities = "{\"version\":1,\"supportedFeatures\":[\"\(feature)\"],\"requiredFeatures\":[\"\(feature)\"]}"
+            case .session:
+                let sessionFeature = sessionMemory.feature
+                capabilities = "{\"version\":1,\"supportedFeatures\":[\"\(feature)\",\"\(sessionFeature)\"],\"requiredFeatures\":[\"\(feature)\",\"\(sessionFeature)\"]}"
+            default:
+                capabilities = "{\"version\":1,\"supportedFeatures\":[\"group-admission\",\"\(role)\"],\"requiredFeatures\":[\"group-admission\"]}"
+            }
             let owner = try HandshakeV1Channel(
                 connection: connection, identity: identity, transport: transport,
                 selectedPeerID: selection.peerId, selectedAtMillis: selectedAt, queue: queue,
                 continuation: .groupAdmission(onHello: { [weak self] in
                     guard let self else { return }
-                    if self.selection.mode == .membershipCheck { self.exchangeMembership() }
+                    if self.selection.mode != .admission { self.exchangeMembership() }
                     else { self.exchangeEvidence() }
                 }),
                 capabilitiesJson: capabilities,
@@ -171,6 +187,26 @@ final class GroupAdmissionSession {
             guard try membershipUnchanged() else { fail(.failed); return }
             let local = try GroupMembership.prepare(identity: identity, persistence: persistence)
             guard live, try membershipUnchanged() else { fail(.failed); return }
+            if selection.mode == .session {
+                guard let sessionOffer else { fail(.failed); return }
+                guard bootstrap.negotiateSession(membership: local, offer: sessionOffer,
+                    verifyRemote: { [weak self] remote in
+                        guard let self, self.live, let anchor = self.anchor else { return false }
+                        return try self.membershipUnchanged() &&
+                            GroupMembership.verify(remote, anchor: anchor, peerID: self.selection.peerId) &&
+                            self.live && self.membershipUnchanged()
+                    }, onReceived: { [weak self] remote in
+                        guard let self, self.live, let anchor = self.anchor else { return }
+                        guard try self.membershipUnchanged(), self.live else { self.fail(.failed); return }
+                        // No OS/DB/callback inside select: serialized with cancel/stop on this queue.
+                        let result = try self.sessionMemory.select(local: sessionOffer, remote: remote,
+                            groupId: anchor.groupId, founderId: anchor.founderId, marker: self.membership)
+                        self.sessionSelected = true
+                        self.presentation.sessionSelected(value: self.selection, result: result)
+                        if self.identity.id < self.selection.peerId { self.retire() }
+                    }) else { fail(.failed); return }
+                return
+            }
             guard bootstrap.exchangeMembership(local, onReceived: { [weak self] remote in
                 guard let self, self.live, let anchor = self.anchor else { return }
                 guard try self.membershipUnchanged(),
@@ -289,7 +325,7 @@ final class GroupAdmissionSession {
 
     private func fail(_ failure: IosGroupServiceFailure) {
         guard !ended else { return }
-        if !issuerConfirmed && !membershipVerified { presentation.failed(value: selection, reason: failure) }
+        if !issuerConfirmed && !membershipVerified && !sessionSelected { presentation.failed(value: selection, reason: failure) }
         retire()
     }
 
@@ -298,6 +334,7 @@ final class GroupAdmissionSession {
         ended = true
         comparison = nil
         displayed = nil
+        sessionOffer = nil
         timer?.cancel()
         timer = nil
         pendingTLS?.stateUpdateHandler = nil
@@ -323,4 +360,14 @@ final class GroupAdmissionSession {
         drainCallbacks.removeAll()
         callbacks.forEach { $0() }
     }
+
+    private static func randomSessionID() throws -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw SessionRandomError.unavailable
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private enum SessionRandomError: Error { case unavailable }
 }

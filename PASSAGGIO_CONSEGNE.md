@@ -1,4 +1,4 @@
-# Passaggio di consegne — 21 ottobre 2026
+# Passaggio di consegne — 23 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -6,7 +6,17 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B5, negoziazione iniziale Android/desktop
+## Ripartenza corrente — B5, ingresso Bonjour/iOS
+
+Letti da conclusi `699a78c`: [PoC 39674164342](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164342) e [iOS ordinario 39674164345](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164345) success. Ordinario Apple non è runtime; ultimo simulatore attestato rimane 80710c6 / 168 XCTest. Nessun polling. Le due note post-push locali precedenti sono conservate e raggruppate qui.
+
+Implementato **Negozia sessione** nel servizio e pannello iPhone: stesso TLS/pin esclusivo/timer, preflight e prove OS fresche, LGM→LSN scelto prima dell'I/O senza EOF reader B4 intermedio. Framing/negoziazione/scelta e memoria della run in Kotlin; BonjourProbe conserva la memoria fra selezioni e la azzera in stopResources. Radice e marker esatto ricontrollati prima di installare il risultato; nessun trust/commit/storia, chat o riconnessione implicita. Dettagli in ADR 014.
+
+Locale: mirato core/UI 37 s; integrato protocollo JVM/Android e UI, APK/classi desktop **11 s success, 786 test passati**. Facciate iOS compilate con il controllo host esistente, NON Native/export/Swift. Sette nuovi XCTest mantenuti predisposti (incluso LSN pendente dopo prove vere, cancel/deadline), scenario delegato esteso; nuova compilazione/runtime Apple ancora da verificare. Comandi/limiti in STATO. Nessun workflow/versione/schema/lock nuovo; nessun collaudo fisico eseguito.
+
+**Prossimo blocco unico:** leggere da concluso il checkpoint Apple completo e correggere prima di estendere B5. Dopo verifica, primo percorso di testo di gruppo sulla sessione autenticata: dovrà integrare canale vivo, destinatari e ricevuta dopo commit, senza riusare questa decisione diagnostica come permesso. Non iniziarlo finché il nuovo ingresso Apple non è verificato. Sessioni complete, fase 1/hardware e gate UI restano aperti. Un solo push raggruppato; niente polling o attesa CI.
+
+## Evidenze precedenti — B5, negoziazione iniziale Android/desktop
 
 Checkpoint `80710c6` letto da concluso: [iOS completo 39473042848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39473042848) success, Native/export/app e **168 XCTest senza fallimenti**, non hardware. Bootstrap compilato soltanto. B4 verificato automaticamente, non fase 1 chiusa; nessun polling. Note post-push precedenti conservate sotto.
 
@@ -19,6 +29,8 @@ Locale: checkpoint integrato riuscito in 1m 33s e controlli successivi pertinent
 Ultima revisione: nonce OS fuori dal lock e pubblicazione errori della nuova sessione arbitrata con la selezione esatta, evitando ABA annulla/riseleziona lo stesso peer. Ripetuti soltanto 10 casi servizio e compilazione Android/desktop: **53 s**, poi **48 s success** sul definitivo; il resto non cambiato, XML connettività ora selettivi. Nessun ulteriore codice dopo il controllo di 48 s; dettagli in STATO.
 
 Punti mirati per B5 iOS: IosGroupAdmissionController/IosEntry per modalità e pannello, facciata del codec/regole Kotlin, GroupAdmissionSession per preflight/verifica viva, HandshakeV1Channel per la continuazione e BonjourProbe (IosPairingService.swift) per memoria della run e reset allo stop. **Non** chiamare semplicemente exchangeMembership e aggiungere una read dopo: nel ramo writer finale accoda già receiveMembershipEnd, mentre la sessione B4 ritira il primo writer. Il nuovo modo deve scegliere la continuazione prima dell'I/O, conservando lo stesso owner senza attese EOF/retire premature o un secondo reader. Questa è la prossima integrazione, non codice B5 Apple già disponibile.
+
+Consegnato `699a78c238ec65f244fe261699feb502fa8e794d`, 19 file, unico commit/push. [PoC 39674164342](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164342) e [iOS ordinario 39674164345](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164345) in_progress nella sola lista post-push. Nessun dispatch completo duplicato, seconda lettura o polling; nuovo esito remoto non attestato. Leggere da concluse alla ripresa, poi B5 iOS. Nota con STATO locale da raggruppare al prossimo codice, niente push solo documentale.
 
 ## Evidenze precedenti — B4, verifica membership iOS
 

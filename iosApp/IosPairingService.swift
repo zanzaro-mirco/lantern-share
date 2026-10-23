@@ -345,6 +345,7 @@ final class BonjourProbe: ObservableObject {
     private var listener: NWListener?
     private var channel: PairingChannel?
     private var admission: GroupAdmissionSession?
+    private let groupSessionMemory = IosGroupSessionMemory()
     private let admissionDrains = DispatchGroup()
     private var identity: AppleIdentity?
     private var transport: AppleTLSTransport?
@@ -501,6 +502,7 @@ final class BonjourProbe: ObservableObject {
             }
             let session = GroupAdmissionSession(identity: identity, persistence: persistence, transport: transport,
                 selection: selection, presentation: self.groupAdmission, endpoint: peer.endpoint, queue: self.queue,
+                sessionMemory: self.groupSessionMemory,
                 onPrepared: { [weak self] in self?.allowedPeers.selectGroup(selection.peerId) },
                 onMembershipChanged: { [weak self] in self?.localGroup.refreshMembership() })
             self.admission = session
@@ -626,6 +628,7 @@ final class BonjourProbe: ObservableObject {
 
     private func stopResources() {
         cancelGroup()
+        groupSessionMemory.reset()
         channel?.cancel(); channel = nil
         browser?.stateUpdateHandler = nil
         browser?.browseResultsChangedHandler = nil

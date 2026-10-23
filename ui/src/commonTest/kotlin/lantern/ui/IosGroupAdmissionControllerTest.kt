@@ -8,6 +8,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupMembershipCheckState
+import lantern.domain.GroupSessionState
+import lantern.domain.SessionCandidate
+import lantern.domain.SessionSelection
 import lantern.domain.Peer
 
 class IosGroupAdmissionControllerTest {
@@ -116,5 +119,64 @@ class IosGroupAdmissionControllerTest {
         controller.failed(selection, IosGroupServiceFailure.FAILED)
         val completed = assertIs<GroupAdmissionState.Completed>(controller.admissionState.value)
         assertEquals(false, completed.adoptedLocally)
+    }
+
+    @Test
+    fun sessionModePublishesOnlyOneDecisionWithoutComparisonOrMembershipAuthority() {
+        controller.negotiateGroupSession(peer)
+        val selected = selections.single()
+        assertEquals(IosGroupSelectionMode.SESSION, selected.mode)
+        controller.selected(selected)
+        assertIs<GroupSessionState.Negotiating>(controller.groupSessionState.value)
+        assertNull(controller.comparing(selected, true, "b".repeat(64), "c".repeat(64)))
+        controller.membershipVerified(selected, "b".repeat(64))
+        controller.completed(selected, "b".repeat(64), true)
+        val session = SessionCandidate("b".repeat(64), "c".repeat(64), false)
+        controller.sessionSelected(selected, IosGroupSessionResult(SessionSelection.Join(session)))
+        controller.failed(selected, IosGroupServiceFailure.FAILED)
+        controller.sessionSelected(selected, IosGroupSessionResult(SessionSelection.Create))
+        assertEquals(session, assertIs<GroupSessionState.Selected>(controller.groupSessionState.value).session)
+        assertEquals(session.sessionId, controller.sessionSnapshot().sessionId)
+        assertEquals(0L, controller.membershipRevision.value)
+        assertEquals(IosGroupMembershipPhase.IDLE, controller.membershipSnapshot().phase)
+        assertSame(GroupAdmissionState.Idle, controller.admissionState.value)
+    }
+
+    @Test
+    fun exactSessionSelectionRejectsOldSamePeerCallbackAndFailedOrCancelledSuccess() {
+        controller.negotiateSession(peer.id, peer.name)
+        val old = selections.last()
+        controller.selected(old)
+        controller.cancelled()
+        controller.negotiateSession(peer.id, peer.name)
+        val next = selections.last()
+        controller.selected(next)
+        val result = IosGroupSessionResult(SessionSelection.Join(SessionCandidate("b".repeat(64), "c".repeat(64), false)))
+        controller.sessionSelected(old, result)
+        controller.failed(old, IosGroupServiceFailure.FAILED)
+        assertEquals(IosGroupSessionPhase.NEGOTIATING, controller.sessionSnapshot().phase)
+        controller.failed(next, IosGroupServiceFailure.FAILED)
+        controller.sessionSelected(next, result)
+        assertEquals(IosGroupSessionPhase.FAILED, controller.sessionSnapshot().phase)
+        controller.cancelled()
+        controller.sessionSelected(next, result)
+        assertEquals(IosGroupSessionPhase.IDLE, controller.sessionSnapshot().phase)
+    }
+
+    @Test
+    fun usedSessionsNeedChoiceAndAdmissionCannotConsumeSessionResult() {
+        val sessions = listOf(SessionCandidate("b".repeat(64), "c".repeat(64), true),
+            SessionCandidate("b".repeat(64), "d".repeat(64), true))
+        controller.negotiateGroupSession(peer)
+        val selected = selections.last()
+        controller.selected(selected)
+        controller.sessionSelected(selected, IosGroupSessionResult(SessionSelection.Choose(sessions)))
+        controller.failed(selected, IosGroupServiceFailure.FAILED)
+        assertEquals(sessions, assertIs<GroupSessionState.NeedsChoice>(controller.groupSessionState.value).sessions)
+        controller.selectGroupPeer(peer)
+        val admission = selections.last()
+        controller.selected(admission)
+        controller.sessionSelected(admission, IosGroupSessionResult(SessionSelection.Join(sessions.first())))
+        assertSame(GroupSessionState.Idle, controller.groupSessionState.value)
     }
 }

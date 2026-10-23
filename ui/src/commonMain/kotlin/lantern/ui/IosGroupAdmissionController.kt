@@ -3,14 +3,16 @@ package lantern.ui
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import lantern.domain.GroupMembershipController
+import lantern.domain.GroupSessionController
+import lantern.domain.GroupSessionState
+import lantern.domain.SessionSelection
 import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupAdmissionFailure
 import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
 import lantern.domain.Peer
 
-enum class IosGroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK }
+enum class IosGroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION }
 
 /** Opaque selection identity, not a TLS permission or a recoverable consent. */
 class IosGroupAdmissionSelection internal constructor(
@@ -36,6 +38,10 @@ data class IosGroupServiceDisplay(val phase: IosGroupServicePhase, val groupId: 
 enum class IosGroupMembershipPhase { IDLE, CHECKING, VERIFIED, FAILED }
 data class IosGroupMembershipDisplay(val phase: IosGroupMembershipPhase, val groupId: String)
 
+enum class IosGroupSessionPhase { IDLE, NEGOTIATING, SELECTED, NEEDS_CHOICE, FAILED }
+data class IosGroupSessionDisplay(val phase: IosGroupSessionPhase, val groupId: String, val sessionId: String)
+class IosGroupSessionResult internal constructor(internal val decision: SessionSelection)
+
 /**
  * Shared presentation contract for the native service. Native callbacks only enqueue work;
  * all service publications are serialized on its queue, UI actions use StateFlow/CAS.
@@ -45,7 +51,7 @@ class IosGroupAdmissionController(
     private val requestSelect: (IosGroupAdmissionSelection) -> Unit,
     private val requestConfirm: (IosGroupAdmissionDisplayTicket) -> Unit,
     private val requestCancel: () -> Unit,
-) : GroupMembershipController {
+) : GroupSessionController {
     private val state = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     private val revision = MutableStateFlow(0L)
     private var selection: IosGroupAdmissionSelection? = null
@@ -54,6 +60,8 @@ class IosGroupAdmissionController(
     override val membershipRevision: StateFlow<Long> = revision.asStateFlow()
     private val membership = MutableStateFlow<GroupMembershipCheckState>(GroupMembershipCheckState.Idle)
     override val membershipCheckState = membership.asStateFlow()
+    private val session = MutableStateFlow<GroupSessionState>(GroupSessionState.Idle)
+    override val groupSessionState = session.asStateFlow()
 
     // Public entries and service publications must use the same serial native service queue,
     // except UI actions below: their callbacks enqueue; state CAS rejects already-stale clicks.
@@ -66,6 +74,12 @@ class IosGroupAdmissionController(
     }
 
     fun verifyPeer(id: String, name: String) = verifyGroupPeer(Peer(id, name, "", 0))
+
+    override fun negotiateGroupSession(peer: Peer) {
+        requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.SESSION))
+    }
+
+    fun negotiateSession(id: String, name: String) = negotiateGroupSession(Peer(id, name, "", 0))
 
     override fun confirmGroup(comparison: GroupAdmissionState.Comparing) {
         val current = displayed.value ?: return
@@ -97,8 +111,29 @@ class IosGroupAdmissionController(
         displayed.value = null
         state.value = GroupAdmissionState.Idle
         membership.value = GroupMembershipCheckState.Idle
-        if (value.mode == IosGroupSelectionMode.ADMISSION) state.value = GroupAdmissionState.Selecting(value.peer)
-        else membership.value = GroupMembershipCheckState.Checking(value.peer)
+        session.value = GroupSessionState.Idle
+        when (value.mode) {
+            IosGroupSelectionMode.ADMISSION -> state.value = GroupAdmissionState.Selecting(value.peer)
+            IosGroupSelectionMode.MEMBERSHIP_CHECK -> membership.value = GroupMembershipCheckState.Checking(value.peer)
+            IosGroupSelectionMode.SESSION -> session.value = GroupSessionState.Negotiating(value.peer)
+        }
+    }
+
+    fun sessionSnapshot(): IosGroupSessionDisplay = when (val current = session.value) {
+        GroupSessionState.Idle -> IosGroupSessionDisplay(IosGroupSessionPhase.IDLE, "", "")
+        is GroupSessionState.Negotiating -> IosGroupSessionDisplay(IosGroupSessionPhase.NEGOTIATING, "", "")
+        is GroupSessionState.Selected -> IosGroupSessionDisplay(IosGroupSessionPhase.SELECTED, current.session.groupId, current.session.sessionId)
+        is GroupSessionState.NeedsChoice -> IosGroupSessionDisplay(IosGroupSessionPhase.NEEDS_CHOICE, "", "")
+        is GroupSessionState.Failed -> IosGroupSessionDisplay(IosGroupSessionPhase.FAILED, "", "")
+    }
+
+    fun sessionSelected(value: IosGroupAdmissionSelection, result: IosGroupSessionResult) {
+        if (selection !== value || value.mode != IosGroupSelectionMode.SESSION || session.value !is GroupSessionState.Negotiating) return
+        session.value = when (val decision = result.decision) {
+            is SessionSelection.Join -> GroupSessionState.Selected(value.peer, decision.session)
+            is SessionSelection.Choose -> GroupSessionState.NeedsChoice(value.peer, decision.sessions)
+            SessionSelection.Create -> GroupSessionState.Failed(value.peer, GroupAdmissionFailure.FAILED)
+        }
     }
 
     fun membershipSnapshot(): IosGroupMembershipDisplay = when (val current = membership.value) {
@@ -139,7 +174,9 @@ class IosGroupAdmissionController(
             IosGroupServiceFailure.FAILED -> GroupAdmissionFailure.FAILED
             IosGroupServiceFailure.COMMIT_OUTCOME_UNKNOWN -> GroupAdmissionFailure.COMMIT_OUTCOME_UNKNOWN
         }
-        if (value.mode == IosGroupSelectionMode.MEMBERSHIP_CHECK) {
+        if (value.mode == IosGroupSelectionMode.SESSION) {
+            if (session.value is GroupSessionState.Negotiating) session.value = GroupSessionState.Failed(value.peer, failure)
+        } else if (value.mode == IosGroupSelectionMode.MEMBERSHIP_CHECK) {
             if (membership.value !is GroupMembershipCheckState.Verified) {
                 membership.value = GroupMembershipCheckState.Failed(value.peer, failure)
             }
@@ -151,6 +188,7 @@ class IosGroupAdmissionController(
         displayed.value = null
         state.value = GroupAdmissionState.Idle
         membership.value = GroupMembershipCheckState.Idle
+        session.value = GroupSessionState.Idle
     }
 
     /** Independent of selection state, including an ambiguous result or a dismissed attempt. */

@@ -1,6 +1,20 @@
-# Stato sviluppo — 21 ottobre 2026
+# Stato sviluppo — 23 ottobre 2026
 
-## Sintesi corrente — B5, negoziazione iniziale Android/desktop
+## Sintesi corrente — B5, negoziazione iniziale iOS
+
+**Precedente verificato da concluso:** `699a78c238ec65f244fe261699feb502fa8e794d`, [PoC 39674164342](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164342) e [iOS ordinario 39674164345](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164345) completed/success, una lettura senza polling. Ordinario Apple compila, non attesta nuovo runtime; ultimo completo verificato resta 80710c6 / 39473042848 / 168 XCTest, non hardware. Note post-push precedenti preservate sotto.
+
+**Implementato/integrato:** Negozia sessione nel servizio BonjourProbe e nella UI iPhone. Core Kotlin per capability obbligatorie, binding offerta/prova locale, codec/decoder bounded e selezione; Swift solo OS/I/O/ciclo di vita. Stessa connessione TLS e deadline, nessun EOF reader B4 fra prove e offerte, letture esatte e write confermate da contentProcessed. Prova committata fresca prima del pin e sul canale, marker intero invariato prima del risultato. Memoria singola posseduta dalla run, mantenuta da cancel e azzerata da stopResources; niente storia letta/ripubblicata, scritture SQLite, trust o consenso ripristinato. Pannello solo diagnostico, non ACK o credenziale. Wire precedente/schema/versioni/lock/workflow invariati; ADR 014 aggiornato.
+
+**Verificato localmente, JDK 17:** `./gradlew -Pandroid=true :protocol:jvmTest --tests '*GroupSessionOfferFrameDecoderTest' :ui:jvmTest :ui:testDebugUnitTest --console=plain` success **37 s**. Poi `./gradlew -Pandroid=true :protocol:jvmTest :protocol:testDebugUnitTest :ui:jvmTest :ui:testDebugUnitTest :androidApp:assembleDebug :desktopApp:classes --console=plain` success **11 s**: protocollo **402 JVM / 366 Android**, UI **9 JVM / 9 Android**, **786 passati**, zero failure/error/skipped; UI UP-TO-DATE nel checkpoint, eseguita nel mirato precedente sullo stesso codice. APK/classi desktop compilati. Nessun errore/test soppresso o refactoring estraneo.
+
+**Controllo aggiuntivo host:** compilazione K2JVMCompiler di IosGroupSession, IosGroupMembership, snapshot/evidence/handshake e controller reali con il boundary di persistenza di test già presente in ui/build/foundation-portability, successo 9,5 s. Script check.ps1 preesistente eseguito come setup e relativi smoke precedenti riusciti; NON test della nuova sessione, Native/export, Swift, TLS Apple o hardware. Harness ignorato non sostituisce le regressioni mantenute.
+
+**Predisposto, NON compilato/eseguito qui:** sette nuovi XCTest: servizio reale TLS/Keychain/SQLite con riapertura e due ordinamenti, continuità/stop/reset, B4 incompatibile, gruppi errati/preflight senza gruppo, cancel/riselezione, receive LSN pendente DOPO prove reali con cancel/scadenza originale; memoria con marker intero, scelta fra usate e conflitti. Scenario delegato A→B→C esteso a LSN fra adottati con fondatore offline. Quattro nuovi test comuni decoder e tre UI eseguiti sui target host. Windows non dispone di Swift/Xcode; nuovo checkpoint Apple completo necessario. Nessun collaudo fisico o interoperabilità Apple↔JVM nuova attestata.
+
+**Unico prossimo blocco:** leggere il checkpoint Apple completo da concluso/correggere prima del primo testo di gruppo sulla sessione autenticata (canale vivo, destinatari e ricevuta dopo commit, non autorizzazione dal pannello B5). Sessioni complete/chat/reconnect/cambio LAN automatico ancora aperti. Fase 0 chiusa, fase 1/hardware residui Android ↔ Windows, iPhone/Mac Intel/Apple Silicon e gate UI invariati. Nessun polling, consegna unica raggruppata.
+
+## Evidenze precedenti — B5, negoziazione iniziale Android/desktop
 
 **Checkpoint precedente verificato da concluso:** `80710c6a73dd141ee3d6cc5fbe5bbfcad177939c`, [iOS completo 39473042848](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39473042848) success: Native/export/app e **168 XCTest senza fallimenti**, 91,393 s (95,852 complessivi). Bootstrap compilato soltanto. B4 verificato automaticamente anche nel simulatore, non hardware. Nessun polling; preservate le note post-push precedenti.
 
@@ -17,6 +31,8 @@
 **Ultima revisione di concorrenza:** generazione dell'ID casuale OS spostata fuori dal lock di cancel/stop. Anche gli errori della nuova modalità sessione sono pubblicati sotto lo stesso arbitraggio dell'esatta selezione: un Flow CAS da solo non evita ABA quando annulla/nuova selezione dello stesso peer ricreano uno stato uguale. `./gradlew -Pandroid=true :connectivity:jvmTest --tests '*DelegatedGroupAdmissionServiceTest' :androidApp:assembleDebug :desktopApp:classes --console=plain` passato prima in **53 s**, poi sul definitivo in **48 s**: tutti i 10 casi servizio passati e app ricompilate. Gli altri owner/core/UI non cambiati rispetto alle suite sopra; totale complessivo resta 1035, non una nuova esecuzione completa. XML attuali connettività selettivi, suite completa attestata nel controllo precedente. Nessun altro codice modificato dopo il controllo di 48 s.
 
 **Unico prossimo blocco:** dopo CI conclusa/correzioni, portare la stessa negoziazione nel servizio Bonjour/iOS con core condiviso, memoria limitata alla run, stesso owner/lifetime e checkpoint Native/simulatore raggruppato. Nessun nuovo checkpoint Apple completo duplicato adesso: la CI ordinaria compila, il prossimo completo verificherà il nuovo ingresso. Fase 0 chiusa; fase 1/collaudi fisici Android ↔ Windows, iPhone e Mac Intel/Apple Silicon e gate UI completa ancora aperti. Nessun polling.
+
+**Consegnato:** `699a78c238ec65f244fe261699feb502fa8e794d`, 19 file, unico commit/push. [PoC 39674164342](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164342) e [iOS ordinario 39674164345](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39674164345) in_progress nella sola lettura post-push; nessun nuovo esito remoto attestato, dispatch completo duplicato o polling. Ordinario Apple previsto per compilazione, non runtime; nuovo checkpoint completo raggruppato con il futuro ingresso B5 iOS. Leggere da concluse alla ripresa. Nota con PASSAGGIO locale da conservare al prossimo codice, niente ulteriore push documentale.
 
 ## Evidenze precedenti — B4, verifica membership iOS
 

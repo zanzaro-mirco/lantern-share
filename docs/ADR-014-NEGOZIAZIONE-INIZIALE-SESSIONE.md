@@ -1,6 +1,6 @@
 # ADR 014 — negoziazione iniziale di sessione sul TLS vivo
 
-Data: 21 ottobre 2026. Blocco B5, prima integrazione Android/desktop.
+Data: 21 ottobre 2026; integrazione iOS del 23 ottobre. Blocco B5.
 
 ## Risultato e confini
 
@@ -12,7 +12,7 @@ Il trasporto termina dopo lo scambio: la decisione non è un handle di autorizza
 riusabile né una conferma del risultato remoto.
 
 Si tratta del primo percorso esplicito fra due partecipanti, non della gestione
-completa delle sessioni: iOS, snapshot multipartecipante aggiornati, cambio rete
+completa delle sessioni: snapshot multipartecipante aggiornati, cambio rete
 automatico, scelta operativa fra sessioni usate e ciclo di vita del futuro canale
 applicativo restano aperti. Nessuna restrizione aggiunta ai requisiti del prodotto.
 
@@ -88,7 +88,28 @@ P-256 vera; test Node/TLS/SQLite riaperto in entrambi gli ordinamenti, membri
 delegati col fondatore offline, continuità/nuovo ID, gruppi errati e modalità
 incompatibili senza trust/commit/storia. Evidenze effettive in STATO, non hardware.
 
-Prossimo blocco: consumare lo stesso formato/regole nel servizio Bonjour iOS, con
-stesso owner e lifetime, sessione in memoria limitata alla run, interfaccia
-diagnostica e checkpoint Native/simulatore. Non dichiarare B5 multipiattaforma o
-sessioni complete prima di integrazione/verifica; hardware fase 1 sempre aperto.
+## Ingresso Bonjour/iOS
+
+`IosGroupAdmissionController` espone lo stesso contratto/pannello sessione e una
+selezione opaca distinta dall'invito e dal controllo B4. `GroupAdmissionSession`
+esegue preflight committato prima del pin e verifica nuovamente sul TLS vivo.
+`HandshakeV1Channel.negotiateSession` sceglie la continuazione PRIMA dello scambio
+LGM: nessun EOF reader B4 accodato fra LGM e LSN, secondo reader o ritiro prematuro.
+Ordine, capability, binding locale alla prova, codec e budget esatti del decoder
+sono Kotlin; Swift mantiene soltanto I/O seriale, completamenti contentProcessed,
+verificatori OS e timer originale. Nessun byte LSN prima della verifica della prova.
+
+`BonjourProbe` possiede `IosGroupSessionMemory`, non la singola selezione. Conserva
+radice/marker esatto/sessione; cancel non la azzera, stopResources e deallocazione
+sì. Generazione casuale OS e letture SQL avvengono prima della pubblicazione,
+ricontrollata viva e invariata sulla coda seriale. Nessun callback dentro il passo
+Kotlin che seleziona e conserva in memoria. Owner ritirati non accedono più al DB;
+il drain cumulativo precedente resta responsabile della chiusura SQLite.
+
+Sette nuovi XCTest mantenuti predisposti: servizio con TLS/Keychain/SQLite veri
+in entrambi gli ordinamenti, riapertura, continuità/reset, modalità/gruppi errati,
+cancel/riselezione, receive LSN pendente dopo prove vere e deadline originale;
+regole memoria con marker intero e conflitti. Scenario delegato con fondatore
+offline esteso a LSN. Core decoder e presentazione verificati su JVM/Android,
+facciate compilate sul controllo host: NON export Native o Swift. Checkpoint Apple
+completo necessario; nessun collaudo fisico nuovo o sessione completa dichiarata.
