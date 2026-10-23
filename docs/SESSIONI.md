@@ -17,7 +17,7 @@ Il selettore non conosce archivi o messaggi: non ripubblica né unisce cronologi
 
 Verifica locale: `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, otto casi condivisi per target. Coprono creazione, separazione gruppi, convergenza indipendente dall'ordine, priorità della sessione utilizzata, scelta esplicita, duplicati, conflitti e ID vuoti. Non equivalgono a convergenza distribuita su rete o a collaudo hardware. I test Native sono inclusi nel checkpoint iOS manuale, non eseguiti localmente su Windows.
 
-Le credenziali di gruppo e il primo confronto autenticato tra due Node sono integrati. Lo stesso ingresso Bonjour/iOS è verificato automaticamente su c938980 (175 XCTest complessivi), non hardware. Restano uno snapshot multipartecipante aggiornato, ciclo di vita/cambio rete automatico e UI operativa della scelta. L'archivio testo/used di ADR 015 è ora usato dal trasferimento esplicito di ADR 016, anche nel nuovo ingresso iOS ancora da verificare in Apple: non ripristina sessioni. La sola decisione locale B5 non autorizza traffico; nessuna autorizzazione derivata da mDNS, dal precedente B4 o da `READY` del bootstrap. La sessione di B5 vive soltanto nella run del servizio, mai ripristinata dal database. Comandi e risultati correnti in STATO.
+Le credenziali di gruppo, B5 e il primo trasferimento di testo B6 sono verificati automaticamente anche iOS, ultimo completo fcec8f7 / 182 XCTest, non hardware. Nuovo roster Node/UI B7 in ADR 017: attestazioni firmate e memoria della run con offline, ingresso iOS ancora assente. Invio con snapshot multipartecipante, ciclo di vita/cambio rete automatico e scelta operativa restano aperti. La sola decisione B5 non autorizza traffico, né lo fanno mDNS/B4/READY bootstrap. SQLite conserva testo/used di ADR 015, non ripristina sessioni; il rientrante recupera da un peer attivo con nuove prove. Comandi e risultati correnti in STATO.
 
 ## Collaudo fisico B5 ancora da eseguire — Android ↔ Windows
 
@@ -77,7 +77,36 @@ gruppo tramite il percorso di ingresso gruppo, non la sola associazione PoC.
    cancellando il database. Ripristino del roster e continuità completa restano aperti.
 
 Ripetere senza WAN e registrare commit, OS, rete, ordine delle azioni, ID/esiti ed
-eventuali errori senza contenuti o chiavi. Applicare a iPhone solo dopo il checkpoint
-Apple completo riuscito del nuovo ingresso, con build dello stesso checkpoint;
+eventuali errori senza contenuti o chiavi. Ingresso iPhone B6 verificato automaticamente
+nel completo fcec8f7: applicare con build dello stesso checkpoint;
 registrare separatamente Apple ↔ Android/desktop. iPhone/Mac e hardware di fase 1
 rimangono obbligatori. Nessun collaudo nuovo attestato da questa lista.
+
+## Collaudo fisico B7 predisposto, NON eseguito — roster Android/desktop
+
+Nuova azione di [ADR 017](ADR-017-ROSTER-AUTENTICATO-SESSIONE.md), non chat completa.
+Build dello stesso checkpoint e gruppo già ammesso, nessuna cancellazione DB.
+
+1. Scegliere **Sincronizza roster** su A e B. Stesso ID sessione ed elenco di due
+   fingerprint; non è lo stato online o una ricevuta. Chiudere i pannelli senza
+   fermare i servizi e ripetere: stessa sessione.
+2. Usare il testo iniziale, fermare/riaprire B lasciando A attivo, sincronizzare
+   di nuovo: stesso ID e partecipanti, poi testo nuovamente possibile. Nessuna
+   ripubblicazione della storia o ricevuta dedotta dalla sola sincronizzazione.
+3. Con un terzo dispositivo C, dopo il primo roster A/B fermare il fondatore A,
+   ammettere C tramite B e sincronizzare B/C: elenco di tre, incluso A offline.
+   Fermare B, riaprire A e sincronizzare A/C: conservato anche B offline.
+4. Con tre partecipanti il vecchio Invia/Ricevi testo deve rifiutare il roster,
+   non mostrare un ACK o ridurlo ai due online. Invio multipartecipante ancora
+   da integrare; C non diventa destinatario dei messaggi inviati prima del suo ingresso.
+5. Provare Sincronizza contro Negozia sessione/testo, poi cancel e nuova selezione:
+   incompatibilità o annullamento senza risultato tardivo; riprova esplicita corretta.
+6. Se un partecipante legacy offline non ha mai firmato la propria presenza nel
+   roster, il nuovo ingresso può richiederne le prove. Se nessuno conserva più lo
+   snapshot di una sessione usata, rifiuto esplicito. Non aggirare con storia, reset
+   used o cancellazione DB. Dopo stop di tutti, nuovo ID, copie vecchie preservate.
+
+Ripetere senza WAN e registrare build/OS/rete/ordine/ID/esiti senza chiavi o contenuti.
+Il terzo dispositivo è necessario al relativo collaudo, non simulato da questa lista.
+Ingresso roster iOS ancora da realizzare; nessuna azione iPhone sostitutiva o test
+fisico dichiarato. Cronologia gruppo UI completa e collaudi hardware restano aperti.

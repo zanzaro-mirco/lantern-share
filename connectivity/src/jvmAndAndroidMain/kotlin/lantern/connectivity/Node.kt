@@ -17,7 +17,7 @@ import lantern.domain.DeviceController
 import lantern.domain.DeviceRepository
 import lantern.domain.DeviceState
 import lantern.domain.DiscoveryService
-import lantern.domain.GroupTextController
+import lantern.domain.GroupRosterController
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Peer
@@ -38,7 +38,7 @@ class Node(
     private val discovery: DiscoveryService,
     private val address: InetAddress,
     private val requestedPort: Int = 0,
-) : DeviceController, GroupTextController, AutoCloseable {
+) : DeviceController, GroupRosterController, AutoCloseable {
     private val mutable = MutableStateFlow(DeviceState(
         name = repository.name(),
         id = identity.id,
@@ -61,6 +61,7 @@ class Node(
     override val membershipCheckState = admissions.membershipCheckState
     override val groupSessionState = admissions.groupSessionState
     override val groupTextState = admissions.groupTextState
+    override val groupRosterState = admissions.groupRosterState
 
     val port: Int get() = activeRun?.server?.localPort ?: 0
 
@@ -368,6 +369,9 @@ class Node(
 
     @Synchronized
     override fun receiveGroupText(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.TEXT)
+
+    @Synchronized
+    override fun synchronizeGroupRoster(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.ROSTER)
 
     private fun selectGroupConnection(peer: Peer, replaceInterrupted: Boolean, mode: GroupSelectionMode, text: String? = null) {
         val run = activeRun ?: return

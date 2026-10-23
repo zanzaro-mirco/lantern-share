@@ -1,5 +1,7 @@
 package lantern.connectivity
 
+import lantern.protocol.GroupSessionRosterCodec
+
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -246,6 +248,39 @@ class HandshakeV1FrameStreamTest {
             override fun flush(): Unit = throw error
         }
         assertSame(error, assertFailsWith<IOException> { HandshakeV1FrameStream(raw, failing).writeTextControl(scope) })
+    }
+
+    @Test
+    fun rosterReadsAreExactBoundedBeforeAllocationAndPreserveDeadlineFlushAndTail() {
+        for ((size, agreement) in listOf(GroupSessionRosterCodec.PREFIX_BYTES to false, GroupSessionRosterCodec.AGREEMENT_BYTES to true)) {
+            val payload = ByteArray(size) { 42 }
+            val frame = GroupSessionRosterCodec.header(size) + payload
+            val raw = ByteArrayInputStream(frame + byteArrayOf(7))
+            val fragmented = object : FilterInputStream(raw) {
+                override fun read(bytes: ByteArray, offset: Int, length: Int) = super.read(bytes, offset, minOf(1, length))
+            }
+            var checks = 0
+            assertContentEquals(payload, HandshakeV1FrameStream(fragmented, ByteArrayOutputStream()).readRosterControl(agreement) { checks++ })
+            assertEquals(frame.size, checks)
+            assertEquals(7, raw.read())
+            for (cut in frame.indices) assertFailsWith<EOFException> { reader(frame.copyOf(cut)).readRosterControl(agreement) {} }
+            val error = IOException("Test roster deadline")
+            assertSame(error, assertFailsWith<IOException> { reader(frame).readRosterControl(agreement) { throw error } })
+            val output = ByteArrayOutputStream()
+            HandshakeV1FrameStream(raw, output).writeRosterControl(payload)
+            assertContentEquals(frame, output.toByteArray())
+        }
+        for (size in listOf(0, -1, Int.MAX_VALUE, GroupSessionRosterCodec.PREFIX_BYTES - 1, GroupSessionRosterCodec.MAX_BYTES + 1)) {
+            val header = ByteArrayOutputStream().also { DataOutputStream(it).writeInt(size) }.toByteArray()
+            val raw = ByteArrayInputStream(header + byteArrayOf(7))
+            assertFailsWith<InvalidGroupEvidenceFrameException> { HandshakeV1FrameStream(raw, ByteArrayOutputStream()).readRosterControl(false) {} }
+            assertEquals(7, raw.read())
+        }
+        val failing = object : OutputStream() {
+            override fun write(value: Int) = Unit
+            override fun flush(): Unit = throw IOException("Test roster flush")
+        }
+        assertFailsWith<IOException> { HandshakeV1FrameStream(ByteArrayInputStream(byteArrayOf()), failing).writeRosterControl(ByteArray(201)) }
     }
 
     private fun assertFrameEquals(expected: ProtocolHandshakeFrame, actual: ProtocolHandshakeFrame) = assertContentEquals(

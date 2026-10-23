@@ -17,6 +17,7 @@ import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
 import lantern.protocol.GroupTextTransferCodec
 import lantern.protocol.GroupTextCodec
+import lantern.protocol.GroupSessionRosterCodec
 import lantern.domain.SignedGroupText
 
 internal class InvalidHandshakeV1FrameException : IOException("Invalid v1 bootstrap frame")
@@ -138,6 +139,22 @@ internal class HandshakeV1FrameStream(private val input: InputStream, private va
     fun readGroupText(beforeRead: () -> Unit): SignedGroupText = try {
         GroupTextCodec.decode(readTextControl(null, beforeRead))
     } catch (_: IllegalArgumentException) { throw InvalidGroupEvidenceFrameException() }
+
+    fun writeRosterControl(payload: ByteArray) {
+        output.write(GroupSessionRosterCodec.header(payload.size))
+        output.write(payload)
+        output.flush()
+    }
+
+    fun readRosterControl(agreement: Boolean, beforeRead: () -> Unit): ByteArray {
+        try {
+            val header = ByteArray(4)
+            readFully(header, beforeRead)
+            val payload = ByteArray(GroupSessionRosterCodec.payloadBytes(header, agreement))
+            readFully(payload, beforeRead)
+            return payload
+        } catch (_: IllegalArgumentException) { throw InvalidGroupEvidenceFrameException() }
+    }
 
     /** No follow-on data is permitted in this diagnostic protocol. EOF is not a remote ACK. */
     fun awaitMembershipEnd(beforeRead: () -> Unit) {

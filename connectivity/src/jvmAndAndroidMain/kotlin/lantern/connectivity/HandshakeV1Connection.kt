@@ -1,5 +1,8 @@
 package lantern.connectivity
 
+import lantern.protocol.GroupSessionRoster
+import lantern.protocol.GroupSessionRosterCodec
+
 import java.io.Closeable
 import java.io.IOException
 import java.security.cert.X509Certificate
@@ -247,6 +250,76 @@ internal class HandshakeV1Connection private constructor(
                 }
                 checkLive()
                 remote
+            }
+        } finally { exclusive.unlock() }
+    }
+
+    /** Fresh membership/LSN before the opt-in roster; same owner and original deadline. */
+    fun synchronizeRoster(
+        membership: GroupMembershipEvidence, offer: GroupSessionOffer,
+        verifyRemote: (GroupMembershipEvidence) -> Boolean,
+        propose: (GroupSessionOffer) -> GroupSessionRoster,
+        mergeVerified: (GroupSessionRoster, GroupSessionRoster) -> GroupSessionRoster,
+        completed: (GroupSessionRoster) -> Unit,
+    ): GroupSessionRoster? {
+        val exclusive = operations.writeLock()
+        if (!exclusive.tryLock()) return null
+        try {
+            return guarded {
+                val first = synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    check(!exchangingEvidence)
+                    GroupSessionRosterCodec.sendsFirst(checkNotNull(attempt.offersForGroupAdmission()))
+                }
+                fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
+                fun beforeRead() = synchronized(stateLock) {
+                    requireEvidenceActiveLocked()
+                    socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+                }
+                val remoteOffer = checkNotNull(negotiateSession(membership, offer, verifyRemote))
+                checkLive()
+                val local = propose(remoteOffer)
+                require(local.anchor == membership.anchor && identity.id in local.participants)
+                fun send(payload: ByteArray) {
+                    checkLive()
+                    stream.writeRosterControl(payload)
+                    checkLive()
+                }
+                val localBytes = GroupSessionRosterCodec.encode(local)
+                val remoteBytes = if (first) {
+                    send(localBytes)
+                    stream.readRosterControl(false, ::beforeRead)
+                } else {
+                    val bytes = stream.readRosterControl(false, ::beforeRead)
+                    send(localBytes)
+                    bytes
+                }
+                checkLive()
+                val remote = GroupSessionRosterCodec.decode(remoteBytes)
+                require(remote.anchor == local.anchor && remote.sessionId == local.sessionId && selectedPeerIdentity in remote.participants)
+                val peerEntry = remote.entries.single { it.memberId == selectedPeerIdentity }
+                require(peerEntry.certificate.der == java.util.Base64.getEncoder().encodeToString(
+                    (socket.session.peerCertificates.single() as X509Certificate).encoded))
+                val merged = mergeVerified(local, remote) // OS checks outside the state lock.
+                require(merged.anchor == local.anchor && merged.sessionId == local.sessionId &&
+                    merged.participants.containsAll(local.participants + remote.participants))
+                checkLive()
+                val agreement = GroupSessionRosterCodec.agreement(merged, digest(GroupSessionRosterCodec.encode(merged)))
+                fun receiveAgreement() {
+                    check(stream.readRosterControl(true, ::beforeRead).contentEquals(agreement)) { "Session roster agreement mismatch" }
+                }
+                if (first) {
+                    send(agreement)
+                    receiveAgreement()
+                } else {
+                    receiveAgreement()
+                    send(agreement)
+                }
+                checkLive()
+                completed(merged)
+                // Last writer drains only transport. EOF is not a remote install/commit receipt.
+                if (!first) stream.awaitMembershipEnd(::beforeRead)
+                merged
             }
         } finally { exclusive.unlock() }
     }

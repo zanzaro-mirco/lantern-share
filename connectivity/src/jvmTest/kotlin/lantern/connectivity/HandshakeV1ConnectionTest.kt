@@ -1,5 +1,10 @@
 package lantern.connectivity
 
+import lantern.protocol.GroupSessionJoin
+import lantern.protocol.GroupSessionRoster
+import lantern.protocol.GroupSessionRosterCodec
+import kotlin.test.assertContentEquals
+
 import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.IOException
@@ -700,6 +705,87 @@ class HandshakeV1ConnectionTest {
     private fun framed(payload: ByteArray) = header(payload.size) + payload
 
     /** Test-only option failure; the session and terminal I/O still use the real pinned TLS socket. */
+    @Test
+    fun rosterInvalidJoinRootSessionAgreementAndPendingCancelOrDeadlineCannotInstall() = withPeers { client, server ->
+        val localIdentity = minOf(client, server, compareBy { it.id })
+        val peerIdentity = if (localIdentity === client) server else client
+        val required = setOf(GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE, GroupSessionRosterCodec.FEATURE)
+        val rosterCaps = ProtocolCapabilities(1, required, required)
+        for (action in listOf("signature", "root", "session", "agreement", "cancel", "expiry")) withSockets(client, server) { sockets ->
+            val selectedAt = if (action == "expiry") monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 2_000 else sockets.selectedAt
+            sockets.clientOwner(selectedAt = selectedAt, supported = rosterCaps).use { left ->
+                sockets.serverOwner(selectedAt = selectedAt, supported = rosterCaps).use { right ->
+                    exchangeHellos(left, right)
+                    val owner = if (localIdentity === client) left else right
+                    val peerSocket = if (localIdentity === client) sockets.server else sockets.client
+                    val anchor = GroupTrustAnchor(randomNonce(), localIdentity.id)
+                    val localMembership = GroupMembershipEvidence(anchor, localIdentity.id, null)
+                    val draft = FounderGroupAdmissionDraft.prepare(anchor, localIdentity.id, peerIdentity.id)
+                    val peerMembership = GroupMembershipEvidence(anchor, peerIdentity.id,
+                        GroupAdmissionEvidence(draft.withSignature(localIdentity.sign(draft.signedBytes())), listOf(
+                            GroupAdmissionCertificate(localIdentity.id, Base64.getEncoder().encodeToString(localIdentity.certificate.encoded)))))
+                    val offer = GroupSessionOffer(SessionCandidate(anchor.groupId, randomNonce(), false), false)
+                    fun join(identity: Identity, proof: GroupMembershipEvidence, session: String, wrongSignature: Boolean = false): GroupSessionJoin {
+                        val certificate = GroupAdmissionCertificate(identity.id, Base64.getEncoder().encodeToString(identity.certificate.encoded))
+                        val bytes = GroupSessionRosterCodec.signingBytes(session, proof, certificate)
+                        return GroupSessionJoin(session, proof, certificate, (if (wrongSignature) localIdentity else identity).sign(bytes))
+                    }
+                    val local = GroupSessionRoster(anchor, offer.session.sessionId, listOf(join(localIdentity, localMembership, offer.session.sessionId)))
+                    val remoteAnchor = if (action == "root") GroupTrustAnchor(randomNonce(), peerIdentity.id) else anchor
+                    val remoteSession = if (action == "session") randomNonce() else offer.session.sessionId
+                    val remoteProof = if (action == "root") GroupMembershipEvidence(remoteAnchor, peerIdentity.id, null) else peerMembership
+                    val remote = GroupSessionRoster(remoteAnchor, remoteSession, listOf(join(peerIdentity, remoteProof, remoteSession, action == "signature")))
+                    val completed = java.util.concurrent.atomic.AtomicBoolean()
+                    val worker = Executors.newSingleThreadExecutor()
+                    val stream = HandshakeV1FrameStream(peerSocket.inputStream, peerSocket.outputStream)
+                    try {
+                        val result = worker.submit<Boolean> {
+                            try {
+                                owner.synchronizeRoster(localMembership, offer,
+                                    verifyRemote = { verifyPeerMembership(it, anchor, peerIdentity.id) }, propose = { assertEquals(offer, it); local },
+                                    mergeVerified = { a, b ->
+                                        GroupRootAdoptionJournalInspector.withVerifier { verify -> check(a.verify(verify) && b.verify(verify)) }
+                                        a.merge(b)
+                                    }, completed = { completed.set(true) })
+                                true
+                            } catch (_: Exception) { false }
+                        }
+                        stream.readMembership {}
+                        stream.writeMembership(peerMembership)
+                        assertEquals(offer, stream.readSessionOffer {})
+                        stream.writeSessionOffer(offer)
+                        assertContentEquals(GroupSessionRosterCodec.encode(local), stream.readRosterControl(false) {})
+                        stream.writeRosterControl(GroupSessionRosterCodec.encode(remote))
+                        if (action in listOf("agreement", "cancel", "expiry")) {
+                            val agreement = stream.readRosterControl(true) {}
+                            if (action == "agreement") stream.writeRosterControl(agreement.copyOf().also { it[it.lastIndex] = 0 })
+                            if (action == "cancel") owner.close()
+                        }
+                        assertFalse(result.get(4, TimeUnit.SECONDS))
+                        assertFalse(completed.get())
+                        assertFailsWith<IOException> { owner.negotiateSession(localMembership, offer) { true } }
+                    } finally {
+                        owner.close()
+                        worker.shutdownNow()
+                        assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun rosterVerifierCacheNeverAcceptsDifferentDerForAnAlreadyVerifiedIdentity() = withPeers { a, b ->
+        val bytes = "certificate cache binding".encodeToByteArray()
+        val valid = GroupAdmissionCertificate(a.id, Base64.getEncoder().encodeToString(a.certificate.encoded))
+        val substituted = GroupAdmissionCertificate(a.id, Base64.getEncoder().encodeToString(b.certificate.encoded))
+        GroupRootAdoptionJournalInspector.withVerifier { verify ->
+            assertTrue(verify(valid, bytes, a.sign(bytes)))
+            assertFailsWith<IllegalStateException> { verify(substituted, bytes, a.sign(bytes)) }
+            assertTrue(verify(valid, bytes, a.sign(bytes)))
+        }
+    }
+
     private class LingerFailureSocket(private val delegate: SSLSocket, private val failure: IOException) : SSLSocket() {
         var lingerAttempts = 0
             private set

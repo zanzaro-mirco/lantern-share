@@ -148,8 +148,14 @@ cancel/riselezione, ACK pendente con cancel/deadline originale, chiave errata,
 scope/ACK alterati e contesto scaduto. Stato di compilazione/esecuzione in STATO,
 non dedotto dal controllo host delle facciate Kotlin.
 
-Prossimo blocco: prima risultato del checkpoint Apple completo/correzioni, poi
-roster autenticato della sessione e conservazione/ripristino dello snapshot anche
-con destinatari offline, senza ricostruirlo dagli endpoint correnti o dalla storia.
-Scelta operativa, riconnessione, recupero completo e UI completa restano obbligatori
-e non completati. Nessuna release o collaudo fisico nuovo dichiarato.
+Checkpoint successivo fcec8f7 / iOS completo 39965540210 letto da concluso: Native,
+export/app e **182 XCTest senza fallimenti**, non hardware. PoC 39965517784 success.
+Ingresso iOS del primo trasferimento verificato automaticamente.
+
+Seguito roster Node/UI in [ADR 017](ADR-017-ROSTER-AUTENTICATO-SESSIONE.md): nuova
+azione esplicita e nuove prove possono ripristinare lo scope della run da un peer
+rimasto attivo, senza storia. Il vecchio LTX resta invariato e rifiuta roster più
+ampi di due prima dei contatori, anche se ancora vuoti; non omette offline.
+Ingresso roster iOS, invio multipartecipante, scelta operativa, riconnessione,
+recupero completo e UI completa restano obbligatori e non completati. Nessuna
+release o collaudo fisico nuovo dichiarato.

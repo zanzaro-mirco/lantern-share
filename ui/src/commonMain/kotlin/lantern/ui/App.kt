@@ -45,6 +45,9 @@ import lantern.domain.GroupSessionState
 import lantern.domain.GroupTextController
 import lantern.domain.GroupTextState
 import lantern.domain.GroupTextFailure
+import lantern.domain.GroupRosterController
+import lantern.domain.GroupRosterState
+import lantern.domain.GroupRosterFailure
 import lantern.domain.SignedGroupText
 
 @Composable
@@ -73,6 +76,7 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 if (admission is GroupMembershipController) GroupMembershipCheckPanel(admission)
                 if (admission is GroupSessionController) GroupSessionPanel(admission)
                 if (controller is GroupTextController && state.active) GroupTextPanel(controller, state.peers)
+                if (controller is GroupRosterController && state.active) GroupRosterPanel(controller, state.peers)
                 PairingPanel(state.pairingPeer, state.comparisonCode, controller::confirm, controller::reject)
                 Text("Dispositivi scoperti", style = MaterialTheme.typography.titleLarge)
                 if (state.peers.isEmpty()) Text("Nessun dispositivo. Verifica rete locale e firewall.")
@@ -107,6 +111,39 @@ fun LanternApp(controller: DeviceController, localGroup: LocalGroupController? =
                 MessageHistory(state.id, state.messages)
                 Text("Autorizzati: ${state.trusted.size}. Cronologia locale: ultimi 200 messaggi. Nessun recupero automatico in questa prova.")
             }
+        }
+    }
+}
+
+@Composable
+internal fun GroupRosterPanel(controller: GroupRosterController, peers: List<Peer>) {
+    val state by controller.groupRosterState.collectAsState()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Partecipanti della sessione", style = MaterialTheme.typography.titleMedium)
+            Text("Sincronizza su entrambi i dispositivi (120 s). Prove firmate, non stato online o ricevute. Non usa la cronologia.")
+            for (peer in peers) OutlinedButton(onClick = { controller.synchronizeGroupRoster(peer) }) {
+                Text("Sincronizza roster con ${peer.name}")
+            }
+            when (val current = state) {
+                GroupRosterState.Idle -> Unit
+                is GroupRosterState.Synchronizing -> Text("In attesa di ${current.peer.name}: scegli Sincronizza roster anche lì.")
+                is GroupRosterState.Synchronized -> SelectionContainer {
+                    Column {
+                        Text("Roster verificato localmente: ${current.participants.size} partecipanti")
+                        Text("Sessione: ${current.sessionId}")
+                        for (id in current.participants) Text(id)
+                    }
+                }
+                is GroupRosterState.Failed -> Text(when (current.reason) {
+                    GroupRosterFailure.UNAVAILABLE -> "Appartenenza locale non disponibile/verificabile."
+                    GroupRosterFailure.SESSION_CHOICE_REQUIRED -> "Più sessioni utilizzate: serve una scelta esplicita."
+                    GroupRosterFailure.MISSING_PARTICIPANTS -> "Mancano prove firmate di partecipanti già noti. Sincronizza prima con loro; non vengono omessi."
+                    GroupRosterFailure.FAILED -> "Sincronizzazione interrotta, incompatibile, prove non valide o budget superato. Roster precedente preservato."
+                })
+            }
+            Text("Conserva i partecipanti offline. Il testo iniziale fra due rifiuta roster più ampi: invio multipartecipante e recupero restano da integrare.")
+            if (state != GroupRosterState.Idle) TextButton(onClick = controller::cancelGroup) { Text("Chiudi roster") }
         }
     }
 }

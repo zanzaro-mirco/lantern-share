@@ -12,6 +12,8 @@ import lantern.domain.GroupTextRepository
 import lantern.domain.GroupTextState
 import lantern.domain.GroupTextFailure
 import lantern.domain.GroupSessionState
+import lantern.domain.GroupRosterState
+import lantern.domain.GroupRosterFailure
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.Peer
 import lantern.domain.SignedGroupText
@@ -33,6 +35,181 @@ import kotlin.test.assertTrue
 
 /** Actual Nodes, mutual TLS, delegated group admission, P-256 and reopened SQLite, not wire-0 trust. */
 class GroupTextTransferServiceTest {
+    @Test
+    fun signedRosterRestoresRetainedUsedPairAfterEitherPeerReopensWithoutHistoryOrCounterReuse() {
+        for (restartFounder in listOf(false, true)) withMembers { f ->
+            f.stores { aStore, bStore ->
+                val keeperIdentity = if (restartFounder) f.b else f.a
+                val returningIdentity = if (restartFounder) f.a else f.b
+                val keeperStore = if (restartFounder) bStore else aStore
+                val returningStore = if (restartFounder) aStore else bStore
+                node(keeperIdentity, keeperStore).use { keeper ->
+                    keeper.start()
+                    val first = node(returningIdentity, returningStore).use { returning ->
+                        returning.start(); ports(keeper, returning)
+                        transfer(keeper, returning, "Prima del rientro")
+                    }
+                    openDesktopRepository(f.directory.resolve(if (restartFounder) "a.db" else "b.db")).use { reopened ->
+                        val marker = reopened.committedGroupAdoption()
+                        node(returningIdentity, reopened).use { returning ->
+                            returning.start(); ports(keeper, returning)
+                            val restored = synchronize(keeper, returning)
+                            assertEquals(first.content.sessionId, restored.sessionId)
+                            assertEquals(setOf(f.a.id, f.b.id), restored.participants.toSet())
+                            assertEquals(1, reopened.groupTextHistory(f.anchor.groupId, restored.sessionId).size)
+                            assertEquals(1, keeperStore.groupTextHistory(f.anchor.groupId, restored.sessionId).size)
+                            if (marker != null) assertTrue(marker.sameRecord(assertNotNull(reopened.committedGroupAdoption())))
+                            val next = transfer(keeper, returning, "Stessa sessione ripristinata")
+                            assertEquals(first.content.sessionId, next.content.sessionId)
+                            assertEquals(2L, next.content.authorSequence)
+                            assertTrue(reopened.trusted().isEmpty())
+                            assertTrue(reopened.history().isEmpty())
+                            assertNull(reopened.pendingGroupAdoption())
+                            // Old B5/text paths preserve a signed roster only for the exact session.
+                            keeper.negotiateGroupSession(peer(returning)); returning.negotiateGroupSession(peer(keeper))
+                            awaitSession(keeper); awaitSession(returning)
+                            assertEquals(restored.participants, synchronize(returning, keeper).participants)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun threeMemberRosterRetainsOfflineFounderThenOfflineDelegateWithoutRetroactiveRecipients() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+            f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, cStore).use { c ->
+                a.start(); b.start(); c.start(); ports(a, b); ports(b, c)
+                val initialRoster = synchronize(a, b)
+                val first = transfer(a, b, "Non destinato retroattivamente a C")
+                assertEquals(initialRoster.sessionId, first.content.sessionId)
+                a.stop() // Founder really offline; B has a complete signed snapshot.
+                admit(b, c)
+                val expanded = synchronize(b, c)
+                assertEquals(first.content.sessionId, expanded.sessionId)
+                assertEquals(setOf(f.a.id, f.b.id, third.id), expanded.participants.toSet())
+                b.stop() // Now only C retains the expanded session, including both offline peers.
+                a.start(); ports(a, c)
+                val restored = synchronize(a, c)
+                assertEquals(expanded.sessionId, restored.sessionId)
+                assertEquals(expanded.participants, restored.participants)
+                // The old LTX format cannot express this snapshot: refuse, never omit offline B.
+                a.sendGroupText(peer(c), "Non ridurre lo snapshot"); c.receiveGroupText(peer(a))
+                for (side in listOf(a, c)) {
+                    val failure = assertIs<GroupTextState.Failed>(awaitText(side))
+                    assertEquals(GroupTextFailure.ROSTER_REQUIRED, failure.reason)
+                    assertNull(failure.attemptedMessageId)
+                }
+                assertEquals(setOf(f.a.id, f.b.id), assertNotNull(aStore.groupText(first.content.id)).message.content.recipients.toSet())
+                assertTrue(cStore.groupTextHistory(f.anchor.groupId, expanded.sessionId).isEmpty())
+                assertEquals(expanded.participants, synchronize(c, a).participants)
+            } } } }
+        }
+    }
+
+    @Test
+    fun unsignedLegacyOfflineParticipantCannotDisappearWhenThirdMemberJoins() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+            f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, cStore).use { c ->
+                a.start(); b.start(); c.start(); ports(a, b); ports(b, c)
+                val first = transfer(a, b, "Scope precedente senza prove roster")
+                a.stop()
+                admit(b, c)
+                b.synchronizeGroupRoster(peer(c)); c.synchronizeGroupRoster(peer(b))
+                val refused = assertIs<GroupRosterState.Failed>(awaitRoster(b))
+                assertEquals(GroupRosterFailure.MISSING_PARTICIPANTS, refused.reason)
+                assertIs<GroupRosterState.Failed>(awaitRoster(c))
+                assertTrue(cStore.groupTextHistory(f.anchor.groupId, first.content.sessionId).isEmpty())
+                // Failure did not replace the previous pair scope or consume author counters.
+                a.start(); ports(a, b)
+                assertEquals(first.content.sessionId, synchronize(a, b).sessionId)
+                val expanded = synchronize(b, c)
+                assertEquals(3, expanded.participants.size)
+                assertEquals(first.content.sessionId, expanded.sessionId)
+            } } } }
+        }
+    }
+
+    @Test
+    fun usedSessionWithAllSnapshotsLostCannotBeReinventedFromTwoFreshJoins() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            val first = transfer(a, b, "Preservare lo scope")
+            b.stop(); b.start(); ports(a, b)
+            a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+            awaitSession(a); awaitSession(b)
+            a.stop(); a.start(); ports(a, b)
+            a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+            awaitSession(a); awaitSession(b)
+            a.synchronizeGroupRoster(peer(b)); b.synchronizeGroupRoster(peer(a))
+            for (side in listOf(a, b)) assertEquals(GroupRosterFailure.MISSING_PARTICIPANTS,
+                assertIs<GroupRosterState.Failed>(awaitRoster(side)).reason)
+            assertNotNull(aStore.groupText(first.content.id))
+            a.stop(); b.stop(); a.start(); b.start(); ports(a, b)
+            val fresh = synchronize(a, b)
+            assertNotEquals(first.content.sessionId, fresh.sessionId)
+            val next = transfer(a, b, "Nuova sessione, non ripristinata dalla storia")
+            assertEquals(fresh.sessionId, next.content.sessionId)
+            assertEquals(2L, next.content.authorSequence)
+        } } }
+    }
+
+    @Test
+    fun rosterCannotFallbackToDiagnosticOrTextModeAndCancellationCannotPublishOldResult() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            a.synchronizeGroupRoster(peer(b)); b.negotiateGroupSession(peer(a))
+            assertIs<GroupRosterState.Failed>(awaitRoster(a))
+            runBlocking { withTimeout(12_000) { b.groupSessionState.first { it is GroupSessionState.Failed } } }
+            a.synchronizeGroupRoster(peer(b)); b.receiveGroupText(peer(a))
+            assertIs<GroupRosterState.Failed>(awaitRoster(a)); assertIs<GroupTextState.Failed>(awaitText(b))
+            a.synchronizeGroupRoster(peer(b)); a.cancelGroup()
+            assertEquals(GroupRosterState.Idle, a.groupRosterState.value)
+            assertEquals(2, synchronize(a, b).participants.size)
+            assertTrue(aStore.groupTextHistory(f.anchor.groupId, assertIs<GroupRosterState.Synchronized>(a.groupRosterState.value).sessionId).isEmpty())
+        } } }
+    }
+
+    @Test
+    fun rosterRejectsIndependentRootOrMissingMembershipWithoutAdoptingOrWritingHistory() = withMembers { f ->
+        val outsider = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("other.db")).use { otherStore ->
+            f.stores { aStore, _ -> node(f.a, aStore).use { a -> node(outsider, otherStore).use { other ->
+                a.start(); other.start(); ports(a, other)
+                other.synchronizeGroupRoster(peer(a))
+                assertEquals(GroupRosterFailure.UNAVAILABLE, assertIs<GroupRosterState.Failed>(awaitRoster(other)).reason)
+                val independent = GroupTrustAnchor(randomNonce(), outsider.id)
+                otherStore.foundLocalGroup(independent, outsider.id)
+                a.synchronizeGroupRoster(peer(other)); other.synchronizeGroupRoster(peer(a))
+                assertIs<GroupRosterState.Failed>(awaitRoster(a))
+                assertIs<GroupRosterState.Failed>(awaitRoster(other))
+                assertEquals(f.anchor, aStore.localGroup())
+                assertEquals(independent, otherStore.localGroup())
+                for (store in listOf(aStore, otherStore)) {
+                    assertTrue(store.trusted().isEmpty())
+                    assertTrue(store.history().isEmpty())
+                    assertNull(store.pendingGroupAdoption())
+                }
+            } } }
+        }
+    }
+
+    private fun synchronize(a: Node, b: Node): GroupRosterState.Synchronized {
+        a.synchronizeGroupRoster(peer(b)); b.synchronizeGroupRoster(peer(a))
+        val local = assertIs<GroupRosterState.Synchronized>(awaitRoster(a))
+        val remote = assertIs<GroupRosterState.Synchronized>(awaitRoster(b))
+        assertEquals(local.sessionId, remote.sessionId)
+        assertEquals(local.participants, remote.participants)
+        return local
+    }
+
+    private fun awaitRoster(node: Node) = runBlocking { withTimeout(12_000) {
+        node.groupRosterState.first { it is GroupRosterState.Synchronized || it is GroupRosterState.Failed }
+    } }
+
     @Test
     fun reopenedMembersTransferBothDirectionsAndPreserveUsedScopeAndHistoryInBothTlsOrders() {
         for (senderFirst in listOf(true, false)) withMembers { f ->
