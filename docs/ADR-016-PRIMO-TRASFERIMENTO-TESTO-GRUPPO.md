@@ -1,6 +1,6 @@
 # ADR 016 — primo trasferimento esplicito di testo di gruppo sul TLS vivo
 
-Data: 23 ottobre 2026. Integrazione Android/desktop di B6.
+Data: 23 ottobre 2026. Integrazione Android/desktop e successivo ingresso iOS di B6.
 
 ## Risultato osservabile e confini
 
@@ -14,8 +14,8 @@ mostra il testo, ID messaggio/sessione e successo soltanto al punto previsto.
 connessione persistente: una busta per tentativo, entro i **120 secondi originali**,
 poi chiusura. Nessun handover, timer riarmato, reconnect o ritrasmissione automatica.
 Non cambia il requisito finale di una connessione di controllo per coppia, roster
-aggiornato, membri offline e recupero. Ingresso Bonjour/iOS ancora da integrare;
-non compare una falsa azione iPhone che usi il PoC come fallback.
+aggiornato, membri offline e recupero. Stesso ingresso integrato anche in Bonjour/iOS,
+senza fallback PoC; nuovo Native/export/Swift/simulatore da verificare, evidenze in STATO.
 
 ## Prerequisiti e snapshot dei destinatari
 
@@ -117,7 +117,39 @@ ACK, cancel durante scrittura. Test owner per scope/ACK alterati e cancel/deadli
 originale durante attesa ACK; framing esatto, troncamenti, flush e budget di read;
 regole e vettori in commonTest. Evidenze effettive in STATO, non hardware.
 
-Prossima integrazione: stesso percorso Bonjour/iOS con codec e regole Kotlin,
-scope della run e owner Swift, checkpoint completo Native/simulatore. Roster
-multipartecipante, scelta operativa, riconnessione, recupero e UI completa restano
-obbligatori e non completati. Nessuna release o collaudo fisico nuovo dichiarato.
+### Adattatore Bonjour/iOS
+
+`HandshakeV1Channel` sceglie la continuazione testo prima di LGM/LSN: nessun
+EOF reader diagnostico intermedio, secondo reader, nuovo timer o trasferimento
+del socket. Network.framework si limita a read bounded e write contentProcessed;
+codec, capability, scope, buste, firma canonica, confronto ACK e inbox rimangono
+Kotlin. CryptoKit calcola il digest e AppleIdentity firma/verifica usando il
+certificato effettivo del TLS. Nessuna nuova libreria o variazione wire/schema.
+
+`IosGroupSessionMemory` della run conserva i destinatari solo per radice, marker
+intero e ID esatti, anche passando per B5. Il nuovo scope viene installato solo
+dopo nuove prove sul canale; used prima della scrittura, sul ricevente dopo la
+firma. `GroupAdmissionSession` serializza selezione, cancel/stop e ammissione al
+passo durevole sulla coda nativa non UI. Un passo SQLite già ammesso può finire;
+lifetime originale, marker e memoria vengono ricontrollati prima di ACK/esito.
+Il drain del servizio esistente precede la chiusura del DB. Operazioni sincrone
+OS/SQLite sulla coda del servizio, non su main; nessuna promessa di cancellazione
+nel mezzo della transazione. Callback di selezioni vecchie inerti.
+
+Il pannello Compose condiviso è ora utilizzato anche da IosEntry tramite
+GroupTextController; il testo è congelato nella selezione nativa. Sent solo dopo
+ACK esatto e ricevuta persistita; Received dopo commit/write ACK prima del cleanup
+EOF. Gli errori successivi del solo cleanup non cancellano questi fatti.
+
+Regressioni Apple mantenute predisposte: entrambi gli ordinamenti/direzioni,
+ricevute e riapertura SQLite, B5 intermedio/stop, scope perso rifiutato senza
+consumare contatori, delegati col fondatore offline, incompatibilità/preflight,
+cancel/riselezione, ACK pendente con cancel/deadline originale, chiave errata,
+scope/ACK alterati e contesto scaduto. Stato di compilazione/esecuzione in STATO,
+non dedotto dal controllo host delle facciate Kotlin.
+
+Prossimo blocco: prima risultato del checkpoint Apple completo/correzioni, poi
+roster autenticato della sessione e conservazione/ripristino dello snapshot anche
+con destinatari offline, senza ricostruirlo dagli endpoint correnti o dalla storia.
+Scelta operativa, riconnessione, recupero completo e UI completa restano obbligatori
+e non completati. Nessuna release o collaudo fisico nuovo dichiarato.

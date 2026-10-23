@@ -6,6 +6,7 @@ import lantern.domain.SessionSelection
 import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
 import lantern.protocol.GroupSessionOfferFrameDecoder
+import lantern.protocol.GroupTextTransferContext
 
 /** Untrusted observation; only the native owner can establish live membership before using it. */
 class IosGroupSessionOffer internal constructor(internal val offer: GroupSessionOffer) {
@@ -23,7 +24,8 @@ class IosGroupSessionOffer internal constructor(internal val offer: GroupSession
 
 /** Run-owned, serial native service queue only. No DB, OS, traffic permissions or callbacks. */
 class IosGroupSessionMemory {
-    private class Held(val anchor: GroupTrustAnchor, val marker: IosGroupAdoptionJournalSnapshot?, val session: SessionCandidate)
+    private class Held(val anchor: GroupTrustAnchor, val marker: IosGroupAdoptionJournalSnapshot?,
+                       var session: SessionCandidate, val participants: Set<String>? = null)
     private var held: Held? = null
     val feature: String get() = GroupSessionOfferCodec.FEATURE
 
@@ -41,8 +43,41 @@ class IosGroupSessionMemory {
                marker: IosGroupAdoptionJournalSnapshot?): IosGroupSessionResult {
         val anchor = GroupTrustAnchor(groupId, founderId)
         val result = local.offer.select(anchor, remote.offer)
-        if (result is SessionSelection.Join) held = Held(anchor, marker, result.session)
+        if (result is SessionSelection.Join) {
+            val previous = held?.takeIf { it.anchor == anchor && sameMarker(it.marker, marker) &&
+                it.session.sessionId == result.session.sessionId }
+            held = Held(anchor, marker, result.session, previous?.participants)
+        }
         return IosGroupSessionResult(result)
+    }
+
+    /** Only after fresh membership/LSN on this TLS; never derive a used roster from its endpoints. */
+    @Throws(Exception::class)
+    fun selectText(local: IosGroupSessionOffer, remote: IosGroupSessionOffer, groupId: String, founderId: String,
+                   marker: IosGroupAdoptionJournalSnapshot?, senderId: String, recipientId: String): IosGroupTextSelection {
+        val anchor = GroupTrustAnchor(groupId, founderId)
+        val decision = local.offer.select(anchor, remote.offer)
+        if (decision !is SessionSelection.Join) return IosGroupTextSelection(null, IosGroupTextFailure.SESSION_CHOICE_REQUIRED)
+        val context = GroupTextTransferContext(groupId, decision.session.sessionId, senderId, recipientId)
+        val previous = held?.takeIf { it.anchor == anchor && sameMarker(it.marker, marker) &&
+            it.session.sessionId == decision.session.sessionId }
+        if (decision.session.used && previous?.participants != context.recipients) {
+            return IosGroupTextSelection(null, IosGroupTextFailure.ROSTER_REQUIRED)
+        }
+        held = Held(anchor, marker, decision.session, context.recipients)
+        return IosGroupTextSelection(IosGroupTextContext(context, anchor, marker), null)
+    }
+
+    internal fun checkCurrent(context: IosGroupTextContext) {
+        check(held?.let { it.anchor == context.anchor && sameMarker(it.marker, context.marker) &&
+            it.session.sessionId == context.context.sessionId && it.participants == context.context.recipients } == true) {
+            "Group text session changed"
+        }
+    }
+
+    internal fun markTextUsed(context: IosGroupTextContext) {
+        checkCurrent(context)
+        checkNotNull(held).let { it.session = it.session.copy(used = true) }
     }
 
     fun reset() { held = null }

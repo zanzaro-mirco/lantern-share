@@ -25,6 +25,11 @@ import platform.UIKit.UIViewController
 class IosPersistence private constructor(private val repository: IosDeviceRepository) {
     internal val localGroups: LocalGroupRepository get() = repository
     internal val groupAdoptions: GroupAdoptionRepository get() = repository
+    internal val groupTexts: lantern.domain.GroupTextRepository get() = repository
+
+    /** Local durable fact only; does not restore session state or authorize retransmission. */
+    @Throws(Exception::class)
+    fun groupText(id: String): IosStoredGroupText? = repository.groupText(id)?.let(::IosStoredGroupText)
 
     /** Durable local marker; inspect with the current OS identity before using its proof. */
     @Throws(Exception::class)
@@ -234,6 +239,7 @@ fun ProbeViewController(
                 GroupAdmissionPanel(groupAdmission, localGroup)
                 GroupMembershipCheckPanel(groupAdmission)
                 GroupSessionPanel(groupAdmission)
+                GroupTextPanel(groupAdmission, state.devices.map { Peer(it.id, it.name, "", 0) })
                 Text("TLS 1.3 con confronto completo del codice. Ricevuta dopo il salvataggio sul destinatario.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)

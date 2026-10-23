@@ -6,7 +6,17 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B6, primo trasferimento Android/desktop
+## Ripartenza corrente — B6, primo trasferimento Bonjour/iOS
+
+`7bf4599`: [PoC 39947250007](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39947250007) e [iOS ordinario 39947250006](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39947250006) success, letti da conclusi senza polling. Ordinario Apple compila ma non esegue Native/simulatore; ultimo runtime resta 2f74f5f / 175 XCTest. Le note post-push precedenti sono conservate sotto.
+
+Stesso trasferimento esplicito integrato in Bonjour/iOS e nel pannello Compose condiviso. Kotlin gestisce capability/ruoli, framing/scope, busta/inbox e ACK; owner Swift conserva TLS/pin/timer/reader, OS firma e verifica sul certificato reale. Memoria della run e marker esatto, used conservativo, cancel/stop sulla coda non UI, nessun consenso PoC o autorizzazione da B5. Received prima del cleanup EOF, Sent dopo ACK esatto e ricevuta persistita. Confini e regressioni in ADR 016; nessun nuovo schema/versione/lock/workflow.
+
+Locale: mirato core/UI 24 s e integrato protocollo JVM/Android, UI, APK/classi desktop 12 s success: **812 test passati**, nessun errore. Facciate Kotlin controllate su host, NON Native/export/Swift. **Sette nuovi XCTest mantenuti predisposti**, più scenario delegato esteso, ancora da compilare/eseguire in Apple; nessun nuovo hardware o interop Apple↔JVM. Comandi/limiti in STATO.
+
+**Unico prossimo blocco:** leggere da concluso il checkpoint Apple completo/correggere prima di estendere, poi roster autenticato della sessione e conservazione/ripristino dello snapshot dei destinatari anche offline. Non aggirare ROSTER_REQUIRED con i soli endpoint, storia o nuovo ID nella run usata. Continuità completa/recupero, scelta operativa e UI completa restano aperti; fase 1/hardware e gate UI invariati. Niente polling, push raggruppato.
+
+## Evidenze precedenti — B6, primo trasferimento Android/desktop
 
 `2f74f5f`: [iOS completo 39932526334](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39932526334) e [PoC 39932496757](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39932496757) success, letti da conclusi senza polling. Native/export/app e **175 XCTest riusciti**; bootstrap soltanto compilato, non hardware. Prerequisito storage di ADR 015 verificato automaticamente anche Apple.
 
@@ -15,6 +25,8 @@ Nuovo **Invia/Ricevi testo gruppo** nel servizio Node/UI Android/desktop: nuova 
 Verificato localmente l'intero checkpoint e la revisione terminale: **1114 passati**, un mDNS opt-in skipped, zero errori, APK/classi desktop compilati. TLS/P-256/SQLite veri, entrambi gli ordini/direzioni, delegati col fondatore offline, fault e interruzioni. Received locale pubblicato dopo commit/write ACK e prima di attendere EOF: il solo cleanup non annulla il fatto durevole. Comandi e limiti in STATO. Nuovo Native/Swift/hardware non attestato. Nessun full Apple duplicato adesso: ordinario compila, completo al nuovo ingresso Apple.
 
 **Prossimo blocco unico:** leggere CI conclusa/correggere, poi portare lo stesso trasferimento esplicito in Bonjour/iOS con codec/regole Kotlin, scope posseduto dalla run e owner Swift esistente, checkpoint completo Native/simulatore raggruppato. Non riusare il socket diagnostico B5 o il trust PoC. Roster multipartecipante, continuità completa/recupero e cronologia UI restano obbligatori e aperti; fase 1/hardware e gate UI invariati. Nessun polling.
+
+Consegnato `7bf45990b379fcf00db215c93f24ef2ed3c3341b`, 20 file, unico commit/push. [PoC 39947250007](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39947250007) e [iOS ordinario 39947250006](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39947250006) in_progress nell'unica lettura post-push. Nessun dispatch completo duplicato, polling o nuovo esito Apple attestato: completo al futuro ingresso iOS B6. Questa nota con STATO resta locale da raggruppare al prossimo codice, niente secondo push documentale.
 
 ## Evidenze precedenti — B6, prerequisito durevole testo di gruppo
 

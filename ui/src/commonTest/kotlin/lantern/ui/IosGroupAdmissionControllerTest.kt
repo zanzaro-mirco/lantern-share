@@ -21,6 +21,52 @@ class IosGroupAdmissionControllerTest {
     private val controller = IosGroupAdmissionController(selections::add, clicks::add, { cancels++ })
 
     @Test
+    fun textSelectionFreezesBodyRejectsOldResultAndKeepsDurableCompletionAfterCleanupFailure() {
+        controller.sendText(peer.id, peer.name, "primo")
+        val old = selections.last()
+        assertEquals(IosGroupSelectionMode.TEXT, old.mode)
+        assertEquals("primo", old.text)
+        controller.selected(old)
+        controller.receiveGroupText(peer)
+        val next = selections.last()
+        assertNull(next.text)
+        controller.selected(next)
+        controller.textTransferring(old)
+        controller.textFailed(old, IosGroupTextFailure.FAILED, "old")
+        assertEquals(IosGroupTextPhase.WAITING, controller.textSnapshot().phase)
+        val message = lantern.domain.SignedGroupText(lantern.domain.GroupTextContent(
+            "12345678-1234-1234-1234-123456789abc", "b".repeat(64), "c".repeat(64), peer.id,
+            1, 1, listOf(peer.id), "ricevuto"), "signature")
+        controller.textCompleted(next, message) // Not before native transfer admission.
+        assertEquals(IosGroupTextPhase.WAITING, controller.textSnapshot().phase)
+        controller.textTransferring(next)
+        controller.textCompleted(next, message)
+        controller.failed(next, IosGroupServiceFailure.FAILED)
+        controller.textFailed(next, IosGroupTextFailure.FAILED, message.content.id)
+        assertEquals(IosGroupTextPhase.RECEIVED, controller.textSnapshot().phase)
+        assertEquals("ricevuto", controller.textSnapshot().body)
+        controller.cancelled()
+        controller.textCompleted(next, message)
+        assertEquals(IosGroupTextPhase.IDLE, controller.textSnapshot().phase)
+        assertSame(lantern.domain.GroupTextState.Idle, controller.groupTextState.value)
+    }
+
+    @Test
+    fun textFailureIsSeparateFromAdmissionAndInvalidBodyNeverDispatches() {
+        controller.sendText(peer.id, peer.name, "")
+        assertEquals(0, selections.size)
+        controller.sendText(peer.id, peer.name, "valido")
+        val current = selections.single()
+        controller.selected(current)
+        controller.textTransferring(current)
+        controller.textFailed(current, IosGroupTextFailure.ROSTER_REQUIRED, "potential-copy")
+        assertEquals(IosGroupTextFailure.ROSTER_REQUIRED, controller.textSnapshot().failure)
+        assertEquals("potential-copy", controller.textSnapshot().messageId)
+        assertSame(GroupAdmissionState.Idle, controller.admissionState.value)
+        assertEquals(0L, controller.membershipRevision.value)
+    }
+
+    @Test
     fun onlyExactDisplayedComparisonCanDispatchOneNativeClick() {
         controller.selectGroupPeer(peer)
         val selection = selections.single()

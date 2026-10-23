@@ -7,6 +7,35 @@ final class GroupSessionMemoryTests: XCTestCase {
     private let group = String(repeating: "a", count: 64)
     private let founder = String(repeating: "b", count: 64)
 
+    func testTextScopeSurvivesExactB5ButNeverDifferentMarkerPeerOrReset() throws {
+        let memory = IosGroupSessionMemory()
+        let marker = try snapshot(attempt: "e")
+        let local = try memory.propose(groupId: group, founderId: founder, marker: marker, newSessionId: id("c"))
+        let remote = try IosGroupSessionMemory().propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("d"))
+        XCTAssertNotNil(try memory.selectText(local: local, remote: remote, groupId: group, founderId: founder,
+            marker: marker, senderId: founder, recipientId: id("d")).context)
+        let held = try memory.propose(groupId: group, founderId: founder, marker: marker, newSessionId: id("f"))
+        let usedHeld = try used(held)
+        // Install a test observation of the same used session after scope was established.
+        XCTAssertNotNil(try memory.selectText(local: usedHeld, remote: usedHeld, groupId: group, founderId: founder,
+            marker: marker, senderId: id("d"), recipientId: founder).context)
+        _ = try memory.select(local: usedHeld, remote: usedHeld, groupId: group, founderId: founder, marker: marker)
+        XCTAssertNotNil(try memory.selectText(local: usedHeld, remote: usedHeld, groupId: group, founderId: founder,
+            marker: snapshot(attempt: "e"), senderId: founder, recipientId: id("d")).context)
+        for (currentMarker, peer) in [(marker, id("f")), (try snapshot(attempt: "f"), id("d"))] {
+            let result = try memory.selectText(local: usedHeld, remote: usedHeld, groupId: group, founderId: founder,
+                marker: currentMarker, senderId: founder, recipientId: peer)
+            XCTAssertNil(result.context)
+            XCTAssertEqual(result.failure, .rosterRequired)
+        }
+        memory.reset()
+        let fresh = try memory.propose(groupId: group, founderId: founder, marker: marker, newSessionId: id("f"))
+        let unknown = try memory.selectText(local: fresh, remote: usedHeld, groupId: group, founderId: founder,
+            marker: marker, senderId: founder, recipientId: id("d"))
+        XCTAssertNil(unknown.context)
+        XCTAssertEqual(unknown.failure, .rosterRequired)
+    }
+
     func testHeldSessionIsBoundToEntireCommittedMarkerAndRunReset() throws {
         let memory = IosGroupSessionMemory()
         let marker = try snapshot(attempt: "e")

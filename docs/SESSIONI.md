@@ -17,7 +17,7 @@ Il selettore non conosce archivi o messaggi: non ripubblica né unisce cronologi
 
 Verifica locale: `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, otto casi condivisi per target. Coprono creazione, separazione gruppi, convergenza indipendente dall'ordine, priorità della sessione utilizzata, scelta esplicita, duplicati, conflitti e ID vuoti. Non equivalgono a convergenza distribuita su rete o a collaudo hardware. I test Native sono inclusi nel checkpoint iOS manuale, non eseguiti localmente su Windows.
 
-Le credenziali di gruppo e il primo confronto autenticato tra due Node sono integrati. Lo stesso ingresso Bonjour/iOS è verificato automaticamente su c938980 (175 XCTest complessivi), non hardware. Restano uno snapshot multipartecipante aggiornato, ciclo di vita/cambio rete automatico e UI operativa della scelta. Il nuovo archivio testo/used di ADR 015 è un prerequisito non ancora collegato al traffico: non ripristina sessioni. La sola decisione locale non autorizza traffico; nessuna autorizzazione derivata da mDNS, dal precedente B4 o da `READY` del bootstrap. La sessione vuota di B5 vive soltanto nella run del servizio, mai ripristinata dal database. Comandi e risultati correnti in STATO.
+Le credenziali di gruppo e il primo confronto autenticato tra due Node sono integrati. Lo stesso ingresso Bonjour/iOS è verificato automaticamente su c938980 (175 XCTest complessivi), non hardware. Restano uno snapshot multipartecipante aggiornato, ciclo di vita/cambio rete automatico e UI operativa della scelta. L'archivio testo/used di ADR 015 è ora usato dal trasferimento esplicito di ADR 016, anche nel nuovo ingresso iOS ancora da verificare in Apple: non ripristina sessioni. La sola decisione locale B5 non autorizza traffico; nessuna autorizzazione derivata da mDNS, dal precedente B4 o da `READY` del bootstrap. La sessione di B5 vive soltanto nella run del servizio, mai ripristinata dal database. Comandi e risultati correnti in STATO.
 
 ## Collaudo fisico B5 ancora da eseguire — Android ↔ Windows
 
@@ -51,7 +51,7 @@ l'ingresso B5 iOS è verificato automaticamente, non su hardware.
 Applicare anche a iPhone la stessa lista con build dello stesso checkpoint,
 registrando separatamente interoperabilità Apple ↔ Android/desktop.
 
-## Collaudo fisico B6 ancora da eseguire — Android ↔ Windows
+## Collaudo fisico B6 ancora da eseguire — Android ↔ Windows e iPhone
 
 Nuovo percorso di [ADR 016](ADR-016-PRIMO-TRASFERIMENTO-TESTO-GRUPPO.md), NON prova
 già eseguita. Build dello stesso checkpoint, dispositivi già ammessi allo stesso
@@ -77,5 +77,7 @@ gruppo tramite il percorso di ingresso gruppo, non la sola associazione PoC.
    cancellando il database. Ripristino del roster e continuità completa restano aperti.
 
 Ripetere senza WAN e registrare commit, OS, rete, ordine delle azioni, ID/esiti ed
-eventuali errori senza contenuti o chiavi. Nessun nuovo collaudo iPhone B6 prima
-dell'integrazione Apple; iPhone/Mac e hardware di fase 1 rimangono obbligatori.
+eventuali errori senza contenuti o chiavi. Applicare a iPhone solo dopo il checkpoint
+Apple completo riuscito del nuovo ingresso, con build dello stesso checkpoint;
+registrare separatamente Apple ↔ Android/desktop. iPhone/Mac e hardware di fase 1
+rimangono obbligatori. Nessun collaudo nuovo attestato da questa lista.

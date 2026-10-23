@@ -35,6 +35,9 @@ final class GroupAdmissionSession {
     private var issuerConfirmed = false
     private var membershipVerified = false
     private var sessionSelected = false
+    private var textCompleted = false
+    private var textTransfer: IosGroupTextTransfer?
+    private var textFailure: IosGroupTextFailure = .failed
     private var committing = false
     private var drained = false
     private var drainCallbacks: [() -> Void] = []
@@ -71,7 +74,7 @@ final class GroupAdmissionSession {
                 guard let anchor else { fail(.unavailable); return }
                 _ = try GroupMembership.prepare(identity: identity, persistence: persistence)
                 guard try membershipUnchanged() else { fail(.unavailable); return }
-                if selection.mode == .session {
+                if selection.mode == .session || selection.mode == .text {
                     sessionOffer = try sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
                         marker: membership, newSessionId: Self.randomSessionID())
                 }
@@ -156,6 +159,8 @@ final class GroupAdmissionSession {
             let feature = IosLocalGroupMembership.shared.feature
             let capabilities: String
             switch selection.mode {
+            case .text:
+                capabilities = IosGroupTextProtocol.shared.capabilities(sending: selection.text != nil)
             case .membershipCheck:
                 capabilities = "{\"version\":1,\"supportedFeatures\":[\"\(feature)\"],\"requiredFeatures\":[\"\(feature)\"]}"
             case .session:
@@ -187,6 +192,10 @@ final class GroupAdmissionSession {
             guard try membershipUnchanged() else { fail(.failed); return }
             let local = try GroupMembership.prepare(identity: identity, persistence: persistence)
             guard live, try membershipUnchanged() else { fail(.failed); return }
+            if selection.mode == .text {
+                transferText(local, owner: bootstrap)
+                return
+            }
             if selection.mode == .session {
                 guard let sessionOffer else { fail(.failed); return }
                 guard bootstrap.negotiateSession(membership: local, offer: sessionOffer,
@@ -218,6 +227,71 @@ final class GroupAdmissionSession {
             }) else { fail(.failed); return }
         } catch { fail(.failed) }
     }
+
+    private func transferText(_ local: IosGroupMembershipEvidence, owner: HandshakeV1Channel) {
+        guard live, let sessionOffer else { fail(.failed); return }
+        let sending = selection.text != nil
+        guard owner.transferGroupText(membership: local, offer: sessionOffer, sending: sending,
+            verifyRemote: { [weak self] remote in
+                guard let self, self.live, let anchor = self.anchor else { return false }
+                return try self.membershipUnchanged() &&
+                    GroupMembership.verify(remote, anchor: anchor, peerID: self.selection.peerId) &&
+                    self.live && self.membershipUnchanged()
+            }, selectSession: { [weak self] remote in
+                guard let self, self.textContextCurrent(), let anchor = self.anchor else { throw TextError.expired }
+                let result = try self.sessionMemory.selectText(local: sessionOffer, remote: remote,
+                    groupId: anchor.groupId, founderId: anchor.founderId, marker: self.membership,
+                    senderId: sending ? self.identity.id : self.selection.peerId,
+                    recipientId: sending ? self.selection.peerId : self.identity.id)
+                guard let context = result.context else {
+                    self.textFailure = result.failure ?? .failed
+                    throw TextError.scopeRequired
+                }
+                let transfer = IosGroupTextTransfer(persistence: self.persistence, memory: self.sessionMemory,
+                    scope: context, localIdentity: self.identity.id)
+                self.textTransfer = transfer
+                self.presentation.textTransferring(value: self.selection)
+                return transfer
+            }, outgoing: { [weak self] transfer in
+                guard let self, let body = self.selection.text, self.textContextCurrent() else { throw TextError.expired }
+                return try transfer.prepareOutgoing(id: UUID().uuidString.lowercased(), body: body,
+                    isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, sign: { bytes in
+                        try? self.identity.sign(Self.data(bytes)) // Nil becomes a caught, terminal facade error.
+                    })
+            }, incoming: { [weak self] transfer, payload, certificate in
+                guard let self, self.textContextCurrent() else { throw TextError.expired }
+                return try transfer.receive(payload: payload, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) },
+                    verify: { bytes, signature in
+                        KotlinBoolean(bool: AppleIdentity.verify(certificate: certificate, message: Self.data(bytes), signature: signature))
+                    })
+            }, acknowledged: { [weak self] transfer, message, payload, digest in
+                guard let self, self.textContextCurrent() else { throw TextError.expired }
+                try transfer.acknowledge(payload: payload, envelope: message, digest: digest,
+                    isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
+                self.publishText(message)
+            }, received: { [weak self] message in
+                guard let self, self.textContextCurrent() else { throw TextError.expired }
+                self.publishText(message)
+            }) else { fail(.failed); return }
+    }
+
+    private func textContextCurrent() -> Bool {
+        // Queue serialization arbitrates admission to the durable step against cancel/stop.
+        // An entered SQL operation may finish; deadline/marker are rechecked before ACK/publication.
+        guard live else { return false }
+        do { return try membershipUnchanged() && live } catch { return false }
+    }
+
+    private func publishText(_ message: IosGroupTextEnvelope) {
+        textCompleted = true
+        IosGroupTextProtocol.shared.completed(controller: presentation, selection: selection, envelope: message)
+    }
+
+    private static func data(_ bytes: KotlinByteArray) -> Data {
+        Data((0..<Int(bytes.size)).map { UInt8(bitPattern: bytes.get(index: Int32($0))) })
+    }
+
+    private enum TextError: Error { case expired, scopeRequired }
 
     private func exchangeEvidence() {
         guard live, let bootstrap else { return }
@@ -325,7 +399,13 @@ final class GroupAdmissionSession {
 
     private func fail(_ failure: IosGroupServiceFailure) {
         guard !ended else { return }
-        if !issuerConfirmed && !membershipVerified && !sessionSelected { presentation.failed(value: selection, reason: failure) }
+        if selection.mode == .text {
+            if !textCompleted {
+                presentation.textFailed(value: selection,
+                    reason: failure == .unavailable ? .unavailable : textFailure,
+                    attemptedMessageId: textTransfer?.attemptedMessageId)
+            }
+        } else if !issuerConfirmed && !membershipVerified && !sessionSelected { presentation.failed(value: selection, reason: failure) }
         retire()
     }
 
@@ -342,6 +422,7 @@ final class GroupAdmissionSession {
         pendingTLS = nil
         bootstrap?.cancel()
         bootstrap = nil
+        textTransfer = nil
         issuer?.cancel()
         issuer = nil
         if let root {
