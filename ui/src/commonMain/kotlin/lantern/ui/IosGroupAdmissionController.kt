@@ -4,7 +4,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import lantern.domain.ContentLimits
-import lantern.domain.GroupTextController
+import lantern.domain.GroupRosterController
+import lantern.domain.GroupRosterState
+import lantern.domain.GroupRosterFailure
 import lantern.domain.GroupTextState
 import lantern.domain.GroupTextFailure
 import lantern.domain.SignedGroupText
@@ -16,7 +18,7 @@ import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
 import lantern.domain.Peer
 
-enum class IosGroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION, TEXT }
+enum class IosGroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION, TEXT, ROSTER }
 
 /** Opaque selection identity, not a TLS permission or a recoverable consent. */
 class IosGroupAdmissionSelection internal constructor(
@@ -56,7 +58,7 @@ class IosGroupAdmissionController(
     private val requestSelect: (IosGroupAdmissionSelection) -> Unit,
     private val requestConfirm: (IosGroupAdmissionDisplayTicket) -> Unit,
     private val requestCancel: () -> Unit,
-) : GroupTextController {
+) : GroupRosterController {
     private val state = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     private val revision = MutableStateFlow(0L)
     private var selection: IosGroupAdmissionSelection? = null
@@ -69,6 +71,33 @@ class IosGroupAdmissionController(
     override val groupSessionState = session.asStateFlow()
     private val text = MutableStateFlow<GroupTextState>(GroupTextState.Idle)
     override val groupTextState = text.asStateFlow()
+    private val roster = MutableStateFlow<GroupRosterState>(GroupRosterState.Idle)
+    override val groupRosterState = roster.asStateFlow()
+
+    override fun synchronizeGroupRoster(peer: Peer) {
+        requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.ROSTER))
+    }
+
+    fun synchronizeRoster(id: String, name: String) = synchronizeGroupRoster(Peer(id, name, "", 0))
+
+    fun rosterCompleted(value: IosGroupAdmissionSelection, groupId: String, sessionId: String, participants: List<String>) {
+        if (selection === value && value.mode == IosGroupSelectionMode.ROSTER && roster.value is GroupRosterState.Synchronizing) {
+            roster.value = GroupRosterState.Synchronized(value.peer, groupId, sessionId, participants.toSet())
+        }
+    }
+
+    fun rosterFailed(value: IosGroupAdmissionSelection, reason: IosGroupRosterFailure) {
+        if (selection === value && value.mode == IosGroupSelectionMode.ROSTER && roster.value is GroupRosterState.Synchronizing) {
+            roster.value = GroupRosterState.Failed(value.peer, GroupRosterFailure.valueOf(reason.name))
+        }
+    }
+
+    fun rosterSnapshot(): IosGroupRosterDisplay = when (val current = roster.value) {
+        GroupRosterState.Idle -> IosGroupRosterDisplay(IosGroupRosterPhase.IDLE, "", emptyList(), null)
+        is GroupRosterState.Synchronizing -> IosGroupRosterDisplay(IosGroupRosterPhase.SYNCHRONIZING, "", emptyList(), null)
+        is GroupRosterState.Synchronized -> IosGroupRosterDisplay(IosGroupRosterPhase.SYNCHRONIZED, current.sessionId, current.participants.sorted(), null)
+        is GroupRosterState.Failed -> IosGroupRosterDisplay(IosGroupRosterPhase.FAILED, "", emptyList(), IosGroupRosterFailure.valueOf(current.reason.name))
+    }
 
     override fun sendGroupText(peer: Peer, text: String) {
         if (ContentLimits.isValidText(text)) requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.TEXT, text))
@@ -131,11 +160,13 @@ class IosGroupAdmissionController(
         membership.value = GroupMembershipCheckState.Idle
         session.value = GroupSessionState.Idle
         text.value = GroupTextState.Idle
+        roster.value = GroupRosterState.Idle
         when (value.mode) {
             IosGroupSelectionMode.ADMISSION -> state.value = GroupAdmissionState.Selecting(value.peer)
             IosGroupSelectionMode.MEMBERSHIP_CHECK -> membership.value = GroupMembershipCheckState.Checking(value.peer)
             IosGroupSelectionMode.SESSION -> session.value = GroupSessionState.Negotiating(value.peer)
             IosGroupSelectionMode.TEXT -> text.value = GroupTextState.Waiting(value.peer, value.text != null)
+            IosGroupSelectionMode.ROSTER -> roster.value = GroupRosterState.Synchronizing(value.peer)
         }
     }
 
@@ -220,7 +251,9 @@ class IosGroupAdmissionController(
             IosGroupServiceFailure.FAILED -> GroupAdmissionFailure.FAILED
             IosGroupServiceFailure.COMMIT_OUTCOME_UNKNOWN -> GroupAdmissionFailure.COMMIT_OUTCOME_UNKNOWN
         }
-        if (value.mode == IosGroupSelectionMode.TEXT) {
+        if (value.mode == IosGroupSelectionMode.ROSTER) {
+            rosterFailed(value, if (reason == IosGroupServiceFailure.UNAVAILABLE) IosGroupRosterFailure.UNAVAILABLE else IosGroupRosterFailure.FAILED)
+        } else if (value.mode == IosGroupSelectionMode.TEXT) {
             textFailed(value, if (reason == IosGroupServiceFailure.UNAVAILABLE) IosGroupTextFailure.UNAVAILABLE else IosGroupTextFailure.FAILED, null)
         } else if (value.mode == IosGroupSelectionMode.SESSION) {
             if (session.value is GroupSessionState.Negotiating) session.value = GroupSessionState.Failed(value.peer, failure)
@@ -238,6 +271,7 @@ class IosGroupAdmissionController(
         membership.value = GroupMembershipCheckState.Idle
         session.value = GroupSessionState.Idle
         text.value = GroupTextState.Idle
+        roster.value = GroupRosterState.Idle
     }
 
     /** Independent of selection state, including an ambiguous result or a dismissed attempt. */
@@ -248,3 +282,8 @@ enum class IosGroupTextPhase { IDLE, WAITING, TRANSFERRING, SENT, RECEIVED, FAIL
 enum class IosGroupTextFailure { UNAVAILABLE, ROSTER_REQUIRED, SESSION_CHOICE_REQUIRED, FAILED }
 data class IosGroupTextDisplay(val phase: IosGroupTextPhase, val messageId: String, val sessionId: String,
                              val body: String, val failure: IosGroupTextFailure?)
+
+enum class IosGroupRosterPhase { IDLE, SYNCHRONIZING, SYNCHRONIZED, FAILED }
+enum class IosGroupRosterFailure { UNAVAILABLE, SESSION_CHOICE_REQUIRED, MISSING_PARTICIPANTS, FAILED }
+data class IosGroupRosterDisplay(val phase: IosGroupRosterPhase, val sessionId: String,
+                               val participants: List<String>, val failure: IosGroupRosterFailure?)

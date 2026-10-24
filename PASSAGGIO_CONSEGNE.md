@@ -1,4 +1,4 @@
-# Passaggio di consegne — 23 ottobre 2026
+# Passaggio di consegne — 24 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -6,7 +6,17 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B7, roster autenticato Node/UI
+## Ripartenza corrente — B7, ingresso roster Bonjour/iOS
+
+Checkpoint `99c5cf6`: [iOS ordinario 39983832282](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39983832282) e [PoC 39983832329](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39983832329) conclusi success, unica lettura, nessun polling. Ordinario Apple compila soltanto; ultimo runtime attestato resta `fcec8f7`, 182 XCTest. Note post-push precedenti preservate sotto.
+
+Stessa azione **Sincronizza roster** integrata in iPhone/pannello Compose: codec/prove/unione/memoria in Kotlin, owner Swift per TLS/certificato reale/firme/digest/I/O. Proposta senza installazione, revisione della run e marker intero, LRA esatto prima dell'installazione; cancel/stop e cleanup preservano i confini Node. B5/testo mantengono il roster, LTX non lo riduce neanche su sessione vuota. Cache Apple ricontrolla DER su cache hit fra catene. [ADR 017](docs/ADR-017-ROSTER-AUTENTICATO-SESSIONE.md), schema/wire precedenti/versioni/lock/workflow invariati.
+
+Locale definitivo: protocollo JVM/Android **421/385**, UI **13/13**, **832 passati**, zero failure/error/skipped, APK/classi desktop compilati in 13 s. Controllo aggiuntivo delle facciate Kotlin sul compilatore host, NON Native/export/Swift. **Nove nuovi XCTest mantenuti predisposti**, non eseguiti su Windows; nuovo checkpoint completo Apple necessario, nessun hardware/interop Apple↔JVM attestato.
+
+**Unico prossimo blocco:** leggere il checkpoint Apple completo da concluso/correggere prima di estendere; poi primo invio con snapshot autenticato multipartecipante, destinatari congelati completi e ricevute per destinatario, nuova continuazione negoziata senza alterare implicitamente LTX. Recupero/reconnect, scelta operativa, paginazione e UI completa restano aperti; fase 1/hardware e gate UI invariati. Push unico raggruppato, nessun polling o run duplicata.
+
+## Evidenze precedenti — B7, roster autenticato Node/UI
 
 `fcec8f7`: [iOS completo 39965540210](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39965540210) e [PoC 39965517784](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39965517784) success, letti da conclusi senza polling. Native/export/app e **182 XCTest passati**, bootstrap soltanto compilato. B6 verificato automaticamente anche iOS, non hardware. Note post-push precedenti preservate sotto.
 
@@ -15,6 +25,8 @@ Nuova azione **Sincronizza roster** Node/UI Android/desktop: attestazioni propri
 Locale: checkpoint integrato **3 min success**, protocollo con limite cumulativo **6 s success**, finale connettività/app **2m 54s success**; **1145 test passati**, un mDNS opt-in skipped, zero failure/error. APK/classi desktop compilati. TLS/P-256/SQLite riaperto veri, tre partecipanti con due passaggi offline, no destinatari retroattivi, perdite/alterazioni/cancel/deadline; cache certificati irrigidita contro sostituzioni DER tra catene. Comandi e dettagli in STATO. Nuovo Native non eseguito da Windows, ingresso roster iOS assente; testo iOS B6 resta compatibile e verificato sul checkpoint precedente.
 
 **Unico prossimo blocco:** leggere la CI conclusa/correggere, poi stesso ingresso roster Bonjour/iOS con codec/regole Kotlin, memoria della run e owner Swift, checkpoint completo Native/simulatore raggruppato. Non aggiungere letture dopo EOF del negoziato diagnostico. Invio con snapshot multipartecipante, paginazione roster, scelta operativa, recupero/reconnect e UI completa restano aperti; fase 1/hardware e gate UI invariati. Nessun polling, un solo push raggruppato; nuovo completo Apple all'ingresso iOS, non duplicato ora.
+
+Consegnato `99c5cf65d75b76196248095737719e9962d12cfd`, 21 file, unico commit/push. Le nuove run non erano ancora indicizzate nell'unica lista post-push: [controlli del commit](https://github.com/zanzaro-mirco/lantern-share/commit/99c5cf65d75b76196248095737719e9962d12cfd/checks), esito remoto NON verificato. Nessuna seconda lettura/polling o dispatch completo duplicato; nuovo runtime Native al futuro ingresso iOS B7. Questa nota con STATO resta locale da raggruppare al prossimo codice, niente secondo push documentale.
 
 ## Evidenze precedenti — B6, primo trasferimento Bonjour/iOS
 

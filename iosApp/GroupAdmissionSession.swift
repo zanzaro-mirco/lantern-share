@@ -36,6 +36,9 @@ final class GroupAdmissionSession {
     private var membershipVerified = false
     private var sessionSelected = false
     private var textCompleted = false
+    private var rosterCompleted = false
+    private var rosterExchange: IosGroupRosterExchange?
+    private var rosterFailure: IosGroupRosterFailure = .failed
     private var textTransfer: IosGroupTextTransfer?
     private var textFailure: IosGroupTextFailure = .failed
     private var committing = false
@@ -74,7 +77,7 @@ final class GroupAdmissionSession {
                 guard let anchor else { fail(.unavailable); return }
                 _ = try GroupMembership.prepare(identity: identity, persistence: persistence)
                 guard try membershipUnchanged() else { fail(.unavailable); return }
-                if selection.mode == .session || selection.mode == .text {
+                if selection.mode == .session || selection.mode == .text || selection.mode == .roster {
                     sessionOffer = try sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
                         marker: membership, newSessionId: Self.randomSessionID())
                 }
@@ -159,6 +162,8 @@ final class GroupAdmissionSession {
             let feature = IosLocalGroupMembership.shared.feature
             let capabilities: String
             switch selection.mode {
+            case .roster:
+                capabilities = IosGroupRosterProtocol.shared.capabilities()
             case .text:
                 capabilities = IosGroupTextProtocol.shared.capabilities(sending: selection.text != nil)
             case .membershipCheck:
@@ -192,6 +197,10 @@ final class GroupAdmissionSession {
             guard try membershipUnchanged() else { fail(.failed); return }
             let local = try GroupMembership.prepare(identity: identity, persistence: persistence)
             guard live, try membershipUnchanged() else { fail(.failed); return }
+            if selection.mode == .roster {
+                synchronizeRoster(local, owner: bootstrap)
+                return
+            }
             if selection.mode == .text {
                 transferText(local, owner: bootstrap)
                 return
@@ -226,6 +235,41 @@ final class GroupAdmissionSession {
                 if self.identity.id < self.selection.peerId { self.retire() }
             }) else { fail(.failed); return }
         } catch { fail(.failed) }
+    }
+
+    private func synchronizeRoster(_ local: IosGroupMembershipEvidence, owner: HandshakeV1Channel) {
+        guard live, let sessionOffer else { fail(.failed); return }
+        guard owner.synchronizeRoster(membership: local, offer: sessionOffer,
+            verifyRemote: { [weak self] remote in
+                guard let self, self.textContextCurrent(), let anchor = self.anchor else { return false }
+                return try GroupMembership.verify(remote, anchor: anchor, peerID: self.selection.peerId) && self.textContextCurrent()
+            }, propose: { [weak self] remote in
+                guard let self, self.textContextCurrent(), let anchor = self.anchor else { throw TextError.expired }
+                let selected = try self.sessionMemory.selectRoster(local: sessionOffer, remote: remote,
+                    groupId: anchor.groupId, founderId: anchor.founderId, marker: self.membership)
+                guard let exchange = selected.exchange else {
+                    self.rosterFailure = selected.failure ?? .failed
+                    throw TextError.scopeRequired
+                }
+                self.rosterExchange = exchange
+                return try exchange.propose(membership: local,
+                    certificateDer: (SecCertificateCopyData(self.identity.certificate) as Data).base64EncodedString(),
+                    isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, sign: { bytes in
+                        try? self.identity.sign(Self.data(bytes))
+                    })
+            }, merge: { [weak self] payload, certificate in
+                guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
+                return try GroupMembership.withVerifier { verify in
+                    try exchange.merge(payload: payload, peerId: self.selection.peerId,
+                        peerCertificateDer: (SecCertificateCopyData(certificate) as Data).base64EncodedString(),
+                        isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, verify: verify)
+                }
+            }, completed: { [weak self] snapshot in
+                guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
+                try exchange.install(snapshot: snapshot, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
+                self.rosterCompleted = true
+                IosGroupRosterProtocol.shared.completed(controller: self.presentation, selection: self.selection, snapshot: snapshot)
+            }) else { fail(.failed); return }
     }
 
     private func transferText(_ local: IosGroupMembershipEvidence, owner: HandshakeV1Channel) {
@@ -399,7 +443,12 @@ final class GroupAdmissionSession {
 
     private func fail(_ failure: IosGroupServiceFailure) {
         guard !ended else { return }
-        if selection.mode == .text {
+        if selection.mode == .roster {
+            if !rosterCompleted {
+                presentation.rosterFailed(value: selection,
+                    reason: failure == .unavailable ? .unavailable : (rosterExchange?.failure ?? rosterFailure))
+            }
+        } else if selection.mode == .text {
             if !textCompleted {
                 presentation.textFailed(value: selection,
                     reason: failure == .unavailable ? .unavailable : textFailure,
@@ -423,6 +472,7 @@ final class GroupAdmissionSession {
         bootstrap?.cancel()
         bootstrap = nil
         textTransfer = nil
+        rosterExchange = nil
         issuer?.cancel()
         issuer = nil
         if let root {

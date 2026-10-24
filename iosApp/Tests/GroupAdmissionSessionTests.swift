@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import CryptoKit
 import Network
 import Security
 import XCTest
@@ -425,8 +426,16 @@ final class GroupAdmissionSessionTests: XCTestCase {
         try pendingExchangeIsRevoked(text: true)
     }
 
-    private func pendingExchangeIsRevoked(text: Bool) throws {
-        for expire in [false, true] {
+    func testRosterPendingAgreementAfterFreshProofsIsRevokedByCancelAndOriginalDeadline() throws {
+        try pendingExchangeIsRevoked(text: false, roster: true)
+    }
+
+    func testRosterAlteredAgreementNeverInstallsTheMergedView() throws {
+        try pendingExchangeIsRevoked(text: false, roster: true, corruptAgreement: true)
+    }
+
+    private func pendingExchangeIsRevoked(text: Bool, roster: Bool = false, corruptAgreement: Bool = false) throws {
+        for expire in (corruptAgreement ? [false] : [false, true]) {
             let pair = try fixture(founderInitiates: expire)
             try confirmBoth(pair.issuer, pair.member)
             closeAndDrain(pair.issuer)
@@ -440,11 +449,11 @@ final class GroupAdmissionSessionTests: XCTestCase {
             let listener = try higher.transport.listen { [lower.identity.id] }
             let memberFeature = IosLocalGroupMembership.shared.feature
             let sessionFeature = lower.sessionMemory.feature
-            let capabilities = text ? IosGroupTextProtocol.shared.capabilities(sending: true) :
+            let capabilities = roster ? IosGroupRosterProtocol.shared.capabilities() : text ? IosGroupTextProtocol.shared.capabilities(sending: true) :
                 "{\"version\":1,\"supportedFeatures\":[\"\(memberFeature)\",\"\(sessionFeature)\"],\"requiredFeatures\":[\"\(memberFeature)\",\"\(sessionFeature)\"]}"
             let pause: () -> Void = {
                 paused.fulfill()
-                if !expire { self.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { localOwner?.cancel() } }
+                if !expire && !corruptAgreement { self.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { localOwner?.cancel() } }
             }
             queue.sync {
                 listeners.append(listener)
@@ -470,7 +479,10 @@ final class GroupAdmissionSessionTests: XCTestCase {
                                                 let sessionDecoder = IosGroupSessionDecoder()
                                                 self.readExact(connection, budget: { try sessionDecoder.nextReadBytes() },
                                                     accept: { try sessionDecoder.accept(chunk: $0).offer }) { remoteOffer in
-                                                    if text {
+                                                    if roster {
+                                                        try self.pauseBeforeRosterAgreement(connection, higher: higher, lower: lower,
+                                                            remoteOffer: remoteOffer, corruptAgreement: corruptAgreement, pause: pause)
+                                                    } else if text {
                                                         try self.pauseBeforeTextACK(connection, receiver: higher, sender: lower,
                                                             remoteOffer: remoteOffer, pause: pause)
                                                     } else { pause() } // Deliberately no LSN response.
@@ -500,11 +512,25 @@ final class GroupAdmissionSessionTests: XCTestCase {
                         let proof = try GroupMembership.prepare(identity: lower.identity, persistence: lower.store)
                         let offer = try lower.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
                             marker: lower.store.committedGroupAdoption(), newSessionId: String(repeating: "e", count: 64))
+                        var rosterExchange: IosGroupRosterExchange?
                         let owner = try HandshakeV1Channel(connection: connection, identity: lower.identity, transport: lower.transport,
                             selectedPeerID: higher.identity.id,
                             selectedAtMillis: HandshakeV1Channel.monotonicMillis() - (expire ? 117_000 : 0), queue: self.queue,
                             continuation: .groupAdmission(onHello: {
-                                if text {
+                                if roster {
+                                    XCTAssertTrue(localOwner?.synchronizeRoster(membership: proof, offer: offer,
+                                        verifyRemote: { try GroupMembership.verify($0, anchor: anchor, peerID: higher.identity.id) },
+                                        propose: { remote in
+                                            let selected = try lower.sessionMemory.selectRoster(local: offer, remote: remote,
+                                                groupId: anchor.groupId, founderId: anchor.founderId, marker: lower.store.committedGroupAdoption())
+                                            let exchange = try XCTUnwrap(selected.exchange)
+                                            rosterExchange = exchange
+                                            return try self.proposeRoster(lower, exchange: exchange)
+                                        }, merge: { payload, certificate in
+                                            XCTAssertEqual(SecCertificateCopyData(certificate) as Data, SecCertificateCopyData(higher.identity.certificate) as Data)
+                                            return try self.mergeRoster(XCTUnwrap(rosterExchange), payload: payload, peer: higher)
+                                        }, completed: { _ in XCTFail("Peer sent no LRA") }) ?? false)
+                                } else if text {
                                     XCTAssertTrue(localOwner?.transferGroupText(membership: proof, offer: offer, sending: true,
                                         verifyRemote: { try GroupMembership.verify($0, anchor: anchor, peerID: higher.identity.id) },
                                         selectSession: { remote in
@@ -530,6 +556,8 @@ final class GroupAdmissionSessionTests: XCTestCase {
                                 if expire {
                                     if case .bootstrap(let reason) = failure { XCTAssertEqual(reason.name, "EXPIRED") }
                                     else { XCTFail("Expected original deadline") }
+                                } else if corruptAgreement {
+                                    if case .adapter = failure {} else { XCTFail("Expected exact agreement rejection") }
                                 } else if case .cancelled = failure {} else { XCTFail("Expected cancellation") }
                                 revoked.fulfill()
                             })
@@ -546,6 +574,46 @@ final class GroupAdmissionSessionTests: XCTestCase {
     }
 
     private enum PendingTextError: Error { case unexpected }
+
+    private func pauseBeforeRosterAgreement(_ connection: NWConnection, higher: Side, lower: Side,
+                                           remoteOffer: IosGroupSessionOffer, corruptAgreement: Bool,
+                                           pause: @escaping () -> Void) throws {
+        let anchor = try XCTUnwrap(higher.store.localGroup())
+        let marker = try higher.store.committedGroupAdoption()
+        let offer = try higher.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
+            marker: marker, newSessionId: String(repeating: "f", count: 64))
+        let selected = try higher.sessionMemory.selectRoster(local: offer, remote: remoteOffer,
+            groupId: anchor.groupId, founderId: anchor.founderId, marker: marker)
+        let exchange = try XCTUnwrap(selected.exchange)
+        let local = try proposeRoster(higher, exchange: exchange)
+        connection.send(content: data(try offer.framedBytes()), completion: .contentProcessed { error in
+            self.queue.async {
+                XCTAssertNil(error)
+                let decoder = IosGroupRosterDecoder(agreement: false)
+                self.readExact(connection, budget: { try decoder.nextReadBytes() }, accept: { try decoder.accept(chunk: $0).payload }) { payload in
+                    let merged = try self.mergeRoster(exchange, payload: payload, peer: lower)
+                    let digest = SHA256.hash(data: self.data(try merged.payload())).map { String(format: "%02x", $0) }.joined()
+                    let expected = self.data(try merged.agreement(digest: digest))
+                    connection.send(content: self.data(try local.framedBytes()), completion: .contentProcessed { error in
+                        self.queue.async {
+                            XCTAssertNil(error)
+                            let agreement = IosGroupRosterDecoder(agreement: true)
+                            self.readExact(connection, budget: { try agreement.nextReadBytes() }, accept: { try agreement.accept(chunk: $0).payload }) { value in
+                                XCTAssertEqual(self.data(value), expected)
+                                if corruptAgreement {
+                                    var altered = expected
+                                    altered[altered.count - 1] = altered.last == 48 ? 49 : 48
+                                    connection.send(content: self.data(try IosGroupRosterProtocol.shared.frame(payload: self.bytes(altered))),
+                                        completion: .contentProcessed { error in XCTAssertNil(error) })
+                                }
+                                pause() // Full verified union, but deliberately no LRA response/installation.
+                            }
+                        }
+                    })
+                }
+            }
+        })
+    }
 
     private func pauseBeforeTextACK(_ connection: NWConnection, receiver: Side, sender: Side,
                                     remoteOffer: IosGroupSessionOffer, pause: @escaping () -> Void) throws {
@@ -816,6 +884,244 @@ final class GroupAdmissionSessionTests: XCTestCase {
         return result
     }
 
+    func testRosterRestoresUsedSessionAfterEitherMemberReopensWithoutHistoryReplay() throws {
+        for founderInitiates in [true, false] {
+            let pair = try fixture(founderInitiates: founderInitiates)
+            try confirmBoth(pair.issuer, pair.member)
+            closeAndDrain(pair.issuer); closeAndDrain(pair.member)
+            beginRoster(pair.issuer, pair.member)
+            let first = awaitRoster(pair.issuer, pair.member)
+            closeAndDrain(pair.issuer); closeAndDrain(pair.member)
+            beginText(pair.issuer, pair.member, body: "Prima del rientro")
+            let message = awaitText(pair.issuer, pair.member)
+            XCTAssertEqual(message.sessionId, first.sessionId)
+            closeAndDrain(pair.issuer); closeAndDrain(pair.member)
+            for returning in [pair.member, pair.issuer] {
+                queue.sync { returning.sessionMemory.reset() }
+                try reopen(returning)
+                beginRoster(pair.issuer, pair.member)
+                XCTAssertEqual(awaitRoster(pair.issuer, pair.member).sessionId, first.sessionId)
+                closeAndDrain(pair.issuer); closeAndDrain(pair.member)
+                beginSession(pair.issuer, pair.member)
+                XCTAssertEqual(awaitSession(pair.issuer, pair.member), first.sessionId)
+                closeAndDrain(pair.issuer); closeAndDrain(pair.member)
+            }
+            beginText(pair.issuer, pair.member, body: "Dopo il rientro")
+            let next = awaitText(pair.issuer, pair.member)
+            try queue.sync {
+                XCTAssertEqual(next.sessionId, first.sessionId)
+                XCTAssertEqual(try pair.issuer.store.groupText(id: next.messageId)?.envelope.authorSequence, 2)
+                XCTAssertEqual(try pair.member.store.groupText(id: message.messageId)?.envelope.body, message.body)
+                for side in [pair.issuer, pair.member] {
+                    XCTAssertEqual(try side.store.trusted(), [])
+                    XCTAssertEqual(try side.store.history().count, 0)
+                    XCTAssertNil(try side.store.pendingGroupAdoption())
+                }
+            }
+            closeAndDrain(pair.issuer); closeAndDrain(pair.member)
+        }
+    }
+
+    func testRosterPreservesThreeParticipantsWithFounderThenDelegateOfflineAndRefusesLegacyText() throws {
+        let pair = try fixture(founderInitiates: true)
+        let a = pair.issuer, b = pair.member, c = try side()
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        beginRoster(a, b)
+        let original = awaitRoster(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        beginText(a, b, body: "Non retroattivo")
+        let old = awaitText(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        try connect(b, c)
+        try confirmBoth(b, c)
+        closeAndDrain(b); closeAndDrain(c)
+        beginRoster(b, c)
+        let three = awaitRoster(b, c)
+        XCTAssertEqual(three.sessionId, original.sessionId)
+        XCTAssertEqual(Set(three.participants), Set([a.identity.id, b.identity.id, c.identity.id]))
+        closeAndDrain(b); closeAndDrain(c)
+        queue.sync { a.sessionMemory.reset() }
+        try reopen(a)
+        try connect(a, c, roster: true)
+        XCTAssertEqual(awaitRoster(a, c).participants, three.participants)
+        closeAndDrain(a); closeAndDrain(c)
+        beginSession(a, c)
+        XCTAssertEqual(awaitSession(a, c), original.sessionId)
+        closeAndDrain(a); closeAndDrain(c)
+        beginText(a, c, body: "Non ridurre agli endpoint")
+        awaitState { a.presentation.textSnapshot().phase == .failed && c.presentation.textSnapshot().phase == .failed }
+        try queue.sync {
+            XCTAssertEqual(a.presentation.textSnapshot().failure, .rosterRequired)
+            XCTAssertEqual(c.presentation.textSnapshot().failure, .rosterRequired)
+            XCTAssertEqual(a.presentation.textSnapshot().messageId, "")
+            XCTAssertNil(try c.store.groupText(id: old.messageId))
+            XCTAssertEqual(Set(try XCTUnwrap(a.store.groupText(id: old.messageId)).receivedBy), Set([a.identity.id, b.identity.id]))
+        }
+    }
+
+    func testRosterRefusesLostSnapshotsAndMissingLegacyOfflineProofs() throws {
+        let pair = try fixture(founderInitiates: false)
+        let a = pair.issuer, b = pair.member, c = try side()
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        beginText(a, b, body: "Scope legacy")
+        let old = awaitText(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        try connect(b, c)
+        try confirmBoth(b, c)
+        closeAndDrain(b); closeAndDrain(c)
+        beginRoster(b, c)
+        awaitState { b.presentation.rosterSnapshot().phase == .failed && c.presentation.rosterSnapshot().phase == .failed }
+        queue.sync { XCTAssertEqual(b.presentation.rosterSnapshot().failure, .missingParticipants) }
+        closeAndDrain(b); closeAndDrain(c)
+        try connect(a, b, roster: true)
+        XCTAssertEqual(awaitRoster(a, b).sessionId, old.sessionId) // Both actual legacy members supply their signatures.
+        closeAndDrain(a); closeAndDrain(b)
+        queue.sync { b.sessionMemory.reset() }
+        beginSession(a, b)
+        _ = awaitSession(a, b) // B learns used ID, never the roster.
+        closeAndDrain(a); closeAndDrain(b)
+        queue.sync { a.sessionMemory.reset() }
+        beginSession(a, b)
+        _ = awaitSession(a, b) // Both now have used ID but no snapshot.
+        closeAndDrain(a); closeAndDrain(b)
+        beginRoster(a, b)
+        awaitState { a.presentation.rosterSnapshot().phase == .failed && b.presentation.rosterSnapshot().phase == .failed }
+        try queue.sync {
+            XCTAssertEqual(a.presentation.rosterSnapshot().failure, .missingParticipants)
+            XCTAssertEqual(b.presentation.rosterSnapshot().failure, .missingParticipants)
+            XCTAssertNotNil(try a.store.groupText(id: old.messageId))
+        }
+    }
+
+    func testEmptyThreeMemberRosterCannotBeReducedToTwoOnlineTextEndpoints() throws {
+        let pair = try fixture(founderInitiates: false)
+        let a = pair.issuer, b = pair.member, c = try side()
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        beginRoster(a, b)
+        let empty = awaitRoster(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        try connect(b, c)
+        try confirmBoth(b, c)
+        closeAndDrain(b); closeAndDrain(c)
+        beginRoster(b, c)
+        XCTAssertEqual(awaitRoster(b, c).participants.count, 3)
+        closeAndDrain(b); closeAndDrain(c)
+        beginText(b, c, body: "Ancora nessun testo nella sessione")
+        awaitState { b.presentation.textSnapshot().phase == .failed && c.presentation.textSnapshot().phase == .failed }
+        queue.sync {
+            XCTAssertEqual(b.presentation.textSnapshot().failure, .rosterRequired)
+            XCTAssertEqual(c.presentation.textSnapshot().failure, .rosterRequired)
+            XCTAssertEqual(b.presentation.textSnapshot().messageId, "")
+        }
+        closeAndDrain(b); closeAndDrain(c)
+        beginRoster(b, c)
+        XCTAssertEqual(awaitRoster(b, c).sessionId, empty.sessionId)
+    }
+
+    func testRosterModeMismatchAndCancelledReselectionCannotPublishOldResult() throws {
+        let pair = try fixture(founderInitiates: true)
+        let a = pair.issuer, b = pair.member
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        queue.sync {
+            a.presentation.synchronizeRoster(id: b.identity.id, name: "member")
+            b.presentation.negotiateSession(id: a.identity.id, name: "member")
+        }
+        awaitState { a.presentation.rosterSnapshot().phase == .failed && b.presentation.sessionSnapshot().phase == .failed }
+        closeAndDrain(a); closeAndDrain(b)
+        queue.sync { a.presentation.synchronizeRoster(id: b.identity.id, name: "member") }
+        queue.sync {} // Drain the queued selection before cancellation.
+        closeAndDrain(a)
+        beginRoster(a, b)
+        _ = awaitRoster(a, b)
+    }
+
+    func testRosterFacadeRejectsWrongTLSCertificateChangedRunAndInvalidSignatureWithoutInstalling() throws {
+        let pair = try fixture(founderInitiates: true)
+        let a = pair.issuer, b = pair.member
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        try queue.sync {
+            let anchor = try XCTUnwrap(a.store.localGroup())
+            let am = try a.store.committedGroupAdoption(), bm = try b.store.committedGroupAdoption()
+            let ao = try a.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId, marker: am, newSessionId: String(repeating: "c", count: 64))
+            let bo = try b.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId, marker: bm, newSessionId: String(repeating: "d", count: 64))
+            let ae = try XCTUnwrap(a.sessionMemory.selectRoster(local: ao, remote: bo, groupId: anchor.groupId, founderId: anchor.founderId, marker: am).exchange)
+            let be = try XCTUnwrap(b.sessionMemory.selectRoster(local: bo, remote: ao, groupId: anchor.groupId, founderId: anchor.founderId, marker: bm).exchange)
+            let ap = try proposeRoster(a, exchange: ae), bp = try proposeRoster(b, exchange: be)
+            let original = data(try a.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId, marker: am, newSessionId: String(repeating: "e", count: 64)).framedBytes())
+            XCTAssertThrowsError(try GroupMembership.withVerifier { verify in
+                try ae.merge(payload: bp.payload(), peerId: b.identity.id, peerCertificateDer: certificateDer(a),
+                    isCurrent: { KotlinBoolean(bool: true) }, verify: verify)
+            })
+            XCTAssertThrowsError(try ae.merge(payload: bp.payload(), peerId: b.identity.id, peerCertificateDer: certificateDer(b),
+                isCurrent: { KotlinBoolean(bool: true) }, verify: { _, _, _ in KotlinBoolean(bool: false) }))
+            XCTAssertThrowsError(try ae.install(snapshot: ap, isCurrent: { KotlinBoolean(bool: true) }))
+            XCTAssertEqual(data(try a.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId, marker: am,
+                newSessionId: String(repeating: "e", count: 64)).framedBytes()), original)
+            let merged = try mergeRoster(ae, payload: bp.payload(), peer: b)
+            XCTAssertEqual(Set(merged.participants), Set([a.identity.id, b.identity.id]))
+            a.sessionMemory.reset()
+            XCTAssertThrowsError(try ae.install(snapshot: merged, isCurrent: { KotlinBoolean(bool: true) }))
+            XCTAssertThrowsError(try be.merge(payload: ap.payload(), peerId: a.identity.id, peerCertificateDer: certificateDer(a),
+                isCurrent: { KotlinBoolean(bool: false) }, verify: { _, _, _ in XCTFail("Expired before OS"); return nil }))
+        }
+    }
+
+    func testMembershipVerifierChecksExactDEROnCacheHitAcrossChains() throws {
+        let a = try side(), b = try side()
+        try found(a)
+        try queue.sync {
+            let bytes = self.bytes(Data("cache-hit".utf8))
+            let signature = try a.identity.sign(Data("cache-hit".utf8))
+            let proof = try LocalGroupAdmission.prepare(identity: a.identity, persistence: a.store, memberID: b.identity.id)
+            let valid = try XCTUnwrap(proof.certificates.first { $0.identity == a.identity.id })
+            let substituted = try XCTUnwrap(proof.withIssuerCertificate(identity: a.identity.id, der: certificateDer(b)).certificates.first { $0.identity == a.identity.id })
+            let verifier = GroupAdoptionJournalInspector.CertificateVerifier(maximumDerBytes: Int(proof.maximumDerBytes), now: Date())
+            XCTAssertTrue(verifier.verify(valid, bytes, signature).boolValue)
+            XCTAssertFalse(verifier.verify(substituted, bytes, signature).boolValue)
+            XCTAssertNotNil(verifier.failure)
+        }
+    }
+
+    private func certificateDer(_ side: Side) -> String {
+        (SecCertificateCopyData(side.identity.certificate) as Data).base64EncodedString()
+    }
+
+    private func proposeRoster(_ side: Side, exchange: IosGroupRosterExchange) throws -> IosGroupRosterSnapshot {
+        try exchange.propose(membership: GroupMembership.prepare(identity: side.identity, persistence: side.store),
+            certificateDer: certificateDer(side), isCurrent: { KotlinBoolean(bool: true) },
+            sign: { try? side.identity.sign(self.data($0)) })
+    }
+
+    private func mergeRoster(_ exchange: IosGroupRosterExchange, payload: KotlinByteArray, peer: Side) throws -> IosGroupRosterSnapshot {
+        try GroupMembership.withVerifier { verify in
+            try exchange.merge(payload: payload, peerId: peer.identity.id, peerCertificateDer: certificateDer(peer),
+                isCurrent: { KotlinBoolean(bool: true) }, verify: verify)
+        }
+    }
+
+    private func beginRoster(_ a: Side, _ b: Side) {
+        queue.sync {
+            a.presentation.synchronizeRoster(id: b.identity.id, name: "member")
+            b.presentation.synchronizeRoster(id: a.identity.id, name: "member")
+        }
+    }
+
+    private func awaitRoster(_ a: Side, _ b: Side) -> IosGroupRosterDisplay {
+        awaitState { a.presentation.rosterSnapshot().phase == .synchronized && b.presentation.rosterSnapshot().phase == .synchronized }
+        return queue.sync {
+            let local = a.presentation.rosterSnapshot(), remote = b.presentation.rosterSnapshot()
+            XCTAssertEqual(local.sessionId, remote.sessionId)
+            XCTAssertEqual(local.participants, remote.participants)
+            XCTAssertEqual(local.sessionId.count, 64)
+            return local
+        }
+    }
+
     private func beginText(_ sender: Side, _ receiver: Side, body: String) {
         queue.sync {
             sender.presentation.sendText(id: receiver.identity.id, name: "member", body: body)
@@ -955,7 +1261,7 @@ final class GroupAdmissionSessionTests: XCTestCase {
         return (issuer, member)
     }
 
-    private func connect(_ issuer: Side, _ member: Side, checking: Set<String> = [], negotiating: Set<String> = []) throws {
+    private func connect(_ issuer: Side, _ member: Side, checking: Set<String> = [], negotiating: Set<String> = [], roster: Bool = false) throws {
         let issuerListener = try listen(issuer, selectedPeer: member.identity.id)
         let memberListener = try listen(member, selectedPeer: issuer.identity.id)
         queue.sync {
@@ -983,7 +1289,8 @@ final class GroupAdmissionSessionTests: XCTestCase {
                 })
             }
             for (side, peer) in [(issuer, member), (member, issuer)] {
-                if negotiating.contains(side.identity.id) { side.presentation.negotiateSession(id: peer.identity.id, name: "member") }
+                if roster { side.presentation.synchronizeRoster(id: peer.identity.id, name: "member") }
+                else if negotiating.contains(side.identity.id) { side.presentation.negotiateSession(id: peer.identity.id, name: "member") }
                 else if checking.contains(side.identity.id) { side.presentation.verifyPeer(id: peer.identity.id, name: "member") }
                 else { side.presentation.selectPeer(id: peer.identity.id, name: "member", replaceInterrupted: false) }
             }

@@ -47,6 +47,7 @@ final class HandshakeV1Channel {
     private var membershipDecoder: IosGroupMembershipDecoder?
     private var sessionDecoder: IosGroupSessionDecoder?
     private var textDecoder: IosGroupTextDecoder?
+    private var rosterDecoder: IosGroupRosterDecoder?
 
     /// Transfers connection ownership even if validation or initialization throws.
     /// TLS setup/listener ownership and the selection BEFORE TLS remain the caller's responsibility.
@@ -289,6 +290,107 @@ final class HandshakeV1Channel {
                 }
             }
         } catch { adapterFailed(); return false }
+    }
+
+    /// Opt-in LGM/LSN/LRO/LRA continuation selected before any proof I/O.
+    @discardableResult
+    func synchronizeRoster(
+        membership: IosGroupMembershipEvidence, offer: IosGroupSessionOffer,
+        verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
+        propose: @escaping (IosGroupSessionOffer) throws -> IosGroupRosterSnapshot,
+        merge: @escaping (KotlinByteArray, SecCertificate) throws -> IosGroupRosterSnapshot,
+        completed: @escaping (IosGroupRosterSnapshot) throws -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard let offers = try bridge.offersForGroupAdmission(), try evidenceActive() else { return false }
+            let first = try IosGroupRosterProtocol.shared.sendsFirst(offers: offers)
+            return beginSession(membership: membership, offer: offer, awaitPeerClose: false,
+                verifyRemote: verifyRemote) { [weak self] remote in
+                guard let self, try self.evidenceActive() else { return }
+                let local = try propose(remote)
+                guard try self.evidenceActive() else { return }
+                let afterSnapshot: (KotlinByteArray) throws -> Void = { [weak self] payload in
+                    guard let self, try self.evidenceActive() else { return }
+                    let merged = try merge(payload, self.peerCertificate)
+                    guard try self.evidenceActive() else { return }
+                    let digest = SHA256.hash(data: Self.data(try merged.payload())).map { String(format: "%02x", $0) }.joined()
+                    let agreement = try merged.agreement(digest: digest)
+                    let afterAgreement: (KotlinByteArray) throws -> Void = { [weak self] remoteAgreement in
+                        guard let self, try self.evidenceActive() else { return }
+                        guard Self.data(remoteAgreement) == Self.data(agreement) else { throw AdoptionError.invalidEvidence }
+                        try completed(merged)
+                        if !self.closed {
+                            if first { self.cancel() } else { self.receiveMembershipEnd() }
+                        }
+                    }
+                    if first {
+                        self.sendGroupFrame(try IosGroupRosterProtocol.shared.frame(payload: agreement)) { [weak self] in
+                            self?.receiveRosterControl(agreement: true, completion: afterAgreement)
+                        }
+                    } else {
+                        self.receiveRosterControl(agreement: true) { [weak self] remoteAgreement in
+                            guard let self, Self.data(remoteAgreement) == Self.data(agreement) else { throw AdoptionError.invalidEvidence }
+                            self.sendGroupFrame(try IosGroupRosterProtocol.shared.frame(payload: agreement)) {
+                                try afterAgreement(remoteAgreement)
+                            }
+                        }
+                    }
+                }
+                if first {
+                    self.sendGroupFrame(try local.framedBytes()) { [weak self] in
+                        self?.receiveRosterControl(agreement: false, completion: afterSnapshot)
+                    }
+                } else {
+                    self.receiveRosterControl(agreement: false) { [weak self] payload in
+                        guard let self else { return }
+                        self.sendGroupFrame(try local.framedBytes()) { try afterSnapshot(payload) }
+                    }
+                }
+            }
+        } catch { adapterFailed(); return false }
+    }
+
+    private func receiveRosterControl(agreement: Bool, completion: @escaping (KotlinByteArray) throws -> Void) {
+        guard !closed, rosterDecoder == nil, !receivePending else { return }
+        rosterDecoder = IosGroupRosterDecoder(agreement: agreement)
+        receiveRosterControl(completion: completion)
+    }
+
+    private func receiveRosterControl(completion: @escaping (KotlinByteArray) throws -> Void) {
+        guard !closed, !receivePending, let decoder = rosterDecoder else { return }
+        do {
+            guard try evidenceActive() else { return }
+            let budget = Int(try decoder.nextReadBytes())
+            receivePending = true
+            connection.receive(minimumIncompleteLength: 1, maximumLength: budget) { [weak self] data, _, complete, error in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.receivePending = false
+                    do {
+                        guard try self.evidenceActive() else { return }
+                        if error != nil { self.transportFailed(); return }
+                        var payload: KotlinByteArray?
+                        if let data, !data.isEmpty {
+                            let read = try decoder.accept(chunk: Self.bytes(data))
+                            guard Int(read.consumedBytes) == data.count else { throw AdoptionError.invalidEvidence }
+                            payload = read.payload
+                        }
+                        if complete {
+                            if payload == nil { try decoder.finish() }
+                            self.transportFailed()
+                            return
+                        }
+                        if let payload {
+                            self.rosterDecoder = nil
+                            try completion(payload)
+                        } else { self.receiveRosterControl(completion: completion) }
+                    } catch { self.adapterFailed() }
+                }
+            }
+        } catch { adapterFailed() }
     }
 
     private static func textDigest(_ message: IosGroupTextEnvelope) throws -> String {
@@ -777,6 +879,8 @@ final class HandshakeV1Channel {
         sessionDecoder = nil
         textDecoder?.cancel()
         textDecoder = nil
+        rosterDecoder?.cancel()
+        rosterDecoder = nil
         connection.stateUpdateHandler = nil
         connection.cancel()
         onClosed(failure)

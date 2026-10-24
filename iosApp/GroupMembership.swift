@@ -20,7 +20,7 @@ enum GroupMembership {
         }
     }
 
-    private static func withVerifier<T>(
+    static func withVerifier<T>(
         _ operation: (@escaping (IosGroupAdmissionCertificate, KotlinByteArray, String) -> KotlinBoolean?) throws -> T
     ) throws -> T {
         let verifier = GroupAdoptionJournalInspector.CertificateVerifier(

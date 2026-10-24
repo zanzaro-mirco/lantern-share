@@ -66,8 +66,8 @@ per un ID diverso; due sessioni usate richiedono ancora scelta esplicita.
 Entrambi gli HELLO supportano E richiedono `group-membership-check`,
 `group-session-selection` e la nuova **group-session-roster**. Nessun ruolo
 amministrativo. I percorsi B4, B5, LTX/LTA e wire 0 restano identici; nessuno sniffing
-o fallback. L'iOS attuale non espone questa nuova azione, il suo testo ADR 016 resta
-compatibile con quello Node. Schema/versioni/lock/workflow invariati.
+o fallback. L'ingresso iOS del 24 ottobre espone la stessa azione; il suo testo
+ADR 016 resta compatibile con quello Node. Schema/versioni/lock/workflow invariati.
 
 Stesso owner/pin/TLS e deadline originale: HELLO → LGM verificato → LSN → LRO → LRA.
 Il minore pin TLS scrive per primo in ogni fase; nessun EOF reader intermedio.
@@ -127,7 +127,32 @@ LRA, framing esatto/flush/budget. Evidenze effettive in STATO, non hardware.
 Regressione mantenuta anche per sostituzione DER dopo un certificato già verificato
 nella stessa cache, senza modifiche ai criteri di ammissione o nuove CA.
 
-**Prossimo blocco unico:** dopo CI conclusa/correzioni, stesso ingresso Bonjour/iOS
-con le regole Kotlin e owner Swift, checkpoint Native/simulatore raggruppato.
-Invio con snapshot multipartecipante, recupero, scelta operativa, riconnessione e
-UI completa restano obbligatori. Nessuna chiusura della fase 1 o release.
+## Ingresso Bonjour/iOS — 24 ottobre
+
+Il controller iOS espone il pannello Compose condiviso e una selezione ROSTER
+separata da PoC/B4/B5/testo. Preflight committato prima del pin; lo stesso owner
+Swift sceglie la continuazione prima di LGM, senza lettore EOF intermedio.
+Kotlin possiede codec/decoder esatto (LRO 4 MiB, LRA 196 byte), firma canonica,
+verifica completa, unione, guardie e memoria. Swift fornisce certificati/firme OS,
+TLS effettivo, digest e I/O sulla coda seriale non UI e nella deadline originale.
+
+La proposta e l'unione non installano nulla: una revisione della memoria invalida
+il tentativo dopo reset/altre selezioni o mutazioni, oltre ai controlli nativi di
+marker intero e lifetime. Installazione solo dopo LRA esatto; risultato locale
+conservato se fallisce il solo cleanup EOF. Cancel conserva il roster della run,
+stop lo elimina. B5 e testo preservano i record solo sullo stesso contesto;
+LTX rifiuta anche un roster vuoto di messaggi ma con più di due partecipanti.
+Il verificatore Apple ricontrolla il DER esatto anche su cache hit fra catene.
+
+Regressioni mantenute per decoder e pubblicazioni obsolete nel core/UI; XCTest
+per riapertura di entrambi i ruoli, tre membri/offline, scope vuoto e usato,
+snapshot persi/prove legacy mancanti, modalità incompatibili, certificato/firma,
+revisione cambiata, accordo alterato e cancel/deadline con LRA pendente.
+Esiti effettivi e limiti Windows in STATO: codice predisposto non equivale a test
+Native/Swift/simulatore eseguito o hardware.
+
+**Prossimo blocco unico:** dopo checkpoint Apple concluso/correzioni, primo invio
+con snapshot multipartecipante autenticato, destinatari congelati completi e ACK
+per destinatario sul canale vivo, senza modificare implicitamente il vecchio LTX.
+Recupero, scelta operativa, paginazione, riconnessione e UI completa restano
+obbligatori. Nessuna chiusura della fase 1 o release.

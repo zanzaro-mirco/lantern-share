@@ -14,6 +14,42 @@ import lantern.domain.SessionSelection
 import lantern.domain.Peer
 
 class IosGroupAdmissionControllerTest {
+    @Test
+    fun rosterSelectionRejectsStaleResultsAndPreservesInstalledFactAfterCleanup() {
+        controller.synchronizeGroupRoster(peer)
+        val old = selections.last()
+        assertEquals(IosGroupSelectionMode.ROSTER, old.mode)
+        controller.selected(old)
+        controller.synchronizeRoster(peer.id, peer.name)
+        val current = selections.last()
+        controller.selected(current)
+        controller.rosterCompleted(old, "b".repeat(64), "c".repeat(64), listOf(peer.id))
+        controller.rosterFailed(old, IosGroupRosterFailure.FAILED)
+        assertEquals(IosGroupRosterPhase.SYNCHRONIZING, controller.rosterSnapshot().phase)
+        val participants = mutableListOf(peer.id, "d".repeat(64))
+        controller.rosterCompleted(current, "b".repeat(64), "c".repeat(64), participants)
+        participants.clear()
+        controller.failed(current, IosGroupServiceFailure.FAILED)
+        controller.rosterFailed(current, IosGroupRosterFailure.FAILED)
+        assertEquals(IosGroupRosterPhase.SYNCHRONIZED, controller.rosterSnapshot().phase)
+        assertEquals(2, controller.rosterSnapshot().participants.size)
+        assertEquals(0L, controller.membershipRevision.value)
+        controller.cancelled()
+        controller.rosterCompleted(current, "b".repeat(64), "c".repeat(64), listOf(peer.id))
+        assertEquals(IosGroupRosterPhase.IDLE, controller.rosterSnapshot().phase)
+    }
+
+    @Test
+    fun rosterFailuresAreSeparateFromAdmissionAndText() {
+        controller.synchronizeGroupRoster(peer)
+        val selected = selections.last()
+        controller.selected(selected)
+        controller.rosterFailed(selected, IosGroupRosterFailure.MISSING_PARTICIPANTS)
+        assertEquals(IosGroupRosterFailure.MISSING_PARTICIPANTS, controller.rosterSnapshot().failure)
+        assertSame(lantern.domain.GroupAdmissionState.Idle, controller.admissionState.value)
+        assertSame(lantern.domain.GroupTextState.Idle, controller.groupTextState.value)
+    }
+
     private val peer = Peer("a".repeat(64), "iPhone", "", 0)
     private val selections = mutableListOf<IosGroupAdmissionSelection>()
     private val clicks = mutableListOf<IosGroupAdmissionDisplayTicket>()

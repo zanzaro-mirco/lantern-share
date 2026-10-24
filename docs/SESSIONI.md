@@ -17,7 +17,7 @@ Il selettore non conosce archivi o messaggi: non ripubblica né unisce cronologi
 
 Verifica locale: `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, otto casi condivisi per target. Coprono creazione, separazione gruppi, convergenza indipendente dall'ordine, priorità della sessione utilizzata, scelta esplicita, duplicati, conflitti e ID vuoti. Non equivalgono a convergenza distribuita su rete o a collaudo hardware. I test Native sono inclusi nel checkpoint iOS manuale, non eseguiti localmente su Windows.
 
-Le credenziali di gruppo, B5 e il primo trasferimento di testo B6 sono verificati automaticamente anche iOS, ultimo completo fcec8f7 / 182 XCTest, non hardware. Nuovo roster Node/UI B7 in ADR 017: attestazioni firmate e memoria della run con offline, ingresso iOS ancora assente. Invio con snapshot multipartecipante, ciclo di vita/cambio rete automatico e scelta operativa restano aperti. La sola decisione B5 non autorizza traffico, né lo fanno mDNS/B4/READY bootstrap. SQLite conserva testo/used di ADR 015, non ripristina sessioni; il rientrante recupera da un peer attivo con nuove prove. Comandi e risultati correnti in STATO.
+Le credenziali di gruppo, B5 e il primo trasferimento di testo B6 sono verificati automaticamente anche iOS, ultimo completo fcec8f7 / 182 XCTest, non hardware. Roster B7 in ADR 017: attestazioni firmate e memoria della run con offline, ingresso Bonjour/iOS implementato il 24 ottobre, nuovo Native/Swift/simulatore da attestare. Invio con snapshot multipartecipante, ciclo di vita/cambio rete automatico e scelta operativa restano aperti. La sola decisione B5 non autorizza traffico, né lo fanno mDNS/B4/READY bootstrap. SQLite conserva testo/used di ADR 015, non ripristina sessioni; il rientrante recupera da un peer attivo con nuove prove. Comandi e risultati correnti in STATO.
 
 ## Collaudo fisico B5 ancora da eseguire — Android ↔ Windows
 
@@ -82,7 +82,7 @@ nel completo fcec8f7: applicare con build dello stesso checkpoint;
 registrare separatamente Apple ↔ Android/desktop. iPhone/Mac e hardware di fase 1
 rimangono obbligatori. Nessun collaudo nuovo attestato da questa lista.
 
-## Collaudo fisico B7 predisposto, NON eseguito — roster Android/desktop
+## Collaudo fisico B7 predisposto, NON eseguito — roster Android/desktop/iOS
 
 Nuova azione di [ADR 017](ADR-017-ROSTER-AUTENTICATO-SESSIONE.md), non chat completa.
 Build dello stesso checkpoint e gruppo già ammesso, nessuna cancellazione DB.
@@ -108,5 +108,6 @@ Build dello stesso checkpoint e gruppo già ammesso, nessuna cancellazione DB.
 
 Ripetere senza WAN e registrare build/OS/rete/ordine/ID/esiti senza chiavi o contenuti.
 Il terzo dispositivo è necessario al relativo collaudo, non simulato da questa lista.
-Ingresso roster iOS ancora da realizzare; nessuna azione iPhone sostitutiva o test
-fisico dichiarato. Cronologia gruppo UI completa e collaudi hardware restano aperti.
+Ingresso roster iOS implementato il 24 ottobre, nuova verifica Native/Swift e
+simulatore da attestare in STATO. Ripetere poi anche con iPhone e Mac Intel/Apple
+Silicon: nessun nuovo test fisico dichiarato. Cronologia UI e hardware restano aperti.

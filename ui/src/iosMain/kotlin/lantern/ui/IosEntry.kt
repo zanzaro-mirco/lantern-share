@@ -240,6 +240,7 @@ fun ProbeViewController(
                 GroupMembershipCheckPanel(groupAdmission)
                 GroupSessionPanel(groupAdmission)
                 GroupTextPanel(groupAdmission, state.devices.map { Peer(it.id, it.name, "", 0) })
+                GroupRosterPanel(groupAdmission, state.devices.map { Peer(it.id, it.name, "", 0) })
                 Text("TLS 1.3 con confronto completo del codice. Ricevuta dopo il salvataggio sul destinatario.")
                 Row { Button(onClick = start, enabled = state.identityId.isNotEmpty()) { Text("Cerca nella LAN") }; TextButton(onClick = stop) { Text("Arresta") } }
                 Text(state.status)

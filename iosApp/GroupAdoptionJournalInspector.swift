@@ -56,6 +56,9 @@ enum GroupAdoptionJournalInspector {
             do {
                 let certificate: SecCertificate
                 if let cached = certificates[supplied.identity] {
+                    guard (SecCertificateCopyData(cached) as Data).base64EncodedString() == supplied.der else {
+                        throw PublicCertificateError.invalid
+                    }
                     certificate = cached
                 } else {
                     guard let der = Data(base64Encoded: supplied.der),
