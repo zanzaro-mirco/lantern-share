@@ -4,7 +4,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import lantern.domain.ContentLimits
-import lantern.domain.GroupRosterController
+import lantern.domain.GroupRosterTextController
+import lantern.domain.StoredGroupText
 import lantern.domain.GroupRosterState
 import lantern.domain.GroupRosterFailure
 import lantern.domain.GroupTextState
@@ -18,7 +19,7 @@ import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
 import lantern.domain.Peer
 
-enum class IosGroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION, TEXT, ROSTER }
+enum class IosGroupSelectionMode { ADMISSION, MEMBERSHIP_CHECK, SESSION, TEXT, ROSTER, ROSTER_TEXT }
 
 /** Opaque selection identity, not a TLS permission or a recoverable consent. */
 class IosGroupAdmissionSelection internal constructor(
@@ -26,8 +27,10 @@ class IosGroupAdmissionSelection internal constructor(
     val replaceInterrupted: Boolean,
     val mode: IosGroupSelectionMode = IosGroupSelectionMode.ADMISSION,
     val text: String? = null,
+    val messageId: String? = null,
 ) {
     val peerId: String get() = peer.id
+    val sending: Boolean get() = text != null || messageId != null
 }
 
 /** Presentation identity only. The native owner privately retains the actual Kotlin core ticket. */
@@ -58,7 +61,7 @@ class IosGroupAdmissionController(
     private val requestSelect: (IosGroupAdmissionSelection) -> Unit,
     private val requestConfirm: (IosGroupAdmissionDisplayTicket) -> Unit,
     private val requestCancel: () -> Unit,
-) : GroupRosterController {
+) : GroupRosterTextController {
     private val state = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     private val revision = MutableStateFlow(0L)
     private var selection: IosGroupAdmissionSelection? = null
@@ -73,6 +76,25 @@ class IosGroupAdmissionController(
     override val groupTextState = text.asStateFlow()
     private val roster = MutableStateFlow<GroupRosterState>(GroupRosterState.Idle)
     override val groupRosterState = roster.asStateFlow()
+    private val lastDelivery = MutableStateFlow<StoredGroupText?>(null)
+    override val lastRosterTextDelivery = lastDelivery.asStateFlow()
+
+    override fun sendRosterText(peer: Peer, text: String) {
+        if (ContentLimits.isValidText(text)) requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.ROSTER_TEXT, text))
+    }
+    override fun receiveRosterText(peer: Peer) = requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.ROSTER_TEXT))
+    override fun deliverRosterText(peer: Peer, messageId: String) =
+        requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.ROSTER_TEXT, messageId = messageId))
+
+    fun sendRosterText(id: String, name: String, body: String) = sendRosterText(Peer(id, name, "", 0), body)
+    fun receiveRosterText(id: String, name: String) = receiveRosterText(Peer(id, name, "", 0))
+    fun deliverRosterText(id: String, name: String, messageId: String) = deliverRosterText(Peer(id, name, "", 0), messageId)
+
+    fun rosterTextCompleted(value: IosGroupAdmissionSelection, stored: StoredGroupText) {
+        if (selection !== value || value.mode != IosGroupSelectionMode.ROSTER_TEXT || text.value !is GroupTextState.Transferring) return
+        text.value = if (value.sending) GroupTextState.Sent(value.peer, stored.message) else GroupTextState.Received(value.peer, stored.message)
+        if (value.sending) lastDelivery.value = StoredGroupText(stored.message, stored.receivedBy.toSet())
+    }
 
     override fun synchronizeGroupRoster(peer: Peer) {
         requestSelect(IosGroupAdmissionSelection(peer, false, IosGroupSelectionMode.ROSTER))
@@ -165,13 +187,13 @@ class IosGroupAdmissionController(
             IosGroupSelectionMode.ADMISSION -> state.value = GroupAdmissionState.Selecting(value.peer)
             IosGroupSelectionMode.MEMBERSHIP_CHECK -> membership.value = GroupMembershipCheckState.Checking(value.peer)
             IosGroupSelectionMode.SESSION -> session.value = GroupSessionState.Negotiating(value.peer)
-            IosGroupSelectionMode.TEXT -> text.value = GroupTextState.Waiting(value.peer, value.text != null)
+            IosGroupSelectionMode.TEXT, IosGroupSelectionMode.ROSTER_TEXT -> text.value = GroupTextState.Waiting(value.peer, value.sending)
             IosGroupSelectionMode.ROSTER -> roster.value = GroupRosterState.Synchronizing(value.peer)
         }
     }
 
     fun textTransferring(value: IosGroupAdmissionSelection) {
-        if (selection === value && value.mode == IosGroupSelectionMode.TEXT && text.value is GroupTextState.Waiting) {
+        if (selection === value && (value.mode == IosGroupSelectionMode.TEXT || value.mode == IosGroupSelectionMode.ROSTER_TEXT) && text.value is GroupTextState.Waiting) {
             text.value = GroupTextState.Transferring(value.peer)
         }
     }
@@ -182,7 +204,7 @@ class IosGroupAdmissionController(
     }
 
     fun textFailed(value: IosGroupAdmissionSelection, reason: IosGroupTextFailure, attemptedMessageId: String?) {
-        if (selection !== value || value.mode != IosGroupSelectionMode.TEXT ||
+        if (selection !== value || (value.mode != IosGroupSelectionMode.TEXT && value.mode != IosGroupSelectionMode.ROSTER_TEXT) ||
             (text.value !is GroupTextState.Waiting && text.value !is GroupTextState.Transferring)) return
         text.value = GroupTextState.Failed(value.peer, GroupTextFailure.valueOf(reason.name), attemptedMessageId)
     }
@@ -253,7 +275,7 @@ class IosGroupAdmissionController(
         }
         if (value.mode == IosGroupSelectionMode.ROSTER) {
             rosterFailed(value, if (reason == IosGroupServiceFailure.UNAVAILABLE) IosGroupRosterFailure.UNAVAILABLE else IosGroupRosterFailure.FAILED)
-        } else if (value.mode == IosGroupSelectionMode.TEXT) {
+        } else if (value.mode == IosGroupSelectionMode.TEXT || value.mode == IosGroupSelectionMode.ROSTER_TEXT) {
             textFailed(value, if (reason == IosGroupServiceFailure.UNAVAILABLE) IosGroupTextFailure.UNAVAILABLE else IosGroupTextFailure.FAILED, null)
         } else if (value.mode == IosGroupSelectionMode.SESSION) {
             if (session.value is GroupSessionState.Negotiating) session.value = GroupSessionState.Failed(value.peer, failure)

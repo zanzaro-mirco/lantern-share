@@ -3,8 +3,11 @@ package lantern.protocol
 class GroupTextTransferRead internal constructor(val consumedBytes: Int, val payload: ByteArray?)
 
 /** One bounded control frame, exact native read budgets, terminal on completion/error/cancel. */
-class GroupTextTransferFrameDecoder(private val expectedBytes: Int = 0) {
-    init { require(expectedBytes in setOf(0, GroupTextTransferCodec.SCOPE_BYTES, GroupTextTransferCodec.ACK_BYTES)) }
+class GroupTextTransferFrameDecoder(private val expectedBytes: Int = 0, private val rosterText: Boolean = false) {
+    init {
+        val scopeBytes = if (rosterText) GroupRosterTextCodec.SCOPE_BYTES else GroupTextTransferCodec.SCOPE_BYTES
+        require(expectedBytes in setOf(0, scopeBytes, GroupTextTransferCodec.ACK_BYTES))
+    }
     private val header = ByteArray(4)
     private var headerUsed = 0
     private var payload: ByteArray? = null
@@ -27,7 +30,10 @@ class GroupTextTransferFrameDecoder(private val expectedBytes: Int = 0) {
                 headerUsed += count
                 offset += count
                 if (headerUsed < 4) return GroupTextTransferRead(offset, null)
-                if (expectedBytes != 0) GroupTextTransferCodec.checkFixedHeader(header, expectedBytes)
+                if (expectedBytes != 0) {
+                    if (rosterText) GroupRosterTextCodec.checkFixedHeader(header, expectedBytes)
+                    else GroupTextTransferCodec.checkFixedHeader(header, expectedBytes)
+                }
                 payload = ByteArray(GroupTextTransferCodec.payloadBytes(header))
             }
             val current = checkNotNull(payload)

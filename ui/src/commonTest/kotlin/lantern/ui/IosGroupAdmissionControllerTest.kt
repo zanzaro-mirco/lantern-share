@@ -15,6 +15,75 @@ import lantern.domain.Peer
 
 class IosGroupAdmissionControllerTest {
     @Test
+    fun rosterTextCopySelectionFreezesIdAndOnlyCurrentDurableResultUpdatesReceiptView() {
+        controller.deliverRosterText(peer.id, peer.name, "saved-copy")
+        val old = selections.last()
+        assertEquals(IosGroupSelectionMode.ROSTER_TEXT, old.mode)
+        assertEquals("saved-copy", old.messageId)
+        assertEquals(true, old.sending)
+        assertNull(old.text)
+        controller.selected(old)
+        controller.cancelled()
+        controller.sendRosterText(peer.id, peer.name, "nuova copia")
+        val current = selections.last()
+        controller.selected(current)
+        val message = lantern.domain.SignedGroupText(lantern.domain.GroupTextContent(
+            "12345678-1234-1234-1234-123456789abc", "b".repeat(64), "c".repeat(64), peer.id,
+            1, 1, listOf(peer.id, "d".repeat(64)), "nuova copia"), "signature")
+        val receipts = mutableSetOf(peer.id)
+        val stored = lantern.domain.StoredGroupText(message, receipts)
+        controller.textTransferring(old)
+        controller.rosterTextCompleted(old, stored)
+        controller.rosterTextCompleted(current, stored) // Not before live transfer admission.
+        assertNull(controller.lastRosterTextDelivery.value)
+        controller.textTransferring(current)
+        controller.textCompleted(current, message) // Legacy completion cannot finish the new mode.
+        assertEquals(IosGroupTextPhase.TRANSFERRING, controller.textSnapshot().phase)
+        controller.rosterTextCompleted(current, stored)
+        receipts.clear()
+        controller.failed(current, IosGroupServiceFailure.FAILED)
+        controller.textFailed(current, IosGroupTextFailure.FAILED, null)
+        assertEquals(IosGroupTextPhase.SENT, controller.textSnapshot().phase)
+        assertEquals(setOf(peer.id), controller.lastRosterTextDelivery.value?.receivedBy)
+        controller.cancelled()
+        controller.rosterTextCompleted(current, stored)
+        assertEquals(IosGroupTextPhase.IDLE, controller.textSnapshot().phase)
+        assertEquals(setOf(peer.id), controller.lastRosterTextDelivery.value?.receivedBy)
+        assertEquals(0L, controller.membershipRevision.value)
+    }
+
+    @Test
+    fun rosterTextReceiveDoesNotInventAuthorReceiptAndRejectsWrongModeOrStaleFailure() {
+        controller.sendRosterText(peer, "")
+        assertEquals(0, selections.size)
+        controller.receiveRosterText(peer.id, peer.name)
+        val selected = selections.last()
+        assertEquals(false, selected.sending)
+        controller.selected(selected)
+        controller.textTransferring(selected)
+        controller.textFailed(selected, IosGroupTextFailure.ROSTER_REQUIRED, null)
+        assertEquals(IosGroupTextFailure.ROSTER_REQUIRED, controller.textSnapshot().failure)
+        controller.cancelled()
+        controller.receiveRosterText(peer)
+        val next = selections.last()
+        controller.selected(next)
+        controller.textFailed(selected, IosGroupTextFailure.FAILED, "old")
+        assertEquals(IosGroupTextPhase.WAITING, controller.textSnapshot().phase)
+        controller.textTransferring(next)
+        val message = lantern.domain.SignedGroupText(lantern.domain.GroupTextContent(
+            "12345678-1234-1234-1234-123456789abc", "b".repeat(64), "c".repeat(64), peer.id,
+            1, 1, listOf(peer.id), "ricevuto"), "signature")
+        controller.rosterTextCompleted(next, lantern.domain.StoredGroupText(message, setOf(peer.id)))
+        assertEquals(IosGroupTextPhase.RECEIVED, controller.textSnapshot().phase)
+        assertNull(controller.lastRosterTextDelivery.value)
+        controller.selectGroupPeer(peer)
+        controller.selected(selections.last())
+        controller.rosterTextCompleted(next, lantern.domain.StoredGroupText(message, setOf(peer.id)))
+        assertSame(lantern.domain.GroupTextState.Idle, controller.groupTextState.value)
+        assertEquals(IosGroupTextPhase.IDLE, controller.textSnapshot().phase)
+    }
+
+    @Test
     fun rosterSelectionRejectsStaleResultsAndPreservesInstalledFactAfterCleanup() {
         controller.synchronizeGroupRoster(peer)
         val old = selections.last()

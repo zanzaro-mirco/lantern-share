@@ -4,6 +4,41 @@ import kotlin.test.*
 
 class GroupTextTransferFrameDecoderTest {
     @Test
+    fun negotiatedRosterControlsHaveIndependentLengthsExactBudgetsAndTerminalFailure() {
+        assertFails { GroupTextTransferFrameDecoder(GroupRosterTextCodec.SCOPE_BYTES) }
+        assertFails { GroupTextTransferFrameDecoder(GroupTextTransferCodec.SCOPE_BYTES, rosterText = true) }
+        for (size in listOf(GroupRosterTextCodec.SCOPE_BYTES, GroupRosterTextCodec.ACK_BYTES)) {
+            val payload = ByteArray(size) { (it % 127).toByte() }
+            val frame = GroupTextTransferCodec.header(size) + payload
+            val decoder = GroupTextTransferFrameDecoder(size, rosterText = true)
+            for (index in frame.indices) {
+                assertEquals(if (index < 4) 4 - index else frame.size - index, decoder.nextReadBytes)
+                val read = decoder.accept(byteArrayOf(frame[index]))
+                assertEquals(1, read.consumedBytes)
+                if (index == frame.lastIndex) assertContentEquals(payload, read.payload) else assertNull(read.payload)
+            }
+            assertFails { decoder.nextReadBytes }
+            val combined = GroupTextTransferFrameDecoder(size, rosterText = true).accept(frame + byteArrayOf(42))
+            assertEquals(frame.size, combined.consumedBytes)
+            for (cut in 0 until frame.size) {
+                val truncated = GroupTextTransferFrameDecoder(size, rosterText = true)
+                assertNull(truncated.accept(frame.copyOf(cut)).payload)
+                assertFails { truncated.finish() }
+                assertFails { truncated.nextReadBytes }
+            }
+            for (length in listOf(0, -1, 260, size - 1, size + 1, 65537)) {
+                val bad = GroupTextTransferFrameDecoder(size, rosterText = true)
+                val header = ByteArray(4) { ((length ushr ((3 - it) * 8)) and 255).toByte() }
+                assertFails { bad.accept(header) }
+                assertFails { bad.accept(byteArrayOf(1)) }
+            }
+            val cancelled = GroupTextTransferFrameDecoder(size, rosterText = true)
+            cancelled.accept(frame.copyOf(5)); cancelled.close()
+            assertFails { cancelled.nextReadBytes }
+        }
+    }
+
+    @Test
     fun exactBudgetsFragmentationAndNoOverreadForEveryTransferFrame() {
         for (size in listOf(GroupTextTransferCodec.SCOPE_BYTES, GroupTextTransferCodec.ACK_BYTES, GroupTextCodec.MAX_BYTES)) {
             val payload = ByteArray(size) { (it % 127).toByte() }

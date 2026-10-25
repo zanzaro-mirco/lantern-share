@@ -112,9 +112,10 @@ Ingresso roster iOS verificato in Native/Swift e simulatore su ba5e929 / 4011846
 non hardware. Ripetere poi anche con iPhone e Mac Intel/Apple
 Silicon: nessun nuovo test fisico dichiarato. Cronologia UI e hardware restano aperti.
 
-## Collaudo fisico B8 predisposto, NON eseguito — consegne Android/desktop
+## Collaudo fisico B8 predisposto, NON eseguito — consegne Android/desktop/iOS
 
-Nuovo ingresso di [ADR 018](ADR-018-CONSEGNA-TESTO-CON-ROSTER.md), non ancora iPhone.
+Nuovo ingresso di [ADR 018](ADR-018-CONSEGNA-TESTO-CON-ROSTER.md); iPhone implementato,
+nuovo Native/Swift/simulatore da attestare. Usare lo stesso checkpoint sui dispositivi.
 Con tre dispositivi ammessi e roster A/B noto, fermare A, ammettere C tramite B.
 
 1. Su B scegliere **Nuovo testo a C**, su C **Ricevi da B**. Stessa copia/ID
@@ -129,5 +130,5 @@ Con tre dispositivi ammessi e roster A/B noto, fermare A, ammettere C tramite B.
    Dopo stop di tutti, vecchio ID non riattiva la sessione archiviata. Registrare
    build/OS/rete/ID/esiti senza contenuti o chiavi, ripetere senza WAN.
 
-Servono realmente tre dispositivi per i primi due passi. Nuovo ingresso iPhone e
-collaudi Mac Intel/Apple Silicon restano aperti; questa lista non è un'esecuzione.
+Servono realmente tre dispositivi per i primi due passi. Ripetere con iPhone e
+Mac Intel/Apple Silicon: collaudi ancora aperti, questa lista non è un'esecuzione.

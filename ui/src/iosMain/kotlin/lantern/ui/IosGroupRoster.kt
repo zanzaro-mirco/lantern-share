@@ -9,6 +9,9 @@ import lantern.protocol.GroupSessionOfferCodec
 import lantern.protocol.GroupSessionRoster
 import lantern.protocol.GroupSessionRosterCodec
 import lantern.protocol.GroupSessionRosterFrameDecoder
+import lantern.protocol.GroupRosterTextContext
+import lantern.protocol.GroupRosterTextCodec
+import lantern.protocol.GroupTextTransferCodec
 
 class IosGroupRosterSelection internal constructor(val exchange: IosGroupRosterExchange?, val failure: IosGroupRosterFailure?)
 
@@ -80,6 +83,15 @@ class IosGroupRosterExchange internal constructor(private val memory: IosGroupSe
         memory.installRoster(this, snapshot.roster)
     }
 
+    /** Only after exact LRA on the live owner; construction alone cannot install or authorize text. */
+    @Throws(Exception::class)
+    fun installForText(snapshot: IosGroupRosterSnapshot, senderId: String, recipientId: String, digest: String,
+                       isCurrent: () -> Boolean): IosGroupTextContext {
+        val context = GroupRosterTextContext(snapshot.roster, senderId, recipientId, digest)
+        install(snapshot, isCurrent)
+        return IosGroupTextContext(context, anchor, marker)
+    }
+
     private fun current(isCurrent: () -> Boolean) { check(isCurrent() && memory.revision == revision) }
     private fun missing(): Nothing {
         failure = IosGroupRosterFailure.MISSING_PARTICIPANTS
@@ -111,4 +123,21 @@ class IosGroupRosterDecoder(agreement: Boolean) {
     @Throws(Exception::class)
     fun finish() { decoder.finish() }
     fun cancel() = decoder.close()
+}
+
+object IosGroupRosterTextProtocol {
+    @Throws(Exception::class)
+    fun checkSavedCopy(persistence: IosPersistence, id: String, groupId: String, authorId: String, recipientId: String) {
+        val saved = checkNotNull(persistence.groupTexts.groupText(id)).message.content
+        require(saved.groupId == groupId && saved.authorId == authorId && recipientId in saved.recipients)
+    }
+
+    fun capabilities(sending: Boolean): String {
+        val features = GroupRosterTextCodec.requiredFeatures.toList()
+        val role = if (sending) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE
+        fun json(values: List<String>) = values.joinToString(",", "[", "]") { "\"$it\"" }
+        return "{\"version\":1,\"supportedFeatures\":${json(features + role)},\"requiredFeatures\":${json(features)}}"
+    }
+    @Throws(Exception::class)
+    fun sendsFirst(offers: IosHandshakeV1Offers, sending: Boolean): Boolean = GroupRosterTextCodec.sendsFirst(offers.offers, sending)
 }

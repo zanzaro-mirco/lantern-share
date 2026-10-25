@@ -246,56 +246,111 @@ final class HandshakeV1Channel {
                 let transfer = try selectSession(remote)
                 try transfer.checkBinding(offers: offers, membership: membership, sending: sending)
                 guard try self.evidenceActive() else { return }
-                let scope = try transfer.scopeFrame()
-                let afterScope: () throws -> Void = { [weak self] in
-                    guard let self, try self.evidenceActive() else { return }
-                    if sending {
-                        let message = try outgoing(transfer)
+                try self.exchangeText(transfer, first: first, sending: sending,
+                    outgoing: outgoing, incoming: incoming, acknowledged: acknowledged, received: received)
+            }
+        } catch { adapterFailed(); return false }
+    }
+
+
+    /// Both negotiated text paths share ACK/cleanup and exact read ownership, not their wire scopes.
+    private func exchangeText(
+        _ transfer: IosGroupTextTransfer, first: Bool, sending: Bool,
+        outgoing: @escaping (IosGroupTextTransfer) throws -> IosGroupTextEnvelope,
+        incoming: @escaping (IosGroupTextTransfer, KotlinByteArray, SecCertificate) throws -> IosGroupTextEnvelope,
+        acknowledged: @escaping (IosGroupTextTransfer, IosGroupTextEnvelope, KotlinByteArray, String) throws -> Void,
+        received: @escaping (IosGroupTextEnvelope) throws -> Void
+    ) throws {
+        let scope = try transfer.scopeFrame()
+        let afterScope: () throws -> Void = { [weak self] in
+            guard let self, try self.evidenceActive() else { return }
+            if sending {
+                let message = try outgoing(transfer)
+                guard try self.evidenceActive() else { return }
+                let digest = try Self.textDigest(message)
+                self.sendGroupFrame(try transfer.textFrame(envelope: message)) { [weak self] in
+                    self?.receiveTextControl(expectedBytes: IosGroupTextProtocol.shared.acknowledgementBytes, transfer: transfer) { payload in
+                        guard let self, try self.evidenceActive() else { return }
+                        try acknowledged(transfer, message, payload, digest)
                         guard try self.evidenceActive() else { return }
-                        let digest = try Self.textDigest(message)
-                        self.sendGroupFrame(try transfer.textFrame(envelope: message)) { [weak self] in
-                            self?.receiveTextControl(expectedBytes: IosGroupTextProtocol.shared.acknowledgementBytes) { payload in
-                                guard let self, try self.evidenceActive() else { return }
-                                try acknowledged(transfer, message, payload, digest)
-                                guard try self.evidenceActive() else { return }
-                                self.cancel() // Sender consumed the exact ACK, not EOF as a receipt.
-                            }
-                        }
-                    } else {
-                        self.receiveTextControl(expectedBytes: 0) { [weak self] payload in
-                            guard let self, try self.evidenceActive() else { return }
-                            let message = try incoming(transfer, payload, self.peerCertificate)
-                            guard try self.evidenceActive() else { return }
-                            let digest = try Self.textDigest(message)
-                            self.sendGroupFrame(try transfer.acknowledgementFrame(envelope: message, digest: digest)) { [weak self] in
-                                guard let self, try self.evidenceActive() else { return }
-                                try received(message) // Durable fact before EOF-only cleanup can fail.
-                                if !self.closed { self.receiveMembershipEnd() }
-                            }
-                        }
+                        self.cancel() // Sender consumed the exact ACK, not EOF as a receipt.
                     }
                 }
-                if first {
-                    self.sendGroupFrame(scope) { [weak self] in
-                        self?.receiveTextControl(expectedBytes: IosGroupTextProtocol.shared.scopeBytes) { payload in
-                            try transfer.checkScope(payload: payload)
-                            try afterScope()
-                        }
-                    }
-                } else {
-                    self.receiveTextControl(expectedBytes: IosGroupTextProtocol.shared.scopeBytes) { [weak self] payload in
-                        try transfer.checkScope(payload: payload)
-                        self?.sendGroupFrame(scope, completion: afterScope)
+            } else {
+                self.receiveTextControl(expectedBytes: 0, transfer: transfer) { [weak self] payload in
+                    guard let self, try self.evidenceActive() else { return }
+                    let message = try incoming(transfer, payload, self.peerCertificate)
+                    guard try self.evidenceActive() else { return }
+                    let digest = try Self.textDigest(message)
+                    self.sendGroupFrame(try transfer.acknowledgementFrame(envelope: message, digest: digest)) { [weak self] in
+                        guard let self, try self.evidenceActive() else { return }
+                        try received(message) // Durable fact before EOF-only cleanup can fail.
+                        if !self.closed { self.receiveMembershipEnd() }
                     }
                 }
             }
-        } catch { adapterFailed(); return false }
+        }
+        if first {
+            self.sendGroupFrame(scope) { [weak self] in
+                self?.receiveTextControl(expectedBytes: transfer.scopeBytes, transfer: transfer) { payload in
+                    try transfer.checkScope(payload: payload)
+                    try afterScope()
+                }
+            }
+        } else {
+            self.receiveTextControl(expectedBytes: transfer.scopeBytes, transfer: transfer) { [weak self] payload in
+                try transfer.checkScope(payload: payload)
+                self?.sendGroupFrame(scope, completion: afterScope)
+            }
+        }
     }
 
     /// Opt-in LGM/LSN/LRO/LRA continuation selected before any proof I/O.
     @discardableResult
     func synchronizeRoster(
         membership: IosGroupMembershipEvidence, offer: IosGroupSessionOffer,
+        verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
+        propose: @escaping (IosGroupSessionOffer) throws -> IosGroupRosterSnapshot,
+        merge: @escaping (KotlinByteArray, SecCertificate) throws -> IosGroupRosterSnapshot,
+        completed: @escaping (IosGroupRosterSnapshot) throws -> Void
+    ) -> Bool {
+        beginRoster(membership: membership, offer: offer, awaitPeerClose: true,
+            verifyRemote: verifyRemote, propose: propose, merge: merge, completed: completed)
+    }
+
+    /// Text continuation is fixed before LGM starts; no diagnostic EOF read/retire after LRA.
+    @discardableResult
+    func transferRosterText(
+        membership: IosGroupMembershipEvidence, offer: IosGroupSessionOffer, sending: Bool,
+        verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
+        propose: @escaping (IosGroupSessionOffer) throws -> IosGroupRosterSnapshot,
+        merge: @escaping (KotlinByteArray, SecCertificate) throws -> IosGroupRosterSnapshot,
+        selectRoster: @escaping (IosGroupRosterSnapshot, String) throws -> IosGroupTextTransfer,
+        outgoing: @escaping (IosGroupTextTransfer) throws -> IosGroupTextEnvelope,
+        incoming: @escaping (IosGroupTextTransfer, KotlinByteArray, SecCertificate) throws -> IosGroupTextEnvelope,
+        acknowledged: @escaping (IosGroupTextTransfer, IosGroupTextEnvelope, KotlinByteArray, String) throws -> Void,
+        received: @escaping (IosGroupTextEnvelope) throws -> Void
+    ) -> Bool {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard canExchangeEvidence else { return false }
+        do {
+            guard let offers = try bridge.offersForGroupAdmission(), try evidenceActive() else { return false }
+            let first = try IosGroupRosterTextProtocol.shared.sendsFirst(offers: offers, sending: sending)
+            return beginRoster(membership: membership, offer: offer, awaitPeerClose: false,
+                verifyRemote: verifyRemote, propose: propose, merge: merge) { [weak self] snapshot in
+                guard let self, try self.evidenceActive() else { return }
+                let digest = SHA256.hash(data: Self.data(try snapshot.payload())).map { String(format: "%02x", $0) }.joined()
+                let transfer = try selectRoster(snapshot, digest)
+                try transfer.checkBinding(offers: offers, membership: membership, sending: sending)
+                guard try self.evidenceActive() else { return }
+                try self.exchangeText(transfer, first: first, sending: sending,
+                    outgoing: outgoing, incoming: incoming, acknowledged: acknowledged, received: received)
+            }
+        } catch { adapterFailed(); return false }
+    }
+
+    private func beginRoster(
+        membership: IosGroupMembershipEvidence, offer: IosGroupSessionOffer, awaitPeerClose: Bool,
         verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
         propose: @escaping (IosGroupSessionOffer) throws -> IosGroupRosterSnapshot,
         merge: @escaping (KotlinByteArray, SecCertificate) throws -> IosGroupRosterSnapshot,
@@ -321,7 +376,7 @@ final class HandshakeV1Channel {
                         guard let self, try self.evidenceActive() else { return }
                         guard Self.data(remoteAgreement) == Self.data(agreement) else { throw AdoptionError.invalidEvidence }
                         try completed(merged)
-                        if !self.closed {
+                        if awaitPeerClose, !self.closed {
                             if first { self.cancel() } else { self.receiveMembershipEnd() }
                         }
                     }
@@ -397,10 +452,13 @@ final class HandshakeV1Channel {
         SHA256.hash(data: data(try message.payload())).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func receiveTextControl(expectedBytes: Int32, completion: @escaping (KotlinByteArray) throws -> Void) {
+    private func receiveTextControl(expectedBytes: Int32, transfer: IosGroupTextTransfer,
+                                    completion: @escaping (KotlinByteArray) throws -> Void) {
         guard !closed, textDecoder == nil, !receivePending else { return }
-        textDecoder = IosGroupTextDecoder(expectedBytes: expectedBytes)
-        receiveTextControl(completion: completion)
+        do {
+            textDecoder = try transfer.decoder(expectedBytes: expectedBytes)
+            receiveTextControl(completion: completion)
+        } catch { adapterFailed() }
     }
 
     private func receiveTextControl(completion: @escaping (KotlinByteArray) throws -> Void) {

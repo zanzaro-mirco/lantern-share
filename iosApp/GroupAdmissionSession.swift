@@ -77,7 +77,11 @@ final class GroupAdmissionSession {
                 guard let anchor else { fail(.unavailable); return }
                 _ = try GroupMembership.prepare(identity: identity, persistence: persistence)
                 guard try membershipUnchanged() else { fail(.unavailable); return }
-                if selection.mode == .session || selection.mode == .text || selection.mode == .roster {
+                if let messageID = selection.messageId {
+                    try IosGroupRosterTextProtocol.shared.checkSavedCopy(persistence: persistence, id: messageID,
+                        groupId: anchor.groupId, authorId: identity.id, recipientId: selection.peerId)
+                }
+                if selection.mode == .session || selection.mode == .text || selection.mode == .roster || selection.mode == .rosterText {
                     sessionOffer = try sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
                         marker: membership, newSessionId: Self.randomSessionID())
                 }
@@ -162,6 +166,8 @@ final class GroupAdmissionSession {
             let feature = IosLocalGroupMembership.shared.feature
             let capabilities: String
             switch selection.mode {
+            case .rosterText:
+                capabilities = IosGroupRosterTextProtocol.shared.capabilities(sending: selection.sending)
             case .roster:
                 capabilities = IosGroupRosterProtocol.shared.capabilities()
             case .text:
@@ -201,7 +207,7 @@ final class GroupAdmissionSession {
                 synchronizeRoster(local, owner: bootstrap)
                 return
             }
-            if selection.mode == .text {
+            if selection.mode == .text || selection.mode == .rosterText {
                 transferText(local, owner: bootstrap)
                 return
             }
@@ -237,33 +243,42 @@ final class GroupAdmissionSession {
         } catch { fail(.failed) }
     }
 
+    private func proposeRoster(_ local: IosGroupMembershipEvidence, remote: IosGroupSessionOffer) throws -> IosGroupRosterSnapshot {
+        guard textContextCurrent(), let anchor, let sessionOffer else { throw TextError.expired }
+        let selected = try sessionMemory.selectRoster(local: sessionOffer, remote: remote,
+            groupId: anchor.groupId, founderId: anchor.founderId, marker: membership)
+        guard let exchange = selected.exchange else {
+            rosterFailure = selected.failure ?? .failed
+            textFailure = selected.failure == .sessionChoiceRequired ? .sessionChoiceRequired : .failed
+            throw TextError.scopeRequired
+        }
+        rosterExchange = exchange
+        return try exchange.propose(membership: local,
+            certificateDer: (SecCertificateCopyData(identity.certificate) as Data).base64EncodedString(),
+            isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, sign: { bytes in
+                try? self.identity.sign(Self.data(bytes))
+            })
+    }
+
+    private func mergeRoster(_ payload: KotlinByteArray, certificate: SecCertificate) throws -> IosGroupRosterSnapshot {
+        guard textContextCurrent(), let exchange = rosterExchange else { throw TextError.expired }
+        return try GroupMembership.withVerifier { verify in
+            try exchange.merge(payload: payload, peerId: selection.peerId,
+                peerCertificateDer: (SecCertificateCopyData(certificate) as Data).base64EncodedString(),
+                isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, verify: verify)
+        }
+    }
+
     private func synchronizeRoster(_ local: IosGroupMembershipEvidence, owner: HandshakeV1Channel) {
         guard live, let sessionOffer else { fail(.failed); return }
         guard owner.synchronizeRoster(membership: local, offer: sessionOffer,
-            verifyRemote: { [weak self] remote in
-                guard let self, self.textContextCurrent(), let anchor = self.anchor else { return false }
-                return try GroupMembership.verify(remote, anchor: anchor, peerID: self.selection.peerId) && self.textContextCurrent()
-            }, propose: { [weak self] remote in
-                guard let self, self.textContextCurrent(), let anchor = self.anchor else { throw TextError.expired }
-                let selected = try self.sessionMemory.selectRoster(local: sessionOffer, remote: remote,
-                    groupId: anchor.groupId, founderId: anchor.founderId, marker: self.membership)
-                guard let exchange = selected.exchange else {
-                    self.rosterFailure = selected.failure ?? .failed
-                    throw TextError.scopeRequired
-                }
-                self.rosterExchange = exchange
-                return try exchange.propose(membership: local,
-                    certificateDer: (SecCertificateCopyData(self.identity.certificate) as Data).base64EncodedString(),
-                    isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, sign: { bytes in
-                        try? self.identity.sign(Self.data(bytes))
-                    })
+            verifyRemote: { [weak self] remote in try self?.verifyTextPeer(remote) ?? false },
+            propose: { [weak self] remote in
+                guard let self else { throw TextError.expired }
+                return try self.proposeRoster(local, remote: remote)
             }, merge: { [weak self] payload, certificate in
-                guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
-                return try GroupMembership.withVerifier { verify in
-                    try exchange.merge(payload: payload, peerId: self.selection.peerId,
-                        peerCertificateDer: (SecCertificateCopyData(certificate) as Data).base64EncodedString(),
-                        isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, verify: verify)
-                }
+                guard let self else { throw TextError.expired }
+                return try self.mergeRoster(payload, certificate: certificate)
             }, completed: { [weak self] snapshot in
                 guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
                 try exchange.install(snapshot: snapshot, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
@@ -272,51 +287,88 @@ final class GroupAdmissionSession {
             }) else { fail(.failed); return }
     }
 
+    private func verifyTextPeer(_ remote: IosGroupMembershipEvidence) throws -> Bool {
+        guard textContextCurrent(), let anchor else { return false }
+        return try GroupMembership.verify(remote, anchor: anchor, peerID: selection.peerId) && textContextCurrent()
+    }
+
     private func transferText(_ local: IosGroupMembershipEvidence, owner: HandshakeV1Channel) {
         guard live, let sessionOffer else { fail(.failed); return }
-        let sending = selection.text != nil
-        guard owner.transferGroupText(membership: local, offer: sessionOffer, sending: sending,
-            verifyRemote: { [weak self] remote in
-                guard let self, self.live, let anchor = self.anchor else { return false }
-                return try self.membershipUnchanged() &&
-                    GroupMembership.verify(remote, anchor: anchor, peerID: self.selection.peerId) &&
-                    self.live && self.membershipUnchanged()
-            }, selectSession: { [weak self] remote in
-                guard let self, self.textContextCurrent(), let anchor = self.anchor else { throw TextError.expired }
-                let result = try self.sessionMemory.selectText(local: sessionOffer, remote: remote,
-                    groupId: anchor.groupId, founderId: anchor.founderId, marker: self.membership,
-                    senderId: sending ? self.identity.id : self.selection.peerId,
-                    recipientId: sending ? self.selection.peerId : self.identity.id)
-                guard let context = result.context else {
-                    self.textFailure = result.failure ?? .failed
-                    throw TextError.scopeRequired
-                }
-                let transfer = IosGroupTextTransfer(persistence: self.persistence, memory: self.sessionMemory,
-                    scope: context, localIdentity: self.identity.id)
-                self.textTransfer = transfer
-                self.presentation.textTransferring(value: self.selection)
-                return transfer
-            }, outgoing: { [weak self] transfer in
-                guard let self, let body = self.selection.text, self.textContextCurrent() else { throw TextError.expired }
-                return try transfer.prepareOutgoing(id: UUID().uuidString.lowercased(), body: body,
-                    isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, sign: { bytes in
-                        try? self.identity.sign(Self.data(bytes)) // Nil becomes a caught, terminal facade error.
-                    })
-            }, incoming: { [weak self] transfer, payload, certificate in
-                guard let self, self.textContextCurrent() else { throw TextError.expired }
-                return try transfer.receive(payload: payload, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) },
+        let sending = selection.sending
+        let outgoing: (IosGroupTextTransfer) throws -> IosGroupTextEnvelope = { [weak self] transfer in
+            guard let self, self.textContextCurrent() else { throw TextError.expired }
+            if let id = self.selection.messageId {
+                return try transfer.prepareSaved(id: id, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) },
                     verify: { bytes, signature in
-                        KotlinBoolean(bool: AppleIdentity.verify(certificate: certificate, message: Self.data(bytes), signature: signature))
+                        KotlinBoolean(bool: AppleIdentity.verify(certificate: self.identity.certificate, message: Self.data(bytes), signature: signature))
                     })
-            }, acknowledged: { [weak self] transfer, message, payload, digest in
-                guard let self, self.textContextCurrent() else { throw TextError.expired }
-                try transfer.acknowledge(payload: payload, envelope: message, digest: digest,
-                    isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
-                self.publishText(message)
-            }, received: { [weak self] message in
-                guard let self, self.textContextCurrent() else { throw TextError.expired }
-                self.publishText(message)
-            }) else { fail(.failed); return }
+            }
+            guard let body = self.selection.text else { throw TextError.expired }
+            return try transfer.prepareOutgoing(id: UUID().uuidString.lowercased(), body: body,
+                isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, sign: { bytes in
+                    try? self.identity.sign(Self.data(bytes))
+                })
+        }
+        let incoming: (IosGroupTextTransfer, KotlinByteArray, SecCertificate) throws -> IosGroupTextEnvelope = { [weak self] transfer, payload, certificate in
+            guard let self, self.textContextCurrent() else { throw TextError.expired }
+            return try transfer.receive(payload: payload, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) },
+                verify: { bytes, signature in
+                    KotlinBoolean(bool: AppleIdentity.verify(certificate: certificate, message: Self.data(bytes), signature: signature))
+                })
+        }
+        let acknowledged: (IosGroupTextTransfer, IosGroupTextEnvelope, KotlinByteArray, String) throws -> Void = { [weak self] transfer, message, payload, digest in
+            guard let self, self.textContextCurrent() else { throw TextError.expired }
+            try transfer.acknowledge(payload: payload, envelope: message, digest: digest,
+                isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
+            try self.publishText(message)
+        }
+        let received: (IosGroupTextEnvelope) throws -> Void = { [weak self] message in
+            guard let self, self.textContextCurrent() else { throw TextError.expired }
+            try self.publishText(message)
+        }
+        if selection.mode == .rosterText {
+            guard owner.transferRosterText(membership: local, offer: sessionOffer, sending: sending,
+                verifyRemote: { [weak self] remote in try self?.verifyTextPeer(remote) ?? false },
+                propose: { [weak self] remote in
+                    guard let self else { throw TextError.expired }
+                    return try self.proposeRoster(local, remote: remote)
+                }, merge: { [weak self] payload, certificate in
+                    guard let self else { throw TextError.expired }
+                    return try self.mergeRoster(payload, certificate: certificate)
+                }, selectRoster: { [weak self] snapshot, digest in
+                    guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
+                    let context = try exchange.installForText(snapshot: snapshot,
+                        senderId: sending ? self.identity.id : self.selection.peerId,
+                        recipientId: sending ? self.selection.peerId : self.identity.id, digest: digest,
+                        isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
+                    let transfer = IosGroupTextTransfer(persistence: self.persistence, memory: self.sessionMemory,
+                        scope: context, localIdentity: self.identity.id)
+                    self.textTransfer = transfer
+                    self.presentation.textTransferring(value: self.selection)
+                    return transfer
+                }, outgoing: outgoing, incoming: incoming, acknowledged: acknowledged, received: received)
+            else { fail(.failed); return }
+        } else {
+            guard owner.transferGroupText(membership: local, offer: sessionOffer, sending: sending,
+                verifyRemote: { [weak self] remote in try self?.verifyTextPeer(remote) ?? false },
+                selectSession: { [weak self] remote in
+                    guard let self, self.textContextCurrent(), let anchor = self.anchor else { throw TextError.expired }
+                    let result = try self.sessionMemory.selectText(local: sessionOffer, remote: remote,
+                        groupId: anchor.groupId, founderId: anchor.founderId, marker: self.membership,
+                        senderId: sending ? self.identity.id : self.selection.peerId,
+                        recipientId: sending ? self.selection.peerId : self.identity.id)
+                    guard let context = result.context else {
+                        self.textFailure = result.failure ?? .failed
+                        throw TextError.scopeRequired
+                    }
+                    let transfer = IosGroupTextTransfer(persistence: self.persistence, memory: self.sessionMemory,
+                        scope: context, localIdentity: self.identity.id)
+                    self.textTransfer = transfer
+                    self.presentation.textTransferring(value: self.selection)
+                    return transfer
+                }, outgoing: outgoing, incoming: incoming, acknowledged: acknowledged, received: received)
+            else { fail(.failed); return }
+        }
     }
 
     private func textContextCurrent() -> Bool {
@@ -326,9 +378,15 @@ final class GroupAdmissionSession {
         do { return try membershipUnchanged() && live } catch { return false }
     }
 
-    private func publishText(_ message: IosGroupTextEnvelope) {
+    private func publishText(_ message: IosGroupTextEnvelope) throws {
+        if selection.mode == .rosterText {
+            guard let textTransfer else { throw TextError.expired }
+            try textTransfer.publishDelivery(controller: presentation, selection: selection, envelope: message,
+                isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
+        } else {
+            IosGroupTextProtocol.shared.completed(controller: presentation, selection: selection, envelope: message)
+        }
         textCompleted = true
-        IosGroupTextProtocol.shared.completed(controller: presentation, selection: selection, envelope: message)
     }
 
     private static func data(_ bytes: KotlinByteArray) -> Data {
@@ -448,10 +506,15 @@ final class GroupAdmissionSession {
                 presentation.rosterFailed(value: selection,
                     reason: failure == .unavailable ? .unavailable : (rosterExchange?.failure ?? rosterFailure))
             }
-        } else if selection.mode == .text {
+        } else if selection.mode == .text || selection.mode == .rosterText {
             if !textCompleted {
+                let reason: IosGroupTextFailure
+                if failure == .unavailable { reason = .unavailable }
+                else if rosterExchange?.failure == .missingParticipants { reason = .rosterRequired }
+                else if let transfer = textTransfer, transfer.failure != .failed { reason = transfer.failure }
+                else { reason = textFailure }
                 presentation.textFailed(value: selection,
-                    reason: failure == .unavailable ? .unavailable : textFailure,
+                    reason: reason,
                     attemptedMessageId: textTransfer?.attemptedMessageId)
             }
         } else if !issuerConfirmed && !membershipVerified && !sessionSelected { presentation.failed(value: selection, reason: failure) }

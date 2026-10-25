@@ -1,6 +1,6 @@
 # ADR 018 — consegna esplicita di testo con roster completo
 
-Data: 25 ottobre 2026. Seguito di ADR 016–017, ingresso Node/UI Android/desktop.
+Data: 25 ottobre 2026. Seguito di ADR 016–017, ingressi Node/UI Android/desktop e Bonjour/iOS.
 
 ## Risultato e accettazione
 
@@ -78,5 +78,36 @@ aggiuntivo. Nessuna nuova libreria, versione, lock o workflow.
 
 Non comprende distribuzione automatica, connessione persistente, recupero da
 altri autori, retry/reconnect, paginazione, scelta fra sessioni usate o cronologia
-UI completa. Il nuovo ingresso Bonjour/iOS resta il prossimo blocco con lo stesso
-core e un checkpoint Native/simulatore. Fase 1/hardware e gate UI restano aperti.
+UI completa. Lo stesso ingresso Bonjour/iOS è implementato, nuovo Native/Swift e
+simulatore ancora da verificare; evidenze effettive in STATO. Fase 1/hardware e
+gate UI restano aperti.
+
+## Adattatore Bonjour/iOS
+
+`IosGroupAdmissionController` espone lo stesso pannello Compose e una selezione
+ROSTER_TEXT distinta dalle modalità precedenti. ID della copia e direzione sono
+congelati; il preflight rifiuta copie di altri autori/non destinate al peer prima
+di abilitare il pin. Solo nuove prove sul TLS corrente consentono la continuazione.
+
+`HandshakeV1Channel` sceglie prima di LGM se dopo LRA deve attendere EOF o entrare
+in LTC/testo/LGA, senza un secondo reader o un nuovo timer. I due ingressi testo
+riusano la stessa logica nativa di write/ACK/cleanup; codec, decoder con profilo
+esplicito (LTC 324 oppure LTX 260), busta, salvataggio, copie e ricevute rimangono
+Kotlin. Swift fornisce certificati TLS reali, firme/verifica OS e SHA-256.
+
+`installForText` accetta soltanto l'esatto snapshot unito dalla propria istanza
+B7, a revisione invariata e dopo LRA; non installa snapshot arbitrari o proposte.
+La facciata testo verifica memoria della run, radice, marker e destinatari prima
+dei passi durevoli, senza rifirmare o riservare contatori per le copie. La coda
+seriale non UI arbitra cancel/stop, letture e salvataggio; il drain precede la
+chiusura SQLite. Un passo già entrato può finire, senza ACK/pubblicazioni se il
+contesto è scaduto/revocato. Used resta conservativo e una firma errata non entra
+nella scrittura. Esito durevole pubblicato dopo commit/write ACK o ACK persistito,
+non annullato dal solo cleanup EOF. Nessun nuovo consenso/pin o storia ripristinata.
+
+Regressioni mantenute: riapertura dell'autore e copie in entrambi gli ordini TLS;
+tre partecipanti con fondatore offline, stessa busta a due destinatari e ricevute
+separate; ingressi successivi/snapshot mutato o perso, modi incompatibili e
+riselezione; scope e ACK alterati, cancellazione e deadline originale in attesa
+ACK dopo prove e commit veri. Facciate con firma/certificato errati, run scaduta,
+revoca dopo OS o dopo commit senza ricevuta restituita. Non sono prove fisiche.
