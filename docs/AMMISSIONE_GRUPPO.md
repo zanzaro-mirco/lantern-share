@@ -1,5 +1,7 @@
 # Dichiarazione di ammissione al gruppo
 
+> **Stato riconciliato al 25 ottobre 2026:** Fondazione, adozione locale A, inviti delegati e verifica B4 già integrati anche Bonjour/iOS e verificati automaticamente. Non sono recovery distribuito o autorizzazione a usare il risultato diagnostico per traffico successivo. Fase 1/hardware aperta; sessioni/roster/testo successivi in ADR 014–018. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Verifica di membri già ammessi — B4
 
 Percorso opzionale distinto dall'invito: [ADR 013](ADR-013-VERIFICA-APPARTENENZA-TLS.md).
@@ -7,8 +9,8 @@ Node Android/desktop e azione Verifica membro controllano la prova fino all'iden
 del peer mutual-TLS contro il gruppo locale indipendente, senza nuove deleghe o
 conferme. Il risultato diagnostico non apre sessioni né promuove trust. Stesso owner,
 selezione esclusiva e scadenza; formato nuovo solo previa negoziazione obbligatoria
-della feature opzionale, senza cambiare i codec sottostanti. Integrazione iOS ancora
-da realizzare, verifiche effettive in STATO, collaudi fisici aperti.
+della feature opzionale, senza cambiare i codec sottostanti. Integrazione iOS
+realizzata e verificata nel simulatore; evidenze in STATO, collaudi fisici aperti.
 
 ## Inviti da membri già ammessi — 19 ottobre 2026
 

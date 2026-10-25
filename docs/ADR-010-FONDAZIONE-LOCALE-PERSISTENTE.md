@@ -1,5 +1,7 @@
 # ADR 010 — fondazione locale persistente
 
+> **Stato riconciliato al 25 ottobre 2026:** Fondazione e pannello integrati anche iOS, verificati automaticamente nei checkpoint precedenti. Schema 2 qui descrive la migrazione originaria; schema attuale 5 con migrazioni additive 1.sqm–4.sqm. Non ricreare database o gruppo. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 11 ottobre 2026. Fondazione/owner Apple verificati in CI su `7b88c9d`; integrazione UI locale Android/desktop aggiunta nell'incremento successivo, collaudo fisico aperto.
 
 ## Decisione

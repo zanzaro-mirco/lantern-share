@@ -1,6 +1,8 @@
 # Selezione della sessione LAN
 
-Regola di dominio per gruppi/sessioni del piano, implementata in `domain/SessionSelection.kt`. Il primo ingresso esplicito Node Android/desktop è descritto in [ADR 014](ADR-014-NEGOZIAZIONE-INIZIALE-SESSIONE.md): formato opzionale separato dal wire 0 e nessun nuovo schema SQLite. Non è la gestione completa delle sessioni o un'autorizzazione alla chat.
+> **Stato riconciliato al 25 ottobre 2026:** B5–B7 integrati Node/Bonjour e verificati automaticamente; B8 testo/roster integrato anche iOS in 3d22698, nuovo completo Apple ancora pendente nell’ultima lettura. Tutte le checklist fisiche B5–B8 sotto restano predisposte e NON eseguite. Una sessione in memoria per run; storia non autoritativa. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
+Regola di dominio per gruppi/sessioni del piano, implementata in `domain/SessionSelection.kt`. Gli ingressi espliciti Node Android/desktop e Bonjour/iOS sono descritti in [ADR 014](ADR-014-NEGOZIAZIONE-INIZIALE-SESSIONE.md): formato opzionale separato dal wire 0 e nessun nuovo schema SQLite. Non è la gestione completa delle sessioni o un'autorizzazione alla chat.
 
 `SessionSelector.select` riceve il gruppo dell'installazione e uno snapshot di sessioni attive della LAN corrente, inclusa quella locale se attiva. Le offerte di altri gruppi sono escluse dalla regola pura; l'ingresso di rete rifiuta invece un'offerta con gruppo diverso. Gli ID di dominio sono opachi, non vuoti, non normalizzati: non derivano da SSID, IP o nome dispositivo. L'adattatore Node genera ID casuali a 256 bit e verifica l'appartenenza sullo stesso TLS prima dello scambio. Le proposte nuove sono fallback soltanto se nessuno mantiene una sessione, non un motivo per cambiare quella rimasta attiva.
 

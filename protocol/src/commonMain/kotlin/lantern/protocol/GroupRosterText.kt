@@ -2,26 +2,46 @@ package lantern.protocol
 
 import lantern.domain.SignedGroupText
 
-/** One delivery of a text addressed to the entire freshly verified session roster. */
+/**
+ * One delivery bound to the entire freshly verified session roster. A new text addresses all of
+ * it. A negotiated saved copy keeps the author's original signed snapshot, which must still be a
+ * subset of this live roster and contain the TLS recipient: later joiners are never added.
+ */
 class GroupRosterTextContext(
     val roster: GroupSessionRoster,
     override val senderId: String,
     override val recipientId: String,
     val rosterDigest: String,
+    val savedCopy: Boolean = false,
 ) : GroupTextDeliveryContext {
     override val groupId: String get() = roster.anchor.groupId
     override val sessionId: String get() = roster.sessionId
+    /** Live roster used for scope/run checks; a copy's frozen recipients come from its signed snapshot. */
     override val recipients: Set<String> get() = roster.participants
 
     init {
         require(Wire.isFingerprint(rosterDigest))
         require(senderId != recipientId && senderId in recipients && recipientId in recipients)
     }
+
+    override fun checkMessage(message: SignedGroupText) {
+        if (!savedCopy) return super.checkMessage(message)
+        val c = message.content
+        require(c.groupId == groupId && c.sessionId == sessionId && c.authorId == senderId &&
+            recipientId in c.recipients && recipients.containsAll(c.recipients)) { "Saved group text copy context mismatch" }
+    }
+
+    override fun expectedRecipients(message: SignedGroupText): Set<String> {
+        checkMessage(message)
+        return if (savedCopy) message.content.recipients.toSet() else recipients
+    }
 }
 
 /** Additive continuation after LRA; legacy LTX/LTA and the signed envelope are unchanged. */
 object GroupRosterTextCodec {
     const val FEATURE = "group-roster-text"
+    /** Required by the author of a saved copy, only supported by receivers; never inferred from payloads. */
+    const val COPY_FEATURE = "group-roster-text-copy"
     const val SCOPE_BYTES = 324
     const val ACK_BYTES = 360
     val requiredFeatures: Set<String> get() = setOf(FEATURE, GroupSessionRosterCodec.FEATURE,
@@ -42,7 +62,19 @@ object GroupRosterTextCodec {
         return offers.local.identity < offers.remote.identity
     }
 
-    fun scope(context: GroupRosterTextContext): ByteArray = byteArrayOf(76, 84, 67, 1) +
+    /** True only when the author explicitly required saved-copy delivery and the receiver supports it. */
+    fun savedCopy(offers: ProtocolHandshakeOffers, sending: Boolean): Boolean {
+        val author = (if (sending) offers.local else offers.remote).capabilities
+        val receiver = (if (sending) offers.remote else offers.local).capabilities
+        val required = COPY_FEATURE in author.requiredFeatures
+        check((COPY_FEATURE in author.supportedFeatures) == required) { "Saved copy must be required by its author" }
+        check(COPY_FEATURE !in receiver.requiredFeatures) { "Receiver cannot demand a saved copy" }
+        check(!required || COPY_FEATURE in receiver.supportedFeatures) { "Saved copy not negotiated" }
+        return required
+    }
+
+    /** Version 2 binds the negotiated saved-copy mode into the same exact 324-byte agreement. */
+    fun scope(context: GroupRosterTextContext): ByteArray = byteArrayOf(76, 84, 67, if (context.savedCopy) 2 else 1) +
         (context.groupId + context.sessionId + context.senderId + context.recipientId + context.rosterDigest).encodeToByteArray()
 
     fun acknowledgement(context: GroupRosterTextContext, message: SignedGroupText, envelopeDigest: String): ByteArray {

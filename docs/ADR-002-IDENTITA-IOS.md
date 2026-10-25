@@ -1,5 +1,7 @@
 # ADR 002 — Identità iOS
 
+> **Stato riconciliato al 25 ottobre 2026:** Identità Keychain già integrata con TLS, persistenza e servizi iOS e verificata in simulatore fin dal PoC. Il “futuro trasporto” nel testo originario è stato realizzato: non riaprire questa attività. Hardware Apple ancora aperto. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Contratto prima dell'uso nel trasporto
 
 L'identità iOS usa lo stesso formato del protocollo 0: chiave EC P-256, certificato X.509 autofirmato, ID SHA-256 del DER e firme ECDSA/SHA-256 in DER/Base64. Il Keychain conserva chiave, certificato e pin atteso. Le firme passano a Security.framework tramite `SecKey`; l'app non serializza la chiave privata su file o UserDefaults. Non viene promessa protezione Secure Enclave o non esportabilità hardware.

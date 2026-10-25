@@ -53,8 +53,11 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
 
     @Throws(Exception::class)
     fun checkBinding(offers: IosHandshakeV1Offers, membership: IosGroupMembershipEvidence, sending: Boolean) {
-        if (rosterContext != null) GroupRosterTextCodec.sendsFirst(offers.offers, sending)
-        else GroupTextTransferCodec.sendsFirst(offers.offers, sending)
+        val roster = rosterContext
+        if (roster != null) {
+            GroupRosterTextCodec.sendsFirst(offers.offers, sending)
+            require(GroupRosterTextCodec.savedCopy(offers.offers, sending) == roster.savedCopy)
+        } else GroupTextTransferCodec.sendsFirst(offers.offers, sending)
         require(localIdentity == offers.localIdentity && membership.evidence.anchor == scope.anchor &&
             context.groupId == scope.anchor.groupId && context.senderId == (if (sending) offers.localIdentity else offers.remoteIdentity) &&
             context.recipientId == (if (sending) offers.remoteIdentity else offers.localIdentity))
@@ -69,15 +72,16 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
     /** An existing authored copy still needs the freshly verified run/scope; never reserves counters. */
     @Throws(Exception::class)
     fun prepareSaved(id: String, isCurrent: () -> Boolean, verify: (ByteArray, String) -> Boolean): IosGroupTextEnvelope {
-        require(localIdentity == context.senderId && rosterContext != null)
+        require(localIdentity == context.senderId && rosterContext?.savedCopy == true)
         current(isCurrent)
         val message = checkNotNull(persistence.groupTexts.groupText(id)).message
-        if (message.content.groupId != context.groupId || message.content.sessionId != context.sessionId ||
-            message.content.recipients.toSet() != context.recipients) {
+        // Same session, frozen snapshot inside today's verified roster; later joiners never added.
+        try {
+            context.checkMessage(message)
+        } catch (mismatch: IllegalArgumentException) {
             failure = IosGroupTextFailure.ROSTER_REQUIRED
-            error("Saved copy does not match current session snapshot")
+            throw mismatch
         }
-        context.checkMessage(message)
         GroupTextCodec.encode(message)
         check(verify(GroupTextCodec.signedBytes(message.content), message.signature))
         current(isCurrent)
@@ -91,7 +95,7 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
     @Throws(Exception::class)
     fun prepareOutgoing(id: String, body: String, isCurrent: () -> Boolean,
                         sign: (ByteArray) -> String?): IosGroupTextEnvelope {
-        require(localIdentity == context.senderId)
+        require(localIdentity == context.senderId && rosterContext?.savedCopy != true)
         current(isCurrent)
         val counters = persistence.groupTexts.reserveGroupTextCounters(context.groupId, localIdentity)
         current(isCurrent)
@@ -122,7 +126,7 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
             }
         }
         GroupTextReceiver(store).receive(message, context.groupId, context.sessionId, localIdentity,
-            context.senderId, context.recipients, { current(isCurrent); true }, verify)
+            context.senderId, context.expectedRecipients(message), { current(isCurrent); true }, verify)
         return IosGroupTextEnvelope(message)
     }
 

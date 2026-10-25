@@ -86,8 +86,14 @@ class IosGroupRosterExchange internal constructor(private val memory: IosGroupSe
     /** Only after exact LRA on the live owner; construction alone cannot install or authorize text. */
     @Throws(Exception::class)
     fun installForText(snapshot: IosGroupRosterSnapshot, senderId: String, recipientId: String, digest: String,
-                       isCurrent: () -> Boolean): IosGroupTextContext {
-        val context = GroupRosterTextContext(snapshot.roster, senderId, recipientId, digest)
+                       isCurrent: () -> Boolean): IosGroupTextContext =
+        installForText(snapshot, senderId, recipientId, digest, savedCopy = false, isCurrent = isCurrent)
+
+    /** [savedCopy] comes from the negotiated HELLO and is checked again by the transfer binding. */
+    @Throws(Exception::class)
+    fun installForText(snapshot: IosGroupRosterSnapshot, senderId: String, recipientId: String, digest: String,
+                       savedCopy: Boolean, isCurrent: () -> Boolean): IosGroupTextContext {
+        val context = GroupRosterTextContext(snapshot.roster, senderId, recipientId, digest, savedCopy)
         install(snapshot, isCurrent)
         return IosGroupTextContext(context, anchor, marker)
     }
@@ -132,12 +138,20 @@ object IosGroupRosterTextProtocol {
         require(saved.groupId == groupId && saved.authorId == authorId && recipientId in saved.recipients)
     }
 
-    fun capabilities(sending: Boolean): String {
+    fun capabilities(sending: Boolean): String = capabilities(sending, savedCopy = false)
+
+    /** Same rule as Node: a copy author requires the copy feature, every receiver only supports it. */
+    fun capabilities(sending: Boolean, savedCopy: Boolean): String {
+        require(sending || !savedCopy)
         val features = GroupRosterTextCodec.requiredFeatures.toList()
         val role = if (sending) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE
+        val copy = if (savedCopy || !sending) listOf(GroupRosterTextCodec.COPY_FEATURE) else emptyList()
+        val required = if (savedCopy) features + copy else features
         fun json(values: List<String>) = values.joinToString(",", "[", "]") { "\"$it\"" }
-        return "{\"version\":1,\"supportedFeatures\":${json(features + role)},\"requiredFeatures\":${json(features)}}"
+        return "{\"version\":1,\"supportedFeatures\":${json(features + role + copy)},\"requiredFeatures\":${json(required)}}"
     }
     @Throws(Exception::class)
     fun sendsFirst(offers: IosHandshakeV1Offers, sending: Boolean): Boolean = GroupRosterTextCodec.sendsFirst(offers.offers, sending)
+    @Throws(Exception::class)
+    fun savedCopy(offers: IosHandshakeV1Offers, sending: Boolean): Boolean = GroupRosterTextCodec.savedCopy(offers.offers, sending)
 }

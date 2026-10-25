@@ -1,5 +1,7 @@
 # Lantern: protocollo sperimentale 0 (non il v1 completo)
 
+> **Stato riconciliato al 25 ottobre 2026:** Il wire 0 sperimentale resta compatibile e distinto dai percorsi gruppo negoziati di ADR 004–018. Identità, TLS, associazione e testo PoC iOS già verificati in simulatore; Android ↔ Windows verificato fisicamente. Non usare trust PoC o discovery come autorità del gruppo. Schema corrente 5, senza modificare questo contratto wire. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Specifica di prodotto: ../PIANO_SVILUPPO.md. Il piano è stato integrato con i criteri architetturali su richiesta dell'utente; i requisiti di prodotto restano invariati. Il presente contratto è stato fissato prima dell'implementazione crittografica.
 
 Revisione di mantenibilità: il formato wire 0 resta identico, mentre i tipi interni diventano enum. La scadenza del candidato usa tempo monotono e ogni selezione possiede un token locale: una conferma del tentativo precedente non può promuovere un nuovo candidato, anche se il peer ha lo stesso ID. Questi token non modificano i frame di rete.

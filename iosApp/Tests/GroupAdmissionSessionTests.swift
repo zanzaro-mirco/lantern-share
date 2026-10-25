@@ -545,7 +545,8 @@ final class GroupAdmissionSessionTests: XCTestCase {
                                         }, merge: { payload, certificate in
                                             XCTAssertEqual(SecCertificateCopyData(certificate) as Data, SecCertificateCopyData(higher.identity.certificate) as Data)
                                             return try self.mergeRoster(XCTUnwrap(rosterExchange), payload: payload, peer: higher)
-                                        }, selectRoster: { snapshot, digest in
+                                        }, selectRoster: { snapshot, digest, savedCopy in
+                                            XCTAssertFalse(savedCopy)
                                             let scope = try XCTUnwrap(rosterExchange).installForText(snapshot: snapshot,
                                                 senderId: lower.identity.id, recipientId: higher.identity.id, digest: digest,
                                                 isCurrent: { KotlinBoolean(bool: true) })
@@ -558,7 +559,12 @@ final class GroupAdmissionSessionTests: XCTestCase {
                                             return try transfer.prepareOutgoing(id: id, body: "Roster pending ACK",
                                                 isCurrent: { KotlinBoolean(bool: true) }, sign: { try? lower.identity.sign(self.data($0)) })
                                         }, incoming: { _, _, _ in throw PendingTextError.unexpected },
-                                        acknowledged: { _, _, _, _ in XCTFail("No valid recipient ACK") },
+                                        acknowledged: { transfer, message, payload, digest in
+                                            // The owner hands over the raw ACK; validation is the caller's, as in production.
+                                            try transfer.acknowledge(payload: payload, envelope: message, digest: digest,
+                                                isCurrent: { KotlinBoolean(bool: true) })
+                                            XCTFail("No valid recipient ACK")
+                                        },
                                         received: { _ in XCTFail("Local role is sender") }) ?? false)
                                 } else if roster {
                                     XCTAssertTrue(localOwner?.synchronizeRoster(membership: proof, offer: offer,
@@ -1230,7 +1236,7 @@ final class GroupAdmissionSessionTests: XCTestCase {
     }
 
     /// Facade boundary tests use real membership/OS signatures and explicit agreement, not a live socket.
-    private func rosterTransfers(_ sender: Side, _ receiver: Side) throws -> (IosGroupTextTransfer, IosGroupTextTransfer) {
+    private func rosterTransfers(_ sender: Side, _ receiver: Side, savedCopy: Bool = false) throws -> (IosGroupTextTransfer, IosGroupTextTransfer) {
         let anchor = try XCTUnwrap(sender.store.localGroup())
         let sm = try sender.store.committedGroupAdoption(), rm = try receiver.store.committedGroupAdoption()
         let so = try sender.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
@@ -1249,9 +1255,9 @@ final class GroupAdmissionSessionTests: XCTestCase {
         XCTAssertEqual(try data(mergedSender.agreement(digest: digest)), try data(mergedReceiver.agreement(digest: digest)))
         let current = { KotlinBoolean(bool: true) }
         let sc = try se.installForText(snapshot: mergedSender, senderId: sender.identity.id, recipientId: receiver.identity.id,
-            digest: digest, isCurrent: current)
+            digest: digest, savedCopy: savedCopy, isCurrent: current)
         let rc = try re.installForText(snapshot: mergedReceiver, senderId: sender.identity.id, recipientId: receiver.identity.id,
-            digest: digest, isCurrent: current)
+            digest: digest, savedCopy: savedCopy, isCurrent: current)
         return (IosGroupTextTransfer(persistence: sender.store, memory: sender.sessionMemory, scope: sc, localIdentity: sender.identity.id),
                 IosGroupTextTransfer(persistence: receiver.store, memory: receiver.sessionMemory, scope: rc, localIdentity: receiver.identity.id))
     }
@@ -1262,7 +1268,7 @@ final class GroupAdmissionSessionTests: XCTestCase {
         try confirmBoth(sender, receiver)
         closeAndDrain(sender); closeAndDrain(receiver)
         try queue.sync {
-            let (outgoing, incoming) = try rosterTransfers(sender, receiver)
+            let (outgoing, _) = try rosterTransfers(sender, receiver)
             let current = { KotlinBoolean(bool: true) }
             let expired = { KotlinBoolean(bool: false) }
             var selected: IosGroupAdmissionSelection?
@@ -1276,43 +1282,52 @@ final class GroupAdmissionSessionTests: XCTestCase {
             let original = try data(message.payload())
             XCTAssertEqual(outgoing.scopeBytes, 324)
             XCTAssertEqual(try data(outgoing.scopeFrame()).count, 328)
-            XCTAssertThrowsError(try outgoing.prepareSaved(id: message.id, isCurrent: expired,
-                verify: { _, _ in XCTFail("Expired before OS"); return KotlinBoolean(bool: true) }))
             XCTAssertThrowsError(try outgoing.prepareSaved(id: message.id, isCurrent: current,
+                verify: { _, _ in XCTFail("New-text scope cannot carry a saved copy"); return KotlinBoolean(bool: true) }))
+            // A copy needs its own negotiated scope (LTC version 2) on a fresh installation.
+            let (copyOut, copyIn) = try rosterTransfers(sender, receiver, savedCopy: true)
+            XCTAssertEqual(copyOut.scopeBytes, 324)
+            XCTAssertEqual(Array(data(try copyOut.scopeFrame()).dropFirst(4).prefix(4)), [76, 84, 67, 2])
+            XCTAssertEqual(Array(data(try outgoing.scopeFrame()).dropFirst(4).prefix(4)), [76, 84, 67, 1])
+            XCTAssertThrowsError(try copyOut.prepareOutgoing(id: UUID().uuidString.lowercased(), body: "Nessun contatore",
+                isCurrent: current, sign: { _ in XCTFail("Copy scope cannot sign"); return nil }))
+            XCTAssertThrowsError(try copyOut.prepareSaved(id: message.id, isCurrent: expired,
+                verify: { _, _ in XCTFail("Expired before OS"); return KotlinBoolean(bool: true) }))
+            XCTAssertThrowsError(try copyOut.prepareSaved(id: message.id, isCurrent: current,
                 verify: { bytes, signature in KotlinBoolean(bool: AppleIdentity.verify(certificate: receiver.identity.certificate,
                     message: self.data(bytes), signature: signature)) }))
-            let saved = try outgoing.prepareSaved(id: message.id, isCurrent: current,
+            let saved = try copyOut.prepareSaved(id: message.id, isCurrent: current,
                 verify: { bytes, signature in KotlinBoolean(bool: AppleIdentity.verify(certificate: sender.identity.certificate,
                     message: self.data(bytes), signature: signature)) })
             XCTAssertEqual(try data(saved.payload()), original)
-            XCTAssertThrowsError(try incoming.receive(payload: message.payload(), isCurrent: current,
+            XCTAssertThrowsError(try copyIn.receive(payload: message.payload(), isCurrent: current,
                 verify: { bytes, signature in KotlinBoolean(bool: AppleIdentity.verify(certificate: receiver.identity.certificate,
                     message: self.data(bytes), signature: signature)) }))
-            XCTAssertNil(incoming.attemptedMessageId)
+            XCTAssertNil(copyIn.attemptedMessageId)
             XCTAssertNil(try receiver.store.groupText(id: message.id))
-            let received = try incoming.receive(payload: message.payload(), isCurrent: current,
+            let received = try copyIn.receive(payload: message.payload(), isCurrent: current,
                 verify: { bytes, signature in KotlinBoolean(bool: AppleIdentity.verify(certificate: sender.identity.certificate,
                     message: self.data(bytes), signature: signature)) })
             let digest = SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined()
-            let ack = Data(data(try incoming.acknowledgementFrame(envelope: received, digest: digest)).dropFirst(4))
+            let ack = Data(data(try copyIn.acknowledgementFrame(envelope: received, digest: digest)).dropFirst(4))
             XCTAssertEqual(Array(ack.prefix(4)), [76, 71, 65, 1])
             var wrongDomain = ack
             wrongDomain[1] = 84 // LTA must not be accepted as LGA, even with matching remaining fields.
-            XCTAssertThrowsError(try outgoing.acknowledge(payload: bytes(wrongDomain), envelope: saved, digest: digest, isCurrent: current))
-            XCTAssertThrowsError(try outgoing.acknowledge(payload: bytes(ack), envelope: saved, digest: digest, isCurrent: expired))
+            XCTAssertThrowsError(try copyOut.acknowledge(payload: bytes(wrongDomain), envelope: saved, digest: digest, isCurrent: current))
+            XCTAssertThrowsError(try copyOut.acknowledge(payload: bytes(ack), envelope: saved, digest: digest, isCurrent: expired))
             XCTAssertEqual(try sender.store.groupText(id: saved.id)?.receivedBy, [sender.identity.id])
-            XCTAssertThrowsError(try outgoing.publishDelivery(controller: display, selection: selection, envelope: saved, isCurrent: current))
+            XCTAssertThrowsError(try copyOut.publishDelivery(controller: display, selection: selection, envelope: saved, isCurrent: current))
             XCTAssertEqual(display.textSnapshot().phase, .transferring)
-            try outgoing.acknowledge(payload: bytes(ack), envelope: saved, digest: digest, isCurrent: current)
-            try outgoing.publishDelivery(controller: display, selection: selection, envelope: saved, isCurrent: current)
+            try copyOut.acknowledge(payload: bytes(ack), envelope: saved, digest: digest, isCurrent: current)
+            try copyOut.publishDelivery(controller: display, selection: selection, envelope: saved, isCurrent: current)
             XCTAssertEqual(display.textSnapshot().phase, .sent)
             XCTAssertEqual(Set(try XCTUnwrap(sender.store.groupText(id: saved.id)).receivedBy), Set([sender.identity.id, receiver.identity.id]))
             let next = try outgoing.prepareOutgoing(id: UUID().uuidString.lowercased(), body: "Dopo copia",
                 isCurrent: current, sign: { try? sender.identity.sign(self.data($0)) })
             XCTAssertEqual(next.authorSequence, 2)
             sender.sessionMemory.reset()
-            XCTAssertThrowsError(try outgoing.publishDelivery(controller: display, selection: selection, envelope: saved, isCurrent: current))
-            XCTAssertThrowsError(try outgoing.prepareSaved(id: saved.id, isCurrent: current,
+            XCTAssertThrowsError(try copyOut.publishDelivery(controller: display, selection: selection, envelope: saved, isCurrent: current))
+            XCTAssertThrowsError(try copyOut.prepareSaved(id: saved.id, isCurrent: current,
                 verify: { _, _ in XCTFail("Reset run before OS"); return KotlinBoolean(bool: true) }))
         }
     }
@@ -1452,39 +1467,49 @@ final class GroupAdmissionSessionTests: XCTestCase {
         try queue.sync { XCTAssertEqual(try b.store.groupText(id: next.messageId)?.envelope.authorSequence, 2) }
     }
 
-    func testRosterTextLaterAdmissionCannotReceiveOldCopyOrResignItsRecipients() throws {
+    func testRosterTextLaterAdmissionKeepsOriginalCopyForFrozenRecipientsOnly() throws {
         let pair = try fixture(founderInitiates: false)
         let a = pair.issuer, b = pair.member, c = try side()
         try confirmBoth(a, b)
         closeAndDrain(a); closeAndDrain(b)
         beginRosterText(b, a, body: "Prima di C")
         let original = awaitText(b, a)
+        let payload = try queue.sync { try data(XCTUnwrap(b.store.groupText(id: original.messageId)).envelope.payload()) }
         closeAndDrain(a); closeAndDrain(b)
         try connect(b, c); try confirmBoth(b, c)
         closeAndDrain(b); closeAndDrain(c)
         beginRosterText(b, c, body: "Adesso in tre")
-        _ = awaitText(b, c)
+        let newer = awaitText(b, c)
+        XCTAssertEqual(newer.sessionId, original.sessionId)
         closeAndDrain(b); closeAndDrain(c)
         let prepared = queue.sync { b.prepared }
         queue.sync { b.presentation.deliverRosterText(id: c.identity.id, name: "member", messageId: original.messageId) }
         awaitState { b.presentation.textSnapshot().phase == .failed }
         try queue.sync {
-            XCTAssertEqual(b.prepared, prepared) // Reject non-recipient before enabling its pin.
+            XCTAssertEqual(b.prepared, prepared) // Reject the later joiner before enabling its pin.
             XCTAssertNil(try c.store.groupText(id: original.messageId))
         }
         closeAndDrain(b)
+        // Negotiated copy scope: same session, frozen {A, B} inside today's {A, B, C}, no re-signing.
         try connect(b, a, rosterTextSender: b, rosterTextMessageId: original.messageId)
-        awaitState { a.presentation.textSnapshot().phase == .failed && b.presentation.textSnapshot().phase == .failed }
+        XCTAssertEqual(awaitText(b, a).messageId, original.messageId)
         try queue.sync {
-            XCTAssertEqual(b.presentation.textSnapshot().failure, .rosterRequired)
-            XCTAssertEqual(b.presentation.textSnapshot().messageId, "")
-            XCTAssertEqual(try b.store.groupText(id: original.messageId)?.envelope.recipients.count, 2)
-            XCTAssertEqual(try a.store.groupText(id: original.messageId)?.envelope.recipients.count, 2)
+            let authorCopy = try XCTUnwrap(b.store.groupText(id: original.messageId))
+            XCTAssertEqual(try data(authorCopy.envelope.payload()), payload)
+            XCTAssertEqual(Set(authorCopy.envelope.recipients), Set([a.identity.id, b.identity.id]))
+            XCTAssertEqual(Set(authorCopy.receivedBy), Set([a.identity.id, b.identity.id]))
+            XCTAssertEqual(try data(XCTUnwrap(a.store.groupText(id: original.messageId)).envelope.payload()), payload)
+            XCTAssertEqual(try a.store.groupText(id: original.messageId)?.receivedBy, [a.identity.id])
+            XCTAssertNil(try c.store.groupText(id: original.messageId))
         }
         closeAndDrain(a); closeAndDrain(b)
-        beginRosterText(b, a, body: "La copia rifiutata non consuma contatori")
+        beginRosterText(b, a, body: "La copia non consuma contatori")
         let next = awaitText(b, a)
-        try queue.sync { XCTAssertEqual(try b.store.groupText(id: next.messageId)?.envelope.authorSequence, 3) }
+        try queue.sync {
+            let saved = try XCTUnwrap(b.store.groupText(id: next.messageId))
+            XCTAssertEqual(saved.envelope.authorSequence, 3)
+            XCTAssertEqual(Set(saved.envelope.recipients), Set([a.identity.id, b.identity.id, c.identity.id]))
+        }
     }
 
     func testRosterTextModesAndCancellationCannotPublishStaleReceiptOrConsumeCounters() throws {

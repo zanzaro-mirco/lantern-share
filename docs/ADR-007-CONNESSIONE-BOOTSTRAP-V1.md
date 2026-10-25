@@ -1,5 +1,7 @@
 # ADR 007 — proprietario del bootstrap v1 isolato
 
+> **Stato riconciliato al 25 ottobre 2026:** HandshakeV1Connection usato nel servizio Node e nei percorsi di gruppo, verifica, sessione, roster e testo. I confini di ownership rimangono validi; i vecchi riferimenti a nessuna integrazione Node sono storici. Non aggiungere un secondo reader o timer. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Ambito
 
 3 ottobre 2026. `HandshakeV1Connection`, interno a connectivity JVM/Android, compone la macchina di ADR 006 con socket, signer/verificatore OS e framing. Non avvia TLS, discovery o UI e non modifica `Node`, `PeerConnection`, il servizio Apple, wire v0, SQLite, identità, versioni o lock. Il chiamante deve aver selezionato esplicitamente il pin prima di stabilire TLS 1.3 reciproco con `Identity.context` e il predicato esatto: nessun trust-all, TOFU o fallback. `adopt` trasferisce ownership anche se fallisce l'inizializzazione.

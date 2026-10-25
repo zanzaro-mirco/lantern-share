@@ -1,5 +1,7 @@
 # ADR 009 — proprietario bootstrap v1 Network.framework isolato
 
+> **Stato riconciliato al 25 ottobre 2026:** Owner Apple integrato nei servizi reali fino a B8. B1–B7 verificati in simulatore; B8 3d22698 implementato, nuovo completo Apple ancora pendente nell’ultima lettura. Unico owner/reader/deadline e drain prima del DB restano vincoli attivi. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Ambito e precondizioni
 
 3 ottobre 2026. `HandshakeV1Channel` compone il bridge Kotlin di ADR 008 con API Network/Security/CryptoKit Apple. Nessun chiamante in PairingChannel/servizio, nessuna attivazione v1, gruppo, trust o chat. Swift muove byte e usa crypto OS; codec, transcript, negoziazione, ticket e decisioni del bootstrap restano Kotlin. Sorgente incluso esplicitamente nel progetto Xcode, nessuna nuova libreria/versione/lock.

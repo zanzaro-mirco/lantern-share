@@ -1,5 +1,7 @@
 # ADR 011 — deposito locale dell'adozione candidata
 
+> **Stato riconciliato al 25 ottobre 2026:** Journal, ispezione e commit locale A integrati nei servizi/UI JVM e Apple e verificati automaticamente. “Nessun servizio/UI” e “Apple da verificare” sotto sono limiti storici del sottoblocco originario. Il pendente non ripristina consenso, non abilita replay o recovery distribuito. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 14 ottobre 2026; integrazioni 17–18 ottobre. Stato: implementati formato, deposito, ispezione non distruttiva e continuazione viva revocabile nel core e negli owner OS. Ponte e owner Apple verificati nella CI e nel simulatore, non su hardware. Commit locale successivo: [ADR 012](ADR-012-COMMIT-E-INTERRUZIONI-AMMISSIONE.md), politica A confermata dall'utente e implementata negli owner isolati, ancora da verificare sul nuovo checkpoint Apple. Nessun servizio/UI o recovery distribuito attivo.
 
 ## Contesto

@@ -1,5 +1,7 @@
 # ADR 013 — verifica esplicita dell'appartenenza su TLS
 
+> **Stato riconciliato al 25 ottobre 2026:** B4 integrato e verificato automaticamente su Node e Bonjour/iOS, Apple 80710c6 / 168 XCTest complessivi. Risultato diagnostico non riusabile per B5–B8: ciascuno ripete la prova sul proprio TLS. Collaudo fisico aperto. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 19 ottobre 2026. Decisione tecnica additiva per il blocco B4; nessuna modifica
 alla politica A, ai dati esistenti o alle autorizzazioni della prova tecnica.
 

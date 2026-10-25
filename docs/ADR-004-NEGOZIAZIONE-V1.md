@@ -1,5 +1,7 @@
 # ADR 004 — fondamenta della negoziazione v1
 
+> **Stato riconciliato al 25 ottobre 2026:** Fondamenta Kotlin consumate dagli owner reali e dai percorsi gruppo B3–B8. I limiti di isolamento iniziali sotto descrivono l’incremento originario, non l’assenza attuale di integrazione. Wire PoC precedente conservato; v1 completo non concluso. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Ambito e stato
 
 Il 3 ottobre 2026 l'utente ha rinviato i collaudi fisici e chiesto di proseguire. Restano obbligatori in fase 1; il rinvio non ne certifica l'esito. Si avvia soltanto la regola pura di negoziazione v1 nel modulo Kotlin `protocol`, non un nuovo trasporto o l'intero protocollo di prodotto.

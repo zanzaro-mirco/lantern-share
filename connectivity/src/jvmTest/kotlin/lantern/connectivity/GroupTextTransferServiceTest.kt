@@ -85,7 +85,7 @@ class GroupTextTransferServiceTest {
     }
 
     @Test
-    fun laterAdmissionCannotBeAddedToAnOldCopyAndChangingRosterCannotResignOrConsumeCounters() = withMembers { f ->
+    fun laterAdmissionKeepsOldCopyForFrozenRecipientsWithoutResigningOrConsumingCounters() = withMembers { f ->
         val third = createDesktopIdentity().identity()
         openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
             f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, cStore).use { c ->
@@ -96,20 +96,61 @@ class GroupTextTransferServiceTest {
                 assertEquals(3, newer.content.recipients.size)
                 assertEquals(original.content.sessionId, newer.content.sessionId)
                 b.deliverRosterText(peer(c), original.content.id)
-                assertIs<GroupTextState.Failed>(awaitText(b)) // C was not a frozen recipient.
+                val refused = assertIs<GroupTextState.Failed>(awaitText(b)) // C was not a frozen recipient.
+                assertNull(refused.attemptedMessageId)
                 assertNull(cStore.groupText(original.content.id))
-                // Even an original recipient cannot reinterpret an old copy with today's roster.
-                a.receiveRosterText(peer(b)); b.deliverRosterText(peer(a), original.content.id)
-                val failure = assertIs<GroupTextState.Failed>(awaitText(b))
-                assertEquals(GroupTextFailure.ROSTER_REQUIRED, failure.reason)
-                assertNull(failure.attemptedMessageId)
-                assertIs<GroupTextState.Failed>(awaitText(a))
-                assertEquals(2, assertNotNull(bStore.groupText(original.content.id)).message.content.recipients.size)
+                // Negotiated copy scope: same signed bytes to the original recipient, C never added.
+                deliverCopy(b, a, original.content.id, original)
+                assertEquals(setOf(f.a.id, f.b.id), assertNotNull(bStore.groupText(original.content.id)).receivedBy)
+                assertTrue(original.sameMessage(assertNotNull(bStore.groupText(original.content.id)).message))
                 assertTrue(original.sameMessage(assertNotNull(aStore.groupText(original.content.id)).message))
-                val next = rosterTransfer(b, a, "Nessun contatore usato dalla copia rifiutata")
+                assertEquals(setOf(f.a.id, f.b.id), assertNotNull(b.lastRosterTextDelivery.value).message.content.recipients.toSet())
+                assertNull(cStore.groupText(original.content.id))
+                val next = rosterTransfer(b, a, "Nessun contatore usato dalla copia")
                 assertEquals(3L, next.content.authorSequence)
                 assertEquals(3, next.content.recipients.size)
             } } } }
+        }
+    }
+
+    @Test
+    fun copyAfterLaterAdmissionReachesReturningOriginalRecipientThatNeverHadIt() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        val fourth = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+            openDesktopRepository(f.directory.resolve("fourth.db")).use { dStore ->
+                f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+                    node(third, cStore).use { c -> node(fourth, dStore).use { d ->
+                        a.start(); b.start(); c.start(); d.start(); ports(a, b); ports(c, d)
+                        val roster = synchronize(a, b)
+                        a.stop() // A is an offline original recipient from now on.
+                        admit(b, d)
+                        val sent = rosterTransfer(b, d, "Per A, B e D")
+                        assertEquals(roster.sessionId, sent.content.sessionId)
+                        assertEquals(setOf(f.a.id, f.b.id, fourth.id), sent.content.recipients.toSet())
+                        admit(b, c)
+                        val expanded = rosterTransfer(b, c, "Ora anche C")
+                        assertEquals(setOf(f.a.id, f.b.id, third.id, fourth.id), expanded.content.recipients.toSet())
+                        b.deliverRosterText(peer(c), sent.content.id)
+                        assertIs<GroupTextState.Failed>(awaitText(b))
+                        assertNull(cStore.groupText(sent.content.id))
+                        a.start(); ports(a, b) // Run memory lost; B retains the expanded live roster.
+                        assertNull(aStore.groupText(sent.content.id))
+                        deliverCopy(b, a, sent.content.id, sent)
+                        assertEquals(setOf(f.a.id), assertNotNull(aStore.groupText(sent.content.id)).receivedBy)
+                        assertEquals(setOf(f.a.id, f.b.id, fourth.id), assertNotNull(bStore.groupText(sent.content.id)).receivedBy)
+                        deliverCopy(b, a, sent.content.id, sent) // Exact duplicate stays idempotent.
+                        assertEquals(1, aStore.groupTextHistory(f.anchor.groupId, sent.content.sessionId).size)
+                        assertNull(cStore.groupText(sent.content.id))
+                        val next = rosterTransfer(b, a, "Contatore dopo le copie")
+                        assertEquals(3L, next.content.authorSequence)
+                        assertEquals(expanded.content.recipients, next.content.recipients)
+                        for (store in listOf(aStore, bStore, cStore, dStore)) {
+                            assertTrue(store.trusted().isEmpty()); assertNull(store.pendingGroupAdoption())
+                        }
+                    } }
+                } } }
+            }
         }
     }
 

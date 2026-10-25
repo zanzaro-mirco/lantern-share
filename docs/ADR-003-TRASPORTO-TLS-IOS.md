@@ -1,6 +1,8 @@
 # ADR 003 — Trasporto TLS iOS con Network.framework
 
-Data: 28 settembre 2026. Stato: implementato, verifica nativa CI pendente.
+> **Stato riconciliato al 25 ottobre 2026:** Trasporto integrato e verificato in simulatore nei checkpoint precedenti; non è più una verifica nativa iniziale pendente. Nuova continuazione testo/roster B8 in 3d22698: checkpoint Apple completo ancora pendente nell’ultima lettura, non estendere il vecchio verde al nuovo codice. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
+Data originaria: 28 settembre 2026. Trasporto implementato e successivamente verificato in CI/simulatore; nuovo checkpoint B8 distinto, come indicato sopra.
 
 ## Contesto
 

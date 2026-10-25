@@ -1,6 +1,8 @@
 # Versioni scelte — 27 settembre 2026
 
-Baseline conservativa riproducibile, non una dichiarazione di adozione delle ultime versioni. Il catalogo `gradle/libs.versions.toml` è la fonte delle versioni dirette. I lockfile Gradle fissano le dipendenze transitive delle configurazioni effettivamente risolte. I quattro lock `desktopApp/gradle-<piattaforma>.lockfile` sono stati generati risolvendo le dipendenze dei quattro runtime (senza compilare Mac/Linux). Le configurazioni Kotlin/Native iOS richiedono ancora il completamento dei lock su CI/macOS.
+> **Stato riconciliato al 25 ottobre 2026:** Catalogo attuale confermato: Kotlin 2.1.21, Compose 1.8.2, Gradle Wrapper 8.9, AGP 8.7.2, SQLDelight 2.1.0, JDK 17. CI Apple configurata Xcode 16.3/iOS Simulator 18.4, macos-15; preservare manifest e lock. Baseline deliberata, nessuna ricerca di nuove versioni né upgrade in questa consegna. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
+Baseline conservativa riproducibile, non una dichiarazione di adozione delle ultime versioni. Il catalogo `gradle/libs.versions.toml` è la fonte delle versioni dirette. I lockfile Gradle fissano le dipendenze transitive delle configurazioni effettivamente risolte. I quattro lock `desktopApp/gradle-<piattaforma>.lockfile` fissano i quattro runtime; la sola risoluzione dei lock non equivale a compilazione o test di ogni piattaforma. I lock correnti comprendono già configurazioni Kotlin/Native iOS, incluso il driver SQLDelight per device/simulator e i test del simulatore: il completamento inizialmente pendente è stato svolto per i percorsi verificati. Preservarli; eventuali nuove configurazioni vanno risolte e verificate sul target pertinente, senza rigenerazione indiscriminata.
 
 | Componente | Versione | Verifica ufficiale e motivazione |
 |---|---|---|

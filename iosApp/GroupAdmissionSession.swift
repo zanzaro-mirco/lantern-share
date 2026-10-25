@@ -167,7 +167,8 @@ final class GroupAdmissionSession {
             let capabilities: String
             switch selection.mode {
             case .rosterText:
-                capabilities = IosGroupRosterTextProtocol.shared.capabilities(sending: selection.sending)
+                capabilities = IosGroupRosterTextProtocol.shared.capabilities(sending: selection.sending,
+                    savedCopy: selection.messageId != nil)
             case .roster:
                 capabilities = IosGroupRosterProtocol.shared.capabilities()
             case .text:
@@ -335,11 +336,11 @@ final class GroupAdmissionSession {
                 }, merge: { [weak self] payload, certificate in
                     guard let self else { throw TextError.expired }
                     return try self.mergeRoster(payload, certificate: certificate)
-                }, selectRoster: { [weak self] snapshot, digest in
+                }, selectRoster: { [weak self] snapshot, digest, savedCopy in
                     guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
                     let context = try exchange.installForText(snapshot: snapshot,
                         senderId: sending ? self.identity.id : self.selection.peerId,
-                        recipientId: sending ? self.selection.peerId : self.identity.id, digest: digest,
+                        recipientId: sending ? self.selection.peerId : self.identity.id, digest: digest, savedCopy: savedCopy,
                         isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
                     let transfer = IosGroupTextTransfer(persistence: self.persistence, memory: self.sessionMemory,
                         scope: context, localIdentity: self.identity.id)

@@ -1,5 +1,7 @@
 # ADR 014 — negoziazione iniziale di sessione sul TLS vivo
 
+> **Stato riconciliato al 25 ottobre 2026:** B5 integrato Node/Bonjour/UI e verificato anche Apple c938980 / 175 XCTest complessivi. La singola sessione vive nella run, non nella storia; scelta operativa fra sessioni usate, reconnect e gestione completa rimangono aperti. B7–B8 non eliminano questi limiti. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 21 ottobre 2026; integrazione iOS del 23 ottobre. Blocco B5.
 
 ## Risultato e confini

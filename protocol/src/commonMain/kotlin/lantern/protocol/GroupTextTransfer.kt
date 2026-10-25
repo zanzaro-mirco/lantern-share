@@ -2,7 +2,10 @@ package lantern.protocol
 
 import lantern.domain.SignedGroupText
 
-/** Frozen recipients supplied by the authenticated live exchange, never inferred from a message. */
+/**
+ * Recipients bounded by the authenticated live exchange, never inferred from a message alone; a
+ * negotiated saved copy may only narrow them to its author's signed snapshot.
+ */
 interface GroupTextDeliveryContext {
     val groupId: String
     val sessionId: String
@@ -15,6 +18,12 @@ interface GroupTextDeliveryContext {
         require(c.groupId == groupId && c.sessionId == sessionId && c.authorId == senderId && c.recipients.toSet() == recipients) {
             "Group text transfer context mismatch"
         }
+    }
+
+    /** Recipients the inbox must find in the signed envelope, after this context accepted it. */
+    fun expectedRecipients(message: SignedGroupText): Set<String> {
+        checkMessage(message)
+        return recipients
     }
 }
 

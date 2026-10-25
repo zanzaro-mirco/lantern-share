@@ -1,5 +1,7 @@
 # Collaudo bootstrap JVM ↔ iOS (opt-in)
 
+> **Stato riconciliato al 25 ottobre 2026:** Success/mismatch/cancel e batching test-without-building verificati nel checkpoint 7e8c6dd / 37489690697: i vecchi “cancel da verificare/prossimo incremento” sotto sono storici. Interop bootstrap di test non equivale a traffico gruppo B8 o LAN fisica; 40209149857 usa bootstrap_interop=false. Non rilanciare l’interop senza un rischio pertinente. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Aggiornamento 5 ottobre 2026. Test support in `connectivity/src/jvmTest`, `.github/scripts` e `iosApp/InteropTests`, **non app, servizio o protocollo applicativo**. Lato JVM validato localmente con un peer JVM reale; controller verificato su Windows. Percorso positivo JVM macOS ↔ iOS simulatore compilato/eseguito con successo in CI, non su hardware.
 
 ## Avvio e precondizioni
@@ -63,7 +65,7 @@ Apple richiede `remoteApproved=false` su ogni snapshot, nessun `READY` e chiusur
 
 JVM locale: 53 test riusciti/un multicast opt-in saltato, incluse le sei fixture con nuove asserzioni sul marker/rifiuto/chiusura I/O e regressione su cleanup fallito che impedisce il marker. XCTest non eseguibile su questo host Windows; **verificato in CI macOS/iOS simulatore** nella [run negativa 37324594616](https://github.com/zanzaro-mirco/lantern-share/actions/runs/37324594616), commit `c9d1bb4`, conclusa `success`: test passato in 71,911 s, `TEST SUCCEEDED`, launcher `Bootstrap JVM/iOS: comparison rejected without READY; transport/namespace cleanup observed`. Stessa run: 38 XCTest ordinari/zero fallimenti e 17 test controller riusciti. `ComparisonRejected` è intenzionale, accettato soltanto insieme al marker/exit previsti e alla conclusione Apple/cleanup. Nessuna prova hardware/LAN/Android o polling.
 
-## Cancellazione locale prima della conferma (preparata, Apple da verificare)
+## Cancellazione locale prima della conferma — verificata nel checkpoint successivo 37489690697
 
 ```text
 python3 -B .github/scripts/ios-bootstrap-interop.py --device-id UDID_SIMULATORE --scenario cancel
@@ -75,4 +77,4 @@ In workflow_dispatch scegliere `bootstrap_interop=true`, `bootstrap_scenario=can
 
 Verifica locale: 21 test Python controller, nuovi casi di ordine/digest/marker/exit/timeouts e isolamento; suite JVM corrente **57 riusciti/un multicast opt-in saltato**, dieci fixture incluse. Quattro regressioni JVM TLS/JCA reali (cancellazione, peer rimasto aperto, APPROVE ricevuto anziché EOF, cleanup fallito senza marker). Nuovo Swift non compilato/eseguito su Windows; non usare positivo/mismatch precedenti come prova di `cancel`. Nessuna modifica al prodotto o prova hardware. I conteggi precedenti sopra documentano le verifiche dei due scenari già conclusi.
 
-**Prossimo incremento unico:** verificare il nuovo workflow rapido e poi un checkpoint iOS con `bootstrap_interop=true`, `bootstrap_scenario=all`, senza polling; il vecchio collaudo `cancel` già avviato rimane un'evidenza distinta da recuperare se concluso. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.
+**Prossimo incremento di allora, superato dalla verifica 37489690697:** verificare il nuovo workflow rapido e poi un checkpoint iOS con `bootstrap_interop=true`, `bootstrap_scenario=all`, senza polling; il vecchio collaudo `cancel` già avviato rimane un'evidenza distinta da recuperare se concluso. Non sostituire v0 né dichiarare completati i collaudi fisici della fase 1.

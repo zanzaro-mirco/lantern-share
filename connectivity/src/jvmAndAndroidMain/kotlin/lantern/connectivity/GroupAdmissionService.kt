@@ -39,6 +39,7 @@ import lantern.protocol.GroupTextTransferCodec
 import lantern.protocol.GroupTextTransferContext
 import lantern.protocol.GroupTextDeliveryContext
 import lantern.protocol.GroupRosterTextCodec
+import lantern.protocol.GroupRosterTextContext
 import lantern.protocol.GroupTextSavedReceipt
 import lantern.protocol.GroupMembershipEvidence
 import lantern.protocol.GroupTextCodec
@@ -262,7 +263,11 @@ internal class GroupAdmissionService(
             val capabilities = if (selection.mode == GroupSelectionMode.ROSTER_TEXT) {
                 val required = GroupRosterTextCodec.requiredFeatures
                 val role = if (selection.sending) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE
-                ProtocolCapabilities(1, required + role, required)
+                // A saved copy is an explicit author requirement; receivers accept either continuation.
+                val copy = setOf(GroupRosterTextCodec.COPY_FEATURE)
+                if (selection.messageId != null) ProtocolCapabilities(1, required + role + copy, required + copy)
+                else if (!selection.sending) ProtocolCapabilities(1, required + role + copy, required)
+                else ProtocolCapabilities(1, required + role, required)
             } else if (selection.mode == GroupSelectionMode.TEXT) {
                 val required = membershipFeatures + GroupTextTransferCodec.FEATURE
                 val role = if (selection.text == null) GroupTextTransferCodec.RECEIVER_FEATURE else GroupTextTransferCodec.SENDER_FEATURE
@@ -387,16 +392,19 @@ internal class GroupAdmissionService(
             checkContext()
             val saved = selection.messageId?.let { checkNotNull(texts.groupText(it)).message }
             val signed = if (saved != null) {
-                // A local copy is data, not permission. Current TLS/roster/scope must match it.
-                if (saved.content.groupId != context.groupId || saved.content.sessionId != context.sessionId ||
-                    saved.content.recipients.toSet() != context.recipients) {
+                // A local copy is data, not permission. The negotiated copy scope requires the same
+                // session and its frozen snapshot inside today's verified roster, never re-signed.
+                check(context is GroupRosterTextContext && context.savedCopy)
+                try {
+                    context.checkMessage(saved)
+                } catch (mismatch: IllegalArgumentException) {
                     selection.textFailure = GroupTextFailure.ROSTER_REQUIRED
-                    error("Saved copy does not match the current session snapshot")
+                    throw mismatch
                 }
-                context.checkMessage(saved)
                 check(Identity.verify(identity.certificate, GroupTextCodec.signedBytes(saved.content), saved.signature))
                 saved
             } else {
+                check(context !is GroupRosterTextContext || !context.savedCopy)
                 val counters = texts.reserveGroupTextCounters(anchor.groupId, identity.id)
                 val content = GroupTextContent(UUID.randomUUID().toString(), anchor.groupId, context.sessionId, identity.id,
                     counters.authorSequence, counters.logicalTime, context.recipients, checkNotNull(selection.text))
@@ -424,7 +432,7 @@ internal class GroupAdmissionService(
                 }
             }
             return GroupTextReceiver(inboxStore).receive(received, anchor.groupId, context.sessionId, identity.id, selection.peer.id,
-                context.recipients, {
+                context.expectedRecipients(received), {
                     checkContext()
                     true
                 }) { bytes, signature -> Identity.verify(certificate, bytes, signature) }

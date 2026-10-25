@@ -1,5 +1,7 @@
 # ADR 016 — primo trasferimento esplicito di testo di gruppo sul TLS vivo
 
+> **Stato riconciliato al 25 ottobre 2026:** B6 Node/Bonjour/UI verificato automaticamente, Apple fcec8f7 / 182 XCTest complessivi. LTX/LTA a due resta compatibile e separato da B8 LTC/LGA; non ridurre il roster per renderlo accettabile. Una busta per tentativo, non connessione persistente. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 23 ottobre 2026. Integrazione Android/desktop e successivo ingresso iOS di B6.
 
 ## Risultato osservabile e confini

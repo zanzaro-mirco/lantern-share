@@ -1,5 +1,7 @@
 # ADR 008 — bridge bootstrap v1 a callback per iOS
 
+> **Stato riconciliato al 25 ottobre 2026:** Bridge Kotlin/Swift consumato da HandshakeV1Channel e Bonjour/GroupAdmissionSession, verificato in checkpoint Apple precedenti. Non duplicare codec/decisioni in Swift; la descrizione originaria senza chiamanti è storica. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Ambito
 
 3 ottobre 2026. `ProtocolHandshakeBridge` comune compone `ProtocolHandshakeAttempt` e `ProtocolHandshakeFrameDecoder` per trasporti a callback; `IosHandshakeV1` in ui/iosMain espone tipi Swift senza esportare direttamente i dettagli del protocollo. Nessun chiamante nel servizio v0, nessuna socket aperta, timer, trust, database o credenziale di gruppo. Versioni e lock invariati. Non è il proprietario Network.framework né una disponibilità v1 nell'app.

@@ -1,5 +1,7 @@
 # ADR 015 — prerequisito durevole del testo di gruppo
 
+> **Stato riconciliato al 25 ottobre 2026:** Il prerequisito storage è consumato dai percorsi reali B6 e B8 su Node e iOS. Schema attuale 5 / 4.sqm invariato nell’ultimo blocco; PoC distinto. Verifica Apple storage già attestata; nuovo percorso B8 Apple ancora pendente. Non descrivere lo storage come chat completa. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 23 ottobre 2026. Primo sottoblocco tecnico B6, non chat attivata.
 
 ## Necessità e utilizzatore

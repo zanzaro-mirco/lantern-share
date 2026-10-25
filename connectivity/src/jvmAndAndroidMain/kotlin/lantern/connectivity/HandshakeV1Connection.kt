@@ -349,9 +349,10 @@ internal class HandshakeV1Connection private constructor(
         completed: (SignedGroupText) -> Unit,
     ): SignedGroupText? = guarded {
         // Role/capability mismatch must fail before even the membership phase.
-        val first = synchronized(stateLock) {
+        val (first, savedCopy) = synchronized(stateLock) {
             requireEvidenceActiveLocked()
-            GroupRosterTextCodec.sendsFirst(checkNotNull(attempt.offersForGroupAdmission()), sending)
+            val offers = checkNotNull(attempt.offersForGroupAdmission())
+            GroupRosterTextCodec.sendsFirst(offers, sending) to GroupRosterTextCodec.savedCopy(offers, sending)
         }
         var delivered: SignedGroupText? = null
         exchangeRoster(membership, offer, verifyRemote, propose, mergeVerified, installRoster) { roster ->
@@ -362,7 +363,7 @@ internal class HandshakeV1Connection private constructor(
             }
             val context = GroupRosterTextContext(roster,
                 if (sending) identity.id else selectedPeerIdentity,
-                if (sending) selectedPeerIdentity else identity.id, digest(GroupSessionRosterCodec.encode(roster)))
+                if (sending) selectedPeerIdentity else identity.id, digest(GroupSessionRosterCodec.encode(roster)), savedCopy)
             val scope = GroupRosterTextCodec.scope(context)
             fun send(payload: ByteArray) {
                 checkLive()

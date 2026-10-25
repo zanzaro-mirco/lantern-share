@@ -76,6 +76,59 @@ class GroupRosterTextTest {
     }
 
     @Test
+    fun savedCopyKeepsFrozenSubsetOfLiveRosterAndNeverAddsLaterJoiners() {
+        val later = "9".repeat(64)
+        val live = GroupSessionRoster(anchor, session, listOf(join(c), join(a), join(b), join(later)), true)
+        val copy = GroupRosterTextContext(live, a, b, digest, savedCopy = true)
+        val exact = GroupRosterTextContext(live, a, b, digest)
+        val original = message(setOf(a, b, c))
+        copy.checkMessage(original)
+        assertEquals(setOf(a, b, c), copy.expectedRecipients(original))
+        assertEquals(setOf(a, b, c, later), copy.recipients) // Live roster for run checks only.
+        assertFails { exact.checkMessage(original) }
+        assertFails { exact.expectedRecipients(original) }
+        val scope = GroupRosterTextCodec.scope(copy)
+        assertEquals(324, scope.size)
+        assertContentEquals(byteArrayOf(76, 84, 67, 2), scope.copyOfRange(0, 4))
+        assertContentEquals(GroupRosterTextCodec.scope(exact).copyOfRange(4, 324), scope.copyOfRange(4, 324))
+        assertContentEquals(GroupRosterTextCodec.acknowledgement(exact, message(setOf(a, b, c, later)), digest),
+            GroupRosterTextCodec.acknowledgement(copy, message(setOf(a, b, c, later)), digest))
+        GroupRosterTextCodec.acknowledgement(copy, original, digest)
+        // The later joiner is outside the snapshot; an outsider/other session/author never fits.
+        assertFails { GroupRosterTextContext(live, a, later, digest, savedCopy = true).checkMessage(original) }
+        assertFails { GroupRosterTextCodec.acknowledgement(GroupRosterTextContext(live, a, later, digest, savedCopy = true), original, digest) }
+        assertFails { copy.checkMessage(message(setOf(a, b, digest))) }
+        assertFails { GroupRosterTextContext(live, b, c, digest, savedCopy = true).checkMessage(message(setOf(a, b, c))) }
+        val otherSession = SignedGroupText(GroupTextContent("00000000-0000-0000-0000-000000000003", anchor.groupId,
+            "1".repeat(64), a, 1, 1, setOf(a, b), "Altra sessione"), "AQ==")
+        assertFails { copy.checkMessage(otherSession) }
+        assertFails { GroupRosterTextContext(GroupSessionRoster(anchor, session, listOf(join(a), join(b)), true), a, b, digest,
+            savedCopy = true).checkMessage(original) }
+    }
+
+    @Test
+    fun savedCopyModeIsAnExplicitAuthorRequirementOnly() {
+        val required = GroupRosterTextCodec.requiredFeatures
+        val copy = GroupRosterTextCodec.COPY_FEATURE
+        fun participant(id: String, sender: Boolean, supported: Set<String> = emptySet(), demanded: Set<String> = emptySet()) =
+            ProtocolHandshakeParticipant(id, digest, ProtocolCapabilities(1, required + supported +
+                if (sender) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE, required + demanded))
+        val author = participant(a, true, setOf(copy), setOf(copy))
+        val newText = participant(a, true)
+        val receiver = participant(b, false, setOf(copy))
+        val oldReceiver = participant(b, false)
+        assertTrue(GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(author, receiver, 0), true))
+        assertTrue(GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(receiver, author, 0), false))
+        assertFalse(GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(newText, receiver, 0), true))
+        assertFalse(GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(oldReceiver, newText, 0), false))
+        assertFails { GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(author, oldReceiver, 0), true) }
+        assertFails { GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(newText, participant(b, false, setOf(copy), setOf(copy)), 0), true) }
+        assertFails { GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(participant(a, true, setOf(copy)), receiver, 0), true) }
+        assertFails { GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(receiver, participant(a, true, setOf(copy)), 0), false) }
+        assertTrue(GroupRosterTextCodec.sendsFirst(ProtocolHandshakeOffers(author, receiver, 0), true))
+    }
+
+    @Test
     fun fixedControlsRejectUnsignedOrWrongLengthsBeforeAllocation() {
         for (expected in listOf(324, 360)) {
             GroupRosterTextCodec.checkFixedHeader(GroupTextTransferCodec.header(expected), expected)

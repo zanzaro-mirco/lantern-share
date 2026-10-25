@@ -7,6 +7,10 @@
 - La specifica di prodotto è `PIANO_SVILUPPO.md`: non ridurre requisiti. La fase 0 è chiusa sul collaudo fisico Android ↔ Windows riuscito. I collaudi residui Android ↔ Windows e quelli su iPhone e Mac Intel/Apple Silicon sono obbligatori nella fase 1.
 - Le richieste dell'utente prevalgono su queste istruzioni. Comunica in italiano. Modello preferito dall'utente: GPT 5.6 Sol, ragionamento medio; la selezione avviene nell'interfaccia, non attraverso questo file.
 
+## Passaggio fra strumenti — 25 ottobre 2026
+
+Le regole di questo file valgono anche quando lo sviluppo riparte con Claude Code. `CLAUDE.md` le richiama senza duplicare metodo o specifica. Guida dettagliata della consegna: `../LANTERN_RIPARTENZA_CLAUDE_CODE.md`, esterna a Git; [indice documentale](docs/STATO_DOCUMENTAZIONE.md). Le preferenze di modello riportate sopra erano riferite alla precedente interfaccia e non impongono un modello a Claude Code. Il repository e la sua sintesi corrente prevalgono su fotografie esterne più vecchie. Consultare gli archivi soltanto per evidenze storiche, non come coda di lavoro.
+
 ## Incrementi e consumo di crediti
 
 Lavora concretamente, con codice pulito e mantenibile. Riduci il consumo: letture mirate, niente subagenti, niente refactoring estranei, test pertinenti e modifiche raggruppate prima del push. Non attendere la CI con polling ripetuto: se rimane pendente, riporta link e commit e fermati.

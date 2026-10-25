@@ -1,5 +1,7 @@
 # ADR 012 — punto di commit e interruzioni dell'ammissione
 
+> **Stato riconciliato al 25 ottobre 2026:** Politica A confermata e integrata negli owner Node/Bonjour e pannelli; verifica automatica anche Apple già attestata prima di B8. Commit locale non equivale a commit distribuito; nessuna pulizia automatica del pendente o ripristino del consenso. Schema attuale 5, schema 4 qui è lo stadio originario. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 18 ottobre 2026. **Stato: politica A confermata esplicitamente dall'utente;
 implementazione locale e test JVM/Android/Apple riusciti nel checkpoint `a164425` / 39150669273.**
 Schema 4 additivo; nessun nuovo messaggio wire. B1 è verificato nel

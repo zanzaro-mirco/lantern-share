@@ -1,5 +1,7 @@
 # ADR 005 — transcript e verifica remota v1 isolati
 
+> **Stato riconciliato al 25 ottobre 2026:** Transcript, HELLO e APPROVE usati dal bootstrap integrato di gruppo; non concedono da soli appartenenza o testo. Gli annunci iniziali di servizio esclusivamente v0 sono storici. Restano obbligatori selezione TLS esatta, nonce freschi e conferme previste. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Ambito
 
 Incremento del 3 ottobre 2026, durante la sessione autonoma richiesta dall'utente. Introduce byte canonici, payload HELLO e verifica della conferma remota nel Kotlin comune. Non introduce un handshake di rete, un gruppo, credenziali di ammissione o autorizzazione ai messaggi. Il servizio continua a usare esclusivamente wire v0; identità, SQLite, versioni e lock restano invariati.

@@ -1,4 +1,6 @@
-# ADR 017 — roster autenticato della sessione, primo ingresso Node
+# ADR 017 — roster autenticato della sessione, Node e Bonjour/iOS
+
+> **Stato riconciliato al 25 ottobre 2026:** B7 integrato Node e Bonjour/iOS e verificato dal completo Apple ba5e929 / 40118469089. Nessun hardware attestato. B8 consuma lo stesso roster; snapshot perduti o prove offline mancanti rifiutati. Budget 4 MiB non è un limite di prodotto al numero di membri; paginazione aperta. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
 
 Data: 23 ottobre 2026. Seguito circoscritto di B6, blocco B7.
 

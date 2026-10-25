@@ -1,5 +1,7 @@
 # ADR 006 — ciclo di vita del bootstrap v1 isolato
 
+> **Stato riconciliato al 25 ottobre 2026:** Macchina comune consumata dagli owner JVM/Android e Apple e dai servizi gruppo; non più soltanto codice isolato. Ticket e snapshot non sono permessi riusabili. La descrizione dell’incremento originario non va letta come prossima attività. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Ambito e confine
 
 Incremento del 3 ottobre 2026. `ProtocolHandshakeAttempt`, nel protocollo Kotlin comune, coordina un solo tentativo su una connessione TLS già autenticata. Riusa partecipanti, negoziazione, transcript, APPROVE e verificatore di ADR 004/005. Non apre socket, non gestisce discovery, non genera nonce, non accede a SQLite e non concede trust. Nessun chiamante in `Node`, `PeerConnection` o Swift; il servizio resta wire v0. Nessuna versione, dipendenza, identità o schema modificati.

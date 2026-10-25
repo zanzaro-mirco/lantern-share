@@ -1,5 +1,7 @@
 # ADR 018 — consegna esplicita di testo con roster completo
 
+> **Stato riconciliato al 25 ottobre 2026:** B8 integrato anche Bonjour/iOS in 3d22698. 844 test locali passati e PoC 40209117434 success; completo Apple 40209149857 concluso failure con 201 XCTest e un solo test fallito (callback ACK del test non validante, corretto localmente, da riverificare). Il requisito "snapshot identico al roster corrente" per Consegna copia è sostituito dalla continuazione negoziata di [ADR 019](ADR-019-COPIA-ORIGINALE-DOPO-NUOVI-INGRESSI.md); il resto di questo ADR resta valido. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Data: 25 ottobre 2026. Seguito di ADR 016–017, ingressi Node/UI Android/desktop e Bonjour/iOS.
 
 ## Risultato e accettazione

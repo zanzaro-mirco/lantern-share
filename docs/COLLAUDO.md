@@ -1,5 +1,7 @@
 # Piano di collaudo reale — fase 0 completata, fase 1 in corso
 
+> **Stato riconciliato al 25 ottobre 2026:** Fase 0 chiusa sulla prova fisica Android ↔ Windows; fase 1 e righe hardware residue aperte/rinviate. B8 3d22698 integrato, PoC CI success, completo iOS pendente nell’ultima lettura. Nessuna nuova cella del registro fisico è stata validata dal riordino documentale. Usare lo stesso SHA delle build e distinguere runtime/interop/hardware. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 ## Preparazione
 
 **Rinvio richiesto dall'utente il 3 ottobre 2026:** eseguire più avanti i collaudi fisici residui, senza considerarli superati. Restano da riprendere: Android ↔ Windows senza WAN, testi/ricevute bidirezionali e riavvio; regressione Android su blocco/rifiuto/arresto; iPhone ↔ Android/desktop; Mac Intel e Apple Silicon, inclusi Portachiavi, installazione e LAN senza Internet. Nessuna scadenza o automazione di monitoraggio impostata. Fase 1 aperta; si procede intanto con incrementi isolati del protocollo v1.

@@ -1,5 +1,7 @@
 # ADR 001 — Identità desktop nel Portachiavi macOS
 
+> **Stato riconciliato al 25 ottobre 2026:** Adattatore Portachiavi integrato nel desktop. Test portabili e controlli nativi CI non sostituiscono il collaudo interattivo su Mac Intel e Apple Silicon, ancora aperto. Non migrare o rigenerare identità per ripartire. [Evidenze correnti](../STATO_SVILUPPO.md); [indice documentale](STATO_DOCUMENTAZIONE.md). Date, conteggi e “prossimi passi” originari sotto conservano il loro ambito storico.
+
 Stato: implementato; provider nativo e interazione utente **da verificare su Mac Intel e Apple Silicon**.
 
 ## Decisione e confine
