@@ -1269,6 +1269,9 @@ final class GroupAdmissionSessionTests: XCTestCase {
         closeAndDrain(sender); closeAndDrain(receiver)
         try queue.sync {
             let (outgoing, _) = try rosterTransfers(sender, receiver)
+            // A copy needs its own negotiated scope (LTC version 2). Install it while both offers still agree on
+            // `used`: the author marks the session used when signing and the receiver here never gets the original.
+            let (copyOut, copyIn) = try rosterTransfers(sender, receiver, savedCopy: true)
             let current = { KotlinBoolean(bool: true) }
             let expired = { KotlinBoolean(bool: false) }
             var selected: IosGroupAdmissionSelection?
@@ -1284,8 +1287,6 @@ final class GroupAdmissionSessionTests: XCTestCase {
             XCTAssertEqual(try data(outgoing.scopeFrame()).count, 328)
             XCTAssertThrowsError(try outgoing.prepareSaved(id: message.id, isCurrent: current,
                 verify: { _, _ in XCTFail("New-text scope cannot carry a saved copy"); return KotlinBoolean(bool: true) }))
-            // A copy needs its own negotiated scope (LTC version 2) on a fresh installation.
-            let (copyOut, copyIn) = try rosterTransfers(sender, receiver, savedCopy: true)
             XCTAssertEqual(copyOut.scopeBytes, 324)
             XCTAssertEqual(Array(data(try copyOut.scopeFrame()).dropFirst(4).prefix(4)), [76, 84, 67, 2])
             XCTAssertEqual(Array(data(try outgoing.scopeFrame()).dropFirst(4).prefix(4)), [76, 84, 67, 1])

@@ -2,6 +2,12 @@
 
 ## Sintesi corrente
 
+> **Nota post-push:** correzione XCTest, B9 e documenti pubblicati in un unico commit **`6e18f64ca8837cfa0fd29514acc9bd072b7b7dd5`** su `main` (la sintesi sotto descrive lo stesso contenuto, prima "locale non committato"). Unica lista post-push: [iOS completo 40214226132](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40214226132) (dispatch, `bootstrap_interop=false`) queued; [iOS ordinario 40214216705](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40214216705) e [PoC 40214216683](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40214216683) in_progress. Esiti letti una volta da conclusi, senza polling: iOS ordinario e PoC **success**. Il completo 40214226132 è **failure** nel passo "Test iOS Keychain and TLS on simulator", con 201 XCTest e 199 riusciti. Sono riusciti framework, Native, export, app e compilazione Swift/XCTest, compresi il test ACK corretto e `testRosterTextLaterAdmissionKeepsOriginalCopyForFrozenRecipientsOnly`.
+>
+> L'unico test fallito è `testRosterTextFacadeSavedCopyRequiresValidSignatureCurrentRunAndExactACK`, con due asserzioni: "Conflicting observations for the same session". La causa è nel test. La seconda installazione, quella della copia, avveniva dopo `prepareOutgoing`: l'autore aveva già segnato la sessione `used`, mentre il ricevente non aveva mai ricevuto l'originale. Le due offerte stabilite della stessa sessione erano quindi diverse e `SessionSelector` le rifiuta. Ora il test installa la coppia copia prima di firmare; la produzione è invariata. Correzione pubblicata nel commit successivo a `6e18f64`, **non eseguita** (Windows non esegue Swift): va attestata nel prossimo completo Apple.
+>
+> Osservazione da valutare a parte (B6/B8, non introdotta da B9): se una consegna si interrompe dopo che l'autore ha segnato `used` e prima che il ricevente lo faccia, un nuovo tentativo nella stessa run fra quei due dispositivi viene rifiutato come contraddittorio finché la run non viene azzerata.
+
 Ultimo codice pubblicato: **`3d22698c2bcb6ccbd4bfd4bd8f304e0ec243576f`**, branch `main`, B8 Bonjour/iOS. Sopra di esso, **lavoro locale non committato**: correzione dell'unico XCTest fallito e blocco **B9** (copia originale dopo nuovi ingressi). Prototipo reale multipiattaforma, app di prodotto ancora incompleta. [Piano e accettazione](PIANO_SVILUPPO.md), [ripartenza](PASSAGGIO_CONSEGNE.md), [indice documentale](docs/STATO_DOCUMENTAZIONE.md).
 
 | Capacità | Implementazione e integrazione | Evidenza e limite |
