@@ -17,7 +17,7 @@ Il selettore non conosce archivi o messaggi: non ripubblica né unisce cronologi
 
 Verifica locale: `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest --console=plain`, otto casi condivisi per target. Coprono creazione, separazione gruppi, convergenza indipendente dall'ordine, priorità della sessione utilizzata, scelta esplicita, duplicati, conflitti e ID vuoti. Non equivalgono a convergenza distribuita su rete o a collaudo hardware. I test Native sono inclusi nel checkpoint iOS manuale, non eseguiti localmente su Windows.
 
-Le credenziali di gruppo, B5 e il primo trasferimento di testo B6 sono verificati automaticamente anche iOS, ultimo completo fcec8f7 / 182 XCTest, non hardware. Roster B7 in ADR 017: attestazioni firmate e memoria della run con offline, ingresso Bonjour/iOS implementato il 24 ottobre, nuovo Native/Swift/simulatore da attestare. Invio con snapshot multipartecipante, ciclo di vita/cambio rete automatico e scelta operativa restano aperti. La sola decisione B5 non autorizza traffico, né lo fanno mDNS/B4/READY bootstrap. SQLite conserva testo/used di ADR 015, non ripristina sessioni; il rientrante recupera da un peer attivo con nuove prove. Comandi e risultati correnti in STATO.
+Le credenziali di gruppo e B5–B7 sono verificate automaticamente anche iOS, ultimo completo ba5e929 / 40118469089, Native/export/app e simulatore, non hardware. Roster B7 in ADR 017: attestazioni firmate e memoria della run con offline. B8 Node/UI Android/desktop in ADR 018 consegna testo con snapshot completo e ricevute per dispositivo; ingresso iPhone, recupero con snapshot storici, ciclo di vita/cambio rete automatico e scelta operativa restano aperti. B5/mDNS/B4/READY bootstrap non autorizzano traffico. SQLite conserva testo/used, non ripristina sessioni; il rientrante recupera il roster da un peer attivo con nuove prove. Comandi e risultati correnti in STATO.
 
 ## Collaudo fisico B5 ancora da eseguire — Android ↔ Windows
 
@@ -97,8 +97,8 @@ Build dello stesso checkpoint e gruppo già ammesso, nessuna cancellazione DB.
    ammettere C tramite B e sincronizzare B/C: elenco di tre, incluso A offline.
    Fermare B, riaprire A e sincronizzare A/C: conservato anche B offline.
 4. Con tre partecipanti il vecchio Invia/Ricevi testo deve rifiutare il roster,
-   non mostrare un ACK o ridurlo ai due online. Invio multipartecipante ancora
-   da integrare; C non diventa destinatario dei messaggi inviati prima del suo ingresso.
+   non mostrare un ACK o ridurlo ai due online. Il nuovo percorso con roster
+   completo è nella lista B8 sotto; C non diventa destinatario dei messaggi precedenti.
 5. Provare Sincronizza contro Negozia sessione/testo, poi cancel e nuova selezione:
    incompatibilità o annullamento senza risultato tardivo; riprova esplicita corretta.
 6. Se un partecipante legacy offline non ha mai firmato la propria presenza nel
@@ -108,6 +108,26 @@ Build dello stesso checkpoint e gruppo già ammesso, nessuna cancellazione DB.
 
 Ripetere senza WAN e registrare build/OS/rete/ordine/ID/esiti senza chiavi o contenuti.
 Il terzo dispositivo è necessario al relativo collaudo, non simulato da questa lista.
-Ingresso roster iOS implementato il 24 ottobre, nuova verifica Native/Swift e
-simulatore da attestare in STATO. Ripetere poi anche con iPhone e Mac Intel/Apple
+Ingresso roster iOS verificato in Native/Swift e simulatore su ba5e929 / 40118469089,
+non hardware. Ripetere poi anche con iPhone e Mac Intel/Apple
 Silicon: nessun nuovo test fisico dichiarato. Cronologia UI e hardware restano aperti.
+
+## Collaudo fisico B8 predisposto, NON eseguito — consegne Android/desktop
+
+Nuovo ingresso di [ADR 018](ADR-018-CONSEGNA-TESTO-CON-ROSTER.md), non ancora iPhone.
+Con tre dispositivi ammessi e roster A/B noto, fermare A, ammettere C tramite B.
+
+1. Su B scegliere **Nuovo testo a C**, su C **Ricevi da B**. Stessa copia/ID
+   sessione, destinatari A/B/C, salvato su B/C e ricevuta A mancante.
+2. Riaprire A lasciando B attivo. Su B **Consegna copia ad A** con l'ID appena
+   salvato, su A **Ricevi da B**: identici ID/corpo, tre ricevute su B.
+   Ripetere senza duplicati nello storico; nessuna distribuzione automatica.
+3. Se entra D, non consegnargli copie di cui non era destinatario. Un vecchio
+   snapshot diverso dal roster corrente viene rifiutato anche verso un vecchio
+   destinatario: recupero con snapshot storici ancora da integrare.
+4. Annullare durante una consegna e riprovare esplicitamente; nessun falso ACK.
+   Dopo stop di tutti, vecchio ID non riattiva la sessione archiviata. Registrare
+   build/OS/rete/ID/esiti senza contenuti o chiavi, ripetere senza WAN.
+
+Servono realmente tre dispositivi per i primi due passi. Nuovo ingresso iPhone e
+collaudi Mac Intel/Apple Silicon restano aperti; questa lista non è un'esecuzione.

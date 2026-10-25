@@ -1,6 +1,8 @@
 package lantern.connectivity
 
 import lantern.protocol.GroupSessionRoster
+import lantern.protocol.GroupRosterTextCodec
+import lantern.protocol.GroupRosterTextContext
 import lantern.protocol.GroupSessionRosterCodec
 
 import java.io.Closeable
@@ -261,6 +263,16 @@ internal class HandshakeV1Connection private constructor(
         propose: (GroupSessionOffer) -> GroupSessionRoster,
         mergeVerified: (GroupSessionRoster, GroupSessionRoster) -> GroupSessionRoster,
         completed: (GroupSessionRoster) -> Unit,
+    ): GroupSessionRoster? = exchangeRoster(membership, offer, verifyRemote, propose, mergeVerified, completed, null)
+
+    /** Continuation is chosen before proof I/O, so no diagnostic EOF reader can race text. */
+    private fun exchangeRoster(
+        membership: GroupMembershipEvidence, offer: GroupSessionOffer,
+        verifyRemote: (GroupMembershipEvidence) -> Boolean,
+        propose: (GroupSessionOffer) -> GroupSessionRoster,
+        mergeVerified: (GroupSessionRoster, GroupSessionRoster) -> GroupSessionRoster,
+        completed: (GroupSessionRoster) -> Unit,
+        continuation: ((GroupSessionRoster) -> Unit)?,
     ): GroupSessionRoster? {
         val exclusive = operations.writeLock()
         if (!exclusive.tryLock()) return null
@@ -318,10 +330,79 @@ internal class HandshakeV1Connection private constructor(
                 checkLive()
                 completed(merged)
                 // Last writer drains only transport. EOF is not a remote install/commit receipt.
-                if (!first) stream.awaitMembershipEnd(::beforeRead)
+                if (continuation != null) continuation(merged)
+                else if (!first) stream.awaitMembershipEnd(::beforeRead)
                 merged
             }
         } finally { exclusive.unlock() }
+    }
+
+    /** Fresh LGM/LSN/LRO/LRA, exact whole-roster scope, one delivery and one recipient ACK. */
+    fun transferRosterText(
+        membership: GroupMembershipEvidence, offer: GroupSessionOffer, sending: Boolean,
+        verifyRemote: (GroupMembershipEvidence) -> Boolean,
+        propose: (GroupSessionOffer) -> GroupSessionRoster,
+        mergeVerified: (GroupSessionRoster, GroupSessionRoster) -> GroupSessionRoster,
+        installRoster: (GroupSessionRoster) -> Unit,
+        outgoing: (GroupRosterTextContext) -> SignedGroupText,
+        incoming: (GroupRosterTextContext, SignedGroupText, X509Certificate) -> GroupTextSavedReceipt,
+        completed: (SignedGroupText) -> Unit,
+    ): SignedGroupText? = guarded {
+        // Role/capability mismatch must fail before even the membership phase.
+        val first = synchronized(stateLock) {
+            requireEvidenceActiveLocked()
+            GroupRosterTextCodec.sendsFirst(checkNotNull(attempt.offersForGroupAdmission()), sending)
+        }
+        var delivered: SignedGroupText? = null
+        exchangeRoster(membership, offer, verifyRemote, propose, mergeVerified, installRoster) { roster ->
+            fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
+            fun beforeRead() = synchronized(stateLock) {
+                requireEvidenceActiveLocked()
+                socket.soTimeout = checkNotNull(attempt.remainingMillis).toInt()
+            }
+            val context = GroupRosterTextContext(roster,
+                if (sending) identity.id else selectedPeerIdentity,
+                if (sending) selectedPeerIdentity else identity.id, digest(GroupSessionRosterCodec.encode(roster)))
+            val scope = GroupRosterTextCodec.scope(context)
+            fun send(payload: ByteArray) {
+                checkLive()
+                stream.writeTextControl(payload)
+                checkLive()
+            }
+            fun readScope() {
+                check(stream.readRosterTextControl(GroupRosterTextCodec.SCOPE_BYTES, ::beforeRead).contentEquals(scope)) {
+                    "Roster text scope mismatch"
+                }
+            }
+            if (first) { send(scope); readScope() } else { readScope(); send(scope) }
+            checkLive()
+            if (sending) {
+                val message = outgoing(context)
+                context.checkMessage(message)
+                val bytes = GroupTextCodec.encode(message)
+                send(bytes)
+                val ack = stream.readRosterTextControl(GroupRosterTextCodec.ACK_BYTES, ::beforeRead)
+                check(ack.contentEquals(GroupRosterTextCodec.acknowledgement(context, message, digest(bytes)))) {
+                    "Roster text receipt mismatch"
+                }
+                checkLive()
+                completed(message)
+                checkLive()
+                delivered = message
+            } else {
+                val message = stream.readGroupText(::beforeRead)
+                context.checkMessage(message)
+                checkLive()
+                val receipt = incoming(context, message, socket.session.peerCertificates.single() as X509Certificate)
+                check(receipt.recipientId == identity.id && receipt.message.sameMessage(message))
+                send(GroupRosterTextCodec.acknowledgement(context, message, digest(GroupTextCodec.encode(message))))
+                completed(message)
+                delivered = message
+                // Preserve queued ACK bytes; this EOF read is cleanup only, after durable success.
+                stream.awaitMembershipEnd(::beforeRead)
+            }
+        }
+        delivered
     }
 
     /**

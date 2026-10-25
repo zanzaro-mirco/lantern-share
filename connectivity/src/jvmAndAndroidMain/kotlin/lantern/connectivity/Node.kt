@@ -17,7 +17,7 @@ import lantern.domain.DeviceController
 import lantern.domain.DeviceRepository
 import lantern.domain.DeviceState
 import lantern.domain.DiscoveryService
-import lantern.domain.GroupRosterController
+import lantern.domain.GroupRosterTextController
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Peer
@@ -38,7 +38,7 @@ class Node(
     private val discovery: DiscoveryService,
     private val address: InetAddress,
     private val requestedPort: Int = 0,
-) : DeviceController, GroupRosterController, AutoCloseable {
+) : DeviceController, GroupRosterTextController, AutoCloseable {
     private val mutable = MutableStateFlow(DeviceState(
         name = repository.name(),
         id = identity.id,
@@ -62,6 +62,7 @@ class Node(
     override val groupSessionState = admissions.groupSessionState
     override val groupTextState = admissions.groupTextState
     override val groupRosterState = admissions.groupRosterState
+    override val lastRosterTextDelivery = admissions.lastRosterTextDelivery
 
     val port: Int get() = activeRun?.server?.localPort ?: 0
 
@@ -373,14 +374,27 @@ class Node(
     @Synchronized
     override fun synchronizeGroupRoster(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.ROSTER)
 
-    private fun selectGroupConnection(peer: Peer, replaceInterrupted: Boolean, mode: GroupSelectionMode, text: String? = null) {
+    @Synchronized
+    override fun sendRosterText(peer: Peer, text: String) {
+        require(ContentLimits.isValidText(text))
+        selectGroupConnection(peer, false, GroupSelectionMode.ROSTER_TEXT, text)
+    }
+
+    @Synchronized
+    override fun receiveRosterText(peer: Peer) = selectGroupConnection(peer, false, GroupSelectionMode.ROSTER_TEXT)
+
+    @Synchronized
+    override fun deliverRosterText(peer: Peer, messageId: String) =
+        selectGroupConnection(peer, false, GroupSelectionMode.ROSTER_TEXT, messageId = messageId)
+
+    private fun selectGroupConnection(peer: Peer, replaceInterrupted: Boolean, mode: GroupSelectionMode, text: String? = null, messageId: String? = null) {
         val run = activeRun ?: return
         if (closed) return
         reject()
         // A protocol is chosen explicitly, never sniffed/fallen back from untrusted bytes.
         // Drain old PoC sockets before enabling selected v1 TLS. The listener stays alive.
         val cleanup = resourceCloser.closeAll(run.sockets.toList())
-        admissions.select(peer, replaceInterrupted, cleanup, mode, text)
+        admissions.select(peer, replaceInterrupted, cleanup, mode, text, messageId)
         discovered(run, peer)
     }
 

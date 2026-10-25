@@ -16,6 +16,7 @@ import lantern.protocol.GroupMembershipEvidenceCodec
 import lantern.protocol.GroupSessionOffer
 import lantern.protocol.GroupSessionOfferCodec
 import lantern.protocol.GroupTextTransferCodec
+import lantern.protocol.GroupRosterTextCodec
 import lantern.protocol.GroupTextCodec
 import lantern.protocol.GroupSessionRosterCodec
 import lantern.domain.SignedGroupText
@@ -131,6 +132,17 @@ internal class HandshakeV1FrameStream(private val input: InputStream, private va
             readFully(header, beforeRead)
             if (expectedBytes != null) GroupTextTransferCodec.checkFixedHeader(header, expectedBytes)
             val payload = ByteArray(GroupTextTransferCodec.payloadBytes(header))
+            readFully(payload, beforeRead)
+            return payload
+        } catch (_: IllegalArgumentException) { throw InvalidGroupEvidenceFrameException() }
+    }
+
+    fun readRosterTextControl(expectedBytes: Int, beforeRead: () -> Unit): ByteArray {
+        try {
+            val header = ByteArray(4)
+            readFully(header, beforeRead)
+            GroupRosterTextCodec.checkFixedHeader(header, expectedBytes)
+            val payload = ByteArray(expectedBytes)
             readFully(payload, beforeRead)
             return payload
         } catch (_: IllegalArgumentException) { throw InvalidGroupEvidenceFrameException() }

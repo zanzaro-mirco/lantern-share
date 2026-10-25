@@ -1,6 +1,7 @@
 package lantern.connectivity
 
 import lantern.protocol.GroupSessionRosterCodec
+import lantern.protocol.GroupRosterTextCodec
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -30,6 +31,33 @@ import lantern.protocol.GroupTextTransferCodec
 import lantern.protocol.GroupTextTransferContext
 
 class HandshakeV1FrameStreamTest {
+    @Test
+    fun rosterTextControlsReadExactlyAndRejectWrongLengthBeforeAllocatingOrReadingBody() {
+        for (size in listOf(GroupRosterTextCodec.SCOPE_BYTES, GroupRosterTextCodec.ACK_BYTES)) {
+            val payload = ByteArray(size) { (it % 127).toByte() }
+            val input = ByteArrayInputStream(framed(payload) + byteArrayOf(7))
+            val fragmented = object : FilterInputStream(input) {
+                override fun read(bytes: ByteArray, offset: Int, length: Int) = super.read(bytes, offset, minOf(1, length))
+            }
+            var checks = 0
+            val stream = HandshakeV1FrameStream(fragmented, ByteArrayOutputStream())
+            assertContentEquals(payload, stream.readRosterTextControl(size) { checks++ })
+            assertEquals(size + 4, checks)
+            assertEquals(7, input.read())
+            for (length in listOf(-1, 0, size - 1, size + 1, 65536)) {
+                val bytes = ByteArrayOutputStream().also { DataOutputStream(it).writeInt(length) }.toByteArray()
+                val bad = ByteArrayInputStream(bytes + byteArrayOf(9))
+                assertFailsWith<InvalidGroupEvidenceFrameException> {
+                    HandshakeV1FrameStream(bad, ByteArrayOutputStream()).readRosterTextControl(size) {}
+                }
+                assertEquals(9, bad.read())
+            }
+            for (cut in listOf(0, 1, 3, 4, size + 3)) {
+                assertFailsWith<EOFException> { reader(framed(payload).copyOf(cut)).readRosterTextControl(size) {} }
+            }
+        }
+    }
+
     private val hello = ProtocolHandshakeFrame.Hello(
         ProtocolHandshakeParticipant("a".repeat(64), "1".repeat(64), ProtocolCapabilities(1, setOf("text"), setOf("text"))),
     )

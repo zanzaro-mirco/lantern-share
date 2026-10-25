@@ -3,6 +3,7 @@ package lantern.connectivity
 import lantern.protocol.GroupSessionJoin
 import lantern.protocol.GroupSessionRoster
 import lantern.protocol.GroupSessionRosterCodec
+import lantern.protocol.GroupRosterTextCodec
 import kotlin.test.assertContentEquals
 
 import java.io.DataOutputStream
@@ -617,6 +618,84 @@ class HandshakeV1ConnectionTest {
     }
 
     private fun active(state: ProtocolHandshakeState) = HandshakeV1ConnectionState.Active(state)
+
+    @Test
+    fun rosterTextScopeWrongAckCancelAndOriginalDeadlineCannotAcknowledgeAfterFreshRoster() = withPeers { client, server ->
+        for (action in listOf("scope", "ack", "cancel", "expiry")) withSockets(client, server) { sockets ->
+            val author = if (client.id < server.id) client else server
+            val recipient = if (client.id < server.id) server else client
+            val required = GroupRosterTextCodec.requiredFeatures
+            val senderCaps = ProtocolCapabilities(1, required + GroupTextTransferCodec.SENDER_FEATURE, required)
+            val receiverCaps = ProtocolCapabilities(1, required + GroupTextTransferCodec.RECEIVER_FEATURE, required)
+            val selectedAt = if (action == "expiry") monotonicMillis() - ProtocolHandshakeAttempt.TIMEOUT_MILLIS + 2_000 else sockets.selectedAt
+            sockets.clientOwner(selectedAt = selectedAt, supported = if (client === author) senderCaps else receiverCaps).use { left ->
+                sockets.serverOwner(selectedAt = selectedAt, supported = if (server === author) senderCaps else receiverCaps).use { right ->
+                    exchangeHellos(left, right)
+                    val owner = if (client === author) left else right
+                    val peerSocket = if (client === author) sockets.server else sockets.client
+                    val anchor = GroupTrustAnchor(randomNonce(), author.id)
+                    val membership = GroupMembershipEvidence(anchor, author.id, null)
+                    val draft = FounderGroupAdmissionDraft.prepare(anchor, author.id, recipient.id)
+                    val peerMembership = GroupMembershipEvidence(anchor, recipient.id,
+                        GroupAdmissionEvidence(draft.withSignature(author.sign(draft.signedBytes())), listOf(
+                            GroupAdmissionCertificate(author.id, Base64.getEncoder().encodeToString(author.certificate.encoded)))))
+                    val offer = GroupSessionOffer(SessionCandidate(anchor.groupId, randomNonce(), false), false)
+                    fun roster(identity: Identity, proof: GroupMembershipEvidence): GroupSessionRoster {
+                        val certificate = GroupAdmissionCertificate(identity.id, Base64.getEncoder().encodeToString(identity.certificate.encoded))
+                        val bytes = GroupSessionRosterCodec.signingBytes(offer.session.sessionId, proof, certificate)
+                        return GroupSessionRoster(anchor, offer.session.sessionId,
+                            listOf(GroupSessionJoin(offer.session.sessionId, proof, certificate, identity.sign(bytes))))
+                    }
+                    val local = roster(author, membership)
+                    val remote = roster(recipient, peerMembership)
+                    val installed = java.util.concurrent.atomic.AtomicBoolean()
+                    val outgoingCalled = java.util.concurrent.atomic.AtomicBoolean()
+                    val acknowledged = java.util.concurrent.atomic.AtomicBoolean()
+                    val stream = HandshakeV1FrameStream(peerSocket.inputStream, peerSocket.outputStream)
+                    val worker = Executors.newSingleThreadExecutor()
+                    try {
+                        val result = worker.submit<Boolean> {
+                            try {
+                                owner.transferRosterText(membership, offer, true,
+                                    verifyRemote = { verifyPeerMembership(it, anchor, recipient.id) },
+                                    propose = { assertEquals(offer, it); local },
+                                    mergeVerified = { a, b ->
+                                        GroupRootAdoptionJournalInspector.withVerifier { verify -> check(a.verify(verify) && b.verify(verify)) }
+                                        a.merge(b)
+                                    }, installRoster = { installed.set(true) },
+                                    outgoing = { context ->
+                                        outgoingCalled.set(true)
+                                        val content = GroupTextContent("00000000-0000-0000-0000-000000000001", anchor.groupId,
+                                            context.sessionId, author.id, 1, 1, context.recipients, "Ricevuta per un solo dispositivo")
+                                        SignedGroupText(content, author.sign(GroupTextCodec.signedBytes(content)))
+                                    }, incoming = { _, _, _ -> error("Sender cannot receive") }, completed = { acknowledged.set(true) })
+                                true
+                            } catch (_: Exception) { false }
+                        }
+                        stream.readMembership {}; stream.writeMembership(peerMembership)
+                        assertEquals(offer, stream.readSessionOffer {}); stream.writeSessionOffer(offer)
+                        stream.readRosterControl(false) {}; stream.writeRosterControl(GroupSessionRosterCodec.encode(remote))
+                        val agreement = stream.readRosterControl(true) {}; stream.writeRosterControl(agreement)
+                        val scope = stream.readRosterTextControl(GroupRosterTextCodec.SCOPE_BYTES) {}
+                        stream.writeTextControl(if (action == "scope") scope.copyOf().also { it[it.lastIndex] = 0 } else scope)
+                        if (action != "scope") {
+                            stream.readGroupText {}
+                            if (action == "ack") stream.writeTextControl(ByteArray(GroupRosterTextCodec.ACK_BYTES))
+                            if (action == "cancel") owner.close()
+                        }
+                        assertFalse(result.get(4, TimeUnit.SECONDS))
+                        assertTrue(installed.get())
+                        assertEquals(action != "scope", outgoingCalled.get())
+                        assertFalse(acknowledged.get())
+                        assertFailsWith<IOException> { owner.negotiateSession(membership, offer) { true } }
+                    } finally {
+                        owner.close(); worker.shutdownNow()
+                        assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+    }
 
     @Test
     fun groupTextScopeMismatchWrongAckCancelAndOriginalDeadlineNeverAcknowledge() = withPeers { client, server ->

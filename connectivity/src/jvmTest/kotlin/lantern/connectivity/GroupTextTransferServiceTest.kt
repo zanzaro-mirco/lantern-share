@@ -36,6 +36,131 @@ import kotlin.test.assertTrue
 /** Actual Nodes, mutual TLS, delegated group admission, P-256 and reopened SQLite, not wire-0 trust. */
 class GroupTextTransferServiceTest {
     @Test
+    fun rosterTextDeliversSameSignedCopyToThreeRecipientsIncludingReturningFounderAndPersistsExactReceipts() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        var deliveredId = ""
+        openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+            f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, cStore).use { c ->
+                a.start(); b.start(); c.start(); ports(a, b); ports(b, c)
+                val pair = synchronize(a, b)
+                a.stop()
+                admit(b, c)
+                // No standalone roster action: this text owner verifies and expands it itself.
+                val sent = rosterTransfer(b, c, "Anche al fondatore offline")
+                deliveredId = sent.content.id
+                assertEquals(pair.sessionId, sent.content.sessionId)
+                assertEquals(setOf(f.a.id, f.b.id, third.id), sent.content.recipients.toSet())
+                assertNull(aStore.groupText(deliveredId))
+                assertEquals(setOf(f.b.id, third.id), assertNotNull(bStore.groupText(deliveredId)).receivedBy)
+                assertEquals(setOf(third.id), assertNotNull(cStore.groupText(deliveredId)).receivedBy)
+                assertEquals(setOf(f.b.id, third.id), assertNotNull(b.lastRosterTextDelivery.value).receivedBy)
+                openDesktopRepository(f.directory.resolve("a.db")).use { reopened -> node(f.a, reopened).use { returning ->
+                    returning.start(); ports(b, returning)
+                    // A lost run memory and really reopened its database. Fresh proofs restore
+                    // from B; the exact old UUID/signature/counters go to this recipient too.
+                    deliverCopy(b, returning, deliveredId, sent)
+                    assertEquals(setOf(f.a.id, f.b.id, third.id), assertNotNull(b.lastRosterTextDelivery.value).receivedBy)
+                    deliverCopy(b, returning, deliveredId, sent)
+                    assertEquals(1, reopened.groupTextHistory(f.anchor.groupId, pair.sessionId).size)
+                    assertEquals(1, bStore.groupTextHistory(f.anchor.groupId, pair.sessionId).size)
+                    val next = rosterTransfer(b, returning, "Un altro testo, stessi partecipanti")
+                    assertEquals(2L, next.content.authorSequence)
+                    assertEquals(sent.content.recipients, next.content.recipients)
+                    assertEquals(setOf(f.a.id, f.b.id), assertNotNull(bStore.groupText(next.content.id)).receivedBy)
+                    val reverse = rosterTransfer(returning, b, "Risposta con delegato offline")
+                    assertEquals(1L, reverse.content.authorSequence)
+                    assertEquals(sent.content.recipients, reverse.content.recipients)
+                    for (store in listOf(reopened, bStore, cStore)) {
+                        assertTrue(store.trusted().isEmpty()); assertTrue(store.history().isEmpty()); assertNull(store.pendingGroupAdoption())
+                    }
+                } }
+            } } } }
+        }
+        f.stores { aStore, bStore ->
+            val local = assertNotNull(bStore.groupText(deliveredId))
+            assertEquals(setOf(f.a.id, f.b.id, third.id), local.receivedBy)
+            assertTrue(local.message.sameMessage(assertNotNull(aStore.groupText(deliveredId)).message))
+            assertEquals(setOf(f.a.id), assertNotNull(aStore.groupText(deliveredId)).receivedBy)
+        }
+    }
+
+    @Test
+    fun laterAdmissionCannotBeAddedToAnOldCopyAndChangingRosterCannotResignOrConsumeCounters() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+            f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, cStore).use { c ->
+                a.start(); b.start(); c.start(); ports(a, b); ports(b, c)
+                val original = rosterTransfer(b, a, "Solo i due ammessi ora")
+                admit(b, c)
+                val newer = rosterTransfer(b, c, "Tre partecipanti adesso")
+                assertEquals(3, newer.content.recipients.size)
+                assertEquals(original.content.sessionId, newer.content.sessionId)
+                b.deliverRosterText(peer(c), original.content.id)
+                assertIs<GroupTextState.Failed>(awaitText(b)) // C was not a frozen recipient.
+                assertNull(cStore.groupText(original.content.id))
+                // Even an original recipient cannot reinterpret an old copy with today's roster.
+                a.receiveRosterText(peer(b)); b.deliverRosterText(peer(a), original.content.id)
+                val failure = assertIs<GroupTextState.Failed>(awaitText(b))
+                assertEquals(GroupTextFailure.ROSTER_REQUIRED, failure.reason)
+                assertNull(failure.attemptedMessageId)
+                assertIs<GroupTextState.Failed>(awaitText(a))
+                assertEquals(2, assertNotNull(bStore.groupText(original.content.id)).message.content.recipients.size)
+                assertTrue(original.sameMessage(assertNotNull(aStore.groupText(original.content.id)).message))
+                val next = rosterTransfer(b, a, "Nessun contatore usato dalla copia rifiutata")
+                assertEquals(3L, next.content.authorSequence)
+                assertEquals(3, next.content.recipients.size)
+            } } } }
+        }
+    }
+
+    @Test
+    fun rosterTextCannotFallBackToLegacyTextOrDiagnosticsAndStopCannotRestoreSessionFromSavedCopy() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            a.sendRosterText(peer(b), "Modalità diverse"); b.receiveGroupText(peer(a))
+            assertIs<GroupTextState.Failed>(awaitText(a)); assertIs<GroupTextState.Failed>(awaitText(b))
+            a.sendRosterText(peer(b), "Non è diagnostica"); b.synchronizeGroupRoster(peer(a))
+            assertIs<GroupTextState.Failed>(awaitText(a)); assertIs<GroupRosterState.Failed>(awaitRoster(b))
+            val original = rosterTransfer(a, b, "Primo contatore")
+            assertEquals(1L, original.content.authorSequence)
+            a.stop(); b.stop(); a.start(); b.start(); ports(a, b)
+            b.receiveRosterText(peer(a)); a.deliverRosterText(peer(b), original.content.id)
+            assertEquals(GroupTextFailure.ROSTER_REQUIRED, assertIs<GroupTextState.Failed>(awaitText(a)).reason)
+            assertIs<GroupTextState.Failed>(awaitText(b))
+            val fresh = rosterTransfer(a, b, "Sessione nuova")
+            assertNotEquals(original.content.sessionId, fresh.content.sessionId)
+            assertEquals(2L, fresh.content.authorSequence)
+            assertNotNull(aStore.groupText(original.content.id)); assertNotNull(bStore.groupText(original.content.id))
+            // A received copy cannot be forwarded as if it were authored by B.
+            b.deliverRosterText(peer(a), original.content.id)
+            assertIs<GroupTextState.Failed>(awaitText(b))
+            assertNull(b.lastRosterTextDelivery.value)
+        } } }
+    }
+
+    private fun rosterTransfer(sender: Node, receiver: Node, text: String): SignedGroupText {
+        receiver.receiveRosterText(peer(sender)); sender.sendRosterText(peer(receiver), text)
+        val sent = assertIs<GroupTextState.Sent>(awaitText(sender))
+        val received = assertIs<GroupTextState.Received>(awaitText(receiver))
+        assertTrue(sent.message.sameMessage(received.message))
+        return sent.message
+    }
+
+    private fun startText(sender: Node, receiver: Node, text: String, roster: Boolean) {
+        if (roster) {
+            receiver.receiveRosterText(peer(sender)); sender.sendRosterText(peer(receiver), text)
+        } else {
+            receiver.receiveGroupText(peer(sender)); sender.sendGroupText(peer(receiver), text)
+        }
+    }
+
+    private fun deliverCopy(sender: Node, receiver: Node, id: String, expected: SignedGroupText) {
+        receiver.receiveRosterText(peer(sender)); sender.deliverRosterText(peer(receiver), id)
+        assertTrue(expected.sameMessage(assertIs<GroupTextState.Sent>(awaitText(sender)).message))
+        assertTrue(expected.sameMessage(assertIs<GroupTextState.Received>(awaitText(receiver)).message))
+    }
+
+    @Test
     fun signedRosterRestoresRetainedUsedPairAfterEitherPeerReopensWithoutHistoryOrCounterReuse() {
         for (restartFounder in listOf(false, true)) withMembers { f ->
             f.stores { aStore, bStore ->
@@ -281,81 +406,86 @@ class GroupTextTransferServiceTest {
     }
 
     @Test
-    fun receiverCommitFaultProducesNoAckAndDoesNotEraseSenderCopy() = withMembers { f ->
-        f.stores { aStore, bStore ->
-            JdbcSqliteDriver("jdbc:sqlite:${f.directory.resolve("b.db")}").use { fault ->
-                fault.execute(null, "CREATE TRIGGER reject_text AFTER INSERT ON group_text_recipient BEGIN SELECT RAISE(FAIL, 'test fault'); END", 0)
-                node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
-                    a.start(); b.start(); ports(a, b)
-                    b.receiveGroupText(peer(a)); a.sendGroupText(peer(b), "Nessun falso ACK")
-                    val sending = assertIs<GroupTextState.Failed>(awaitText(a))
-                    assertIs<GroupTextState.Failed>(awaitText(b))
-                    val id = assertNotNull(sending.attemptedMessageId)
-                    val local = assertNotNull(aStore.groupText(id))
-                    assertEquals(setOf(f.a.id), local.receivedBy)
-                    assertNull(bStore.groupText(id))
-                    assertFalse(bStore.groupSessionWasUsed(f.anchor.groupId, local.message.content.sessionId))
+    fun receiverCommitFaultProducesNoAckAndDoesNotEraseSenderCopy() {
+        for (roster in listOf(false, true)) withMembers { f ->
+            f.stores { aStore, bStore ->
+                JdbcSqliteDriver("jdbc:sqlite:${f.directory.resolve("b.db")}").use { fault ->
+                    fault.execute(null, "CREATE TRIGGER reject_text AFTER INSERT ON group_text_recipient BEGIN SELECT RAISE(FAIL, 'test fault'); END", 0)
+                    node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+                        a.start(); b.start(); ports(a, b)
+                        startText(a, b, "Nessun falso ACK", roster)
+                        val sending = assertIs<GroupTextState.Failed>(awaitText(a))
+                        assertIs<GroupTextState.Failed>(awaitText(b))
+                        val id = assertNotNull(sending.attemptedMessageId)
+                        val local = assertNotNull(aStore.groupText(id))
+                        assertEquals(setOf(f.a.id), local.receivedBy)
+                        assertNull(bStore.groupText(id))
+                        assertFalse(bStore.groupSessionWasUsed(f.anchor.groupId, local.message.content.sessionId))
+                    } }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun receivedIsDurableBeforeTransportCleanupAndSurvivesSenderCancellationAfterAck() {
+        for (roster in listOf(false, true)) withMembers { f ->
+            f.stores { aStore, bStore ->
+                val ackEntered = CountDownLatch(1)
+                val release = CountDownLatch(1)
+                val boundary = object : DeviceRepository by aStore, GroupAdoptionRepository by aStore, GroupTextRepository by aStore {
+                    override fun acknowledgeGroupText(message: SignedGroupText, recipientId: String): Boolean {
+                        ackEntered.countDown()
+                        check(release.await(8, TimeUnit.SECONDS))
+                        return aStore.acknowledgeGroupText(message, recipientId)
+                    }
+                }
+                node(f.a, boundary).use { a -> node(f.b, bStore).use { b ->
+                    try {
+                        a.start()
+                        b.start()
+                        ports(a, b)
+                        startText(a, b, "Salvato prima del cleanup", roster)
+                        assertTrue(ackEntered.await(8, TimeUnit.SECONDS))
+                        // Sender has consumed the ACK but cannot close yet. Receiver must already
+                        // report its own durable fact, without waiting for EOF as another ACK.
+                        val received = assertIs<GroupTextState.Received>(awaitText(b))
+                        assertNotNull(bStore.groupText(received.message.content.id))
+                        a.cancelGroup()
+                        assertEquals(GroupTextState.Idle, a.groupTextState.value)
+                        assertEquals(received, b.groupTextState.value)
+                    } finally { release.countDown() }
                 } }
             }
         }
     }
 
     @Test
-    fun receivedIsDurableBeforeTransportCleanupAndSurvivesSenderCancellationAfterAck() = withMembers { f ->
-        f.stores { aStore, bStore ->
-            val ackEntered = CountDownLatch(1)
-            val release = CountDownLatch(1)
-            val boundary = object : DeviceRepository by aStore, GroupAdoptionRepository by aStore, GroupTextRepository by aStore {
-                override fun acknowledgeGroupText(message: SignedGroupText, recipientId: String): Boolean {
-                    ackEntered.countDown()
-                    check(release.await(8, TimeUnit.SECONDS))
-                    return aStore.acknowledgeGroupText(message, recipientId)
+    fun cancellationDuringEnteredCommitHasNoLateAckOrPresentationAndCloseDrainsWorker() {
+        for (roster in listOf(false, true)) withMembers { f ->
+            f.stores { aStore, bStore ->
+                val entered = CountDownLatch(1)
+                val release = CountDownLatch(1)
+                val boundary = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore, GroupTextRepository by bStore {
+                    override fun saveGroupText(message: SignedGroupText, localIdentity: String): Boolean {
+                        entered.countDown()
+                        check(release.await(8, TimeUnit.SECONDS))
+                        return bStore.saveGroupText(message, localIdentity)
+                    }
                 }
+                node(f.a, aStore).use { a -> node(f.b, boundary).use { b ->
+                    try {
+                        a.start(); b.start(); ports(a, b)
+                        startText(a, b, "Commit in corso", roster)
+                        assertTrue(entered.await(8, TimeUnit.SECONDS))
+                        b.cancelGroup()
+                        assertEquals(GroupTextState.Idle, b.groupTextState.value)
+                        assertIs<GroupTextState.Failed>(awaitText(a))
+                    } finally { release.countDown() }
+                } }
+                assertEquals(0, bStore.trusted().size)
+                // The already-entered local commit may finish, but never produces an ACK after cancel.
             }
-            node(f.a, boundary).use { a -> node(f.b, bStore).use { b ->
-                try {
-                    a.start()
-                    b.start()
-                    ports(a, b)
-                    b.receiveGroupText(peer(a))
-                    a.sendGroupText(peer(b), "Salvato prima del cleanup")
-                    assertTrue(ackEntered.await(8, TimeUnit.SECONDS))
-                    // Sender has consumed the ACK but cannot close yet. Receiver must already
-                    // report its own durable fact, without waiting for EOF as another ACK.
-                    val received = assertIs<GroupTextState.Received>(awaitText(b))
-                    assertNotNull(bStore.groupText(received.message.content.id))
-                    a.cancelGroup()
-                    assertEquals(GroupTextState.Idle, a.groupTextState.value)
-                    assertEquals(received, b.groupTextState.value)
-                } finally { release.countDown() }
-            } }
-        }
-    }
-
-    @Test
-    fun cancellationDuringEnteredCommitHasNoLateAckOrPresentationAndCloseDrainsWorker() = withMembers { f ->
-        f.stores { aStore, bStore ->
-            val entered = CountDownLatch(1)
-            val release = CountDownLatch(1)
-            val boundary = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore, GroupTextRepository by bStore {
-                override fun saveGroupText(message: SignedGroupText, localIdentity: String): Boolean {
-                    entered.countDown()
-                    check(release.await(8, TimeUnit.SECONDS))
-                    return bStore.saveGroupText(message, localIdentity)
-                }
-            }
-            node(f.a, aStore).use { a -> node(f.b, boundary).use { b ->
-                try {
-                    a.start(); b.start(); ports(a, b)
-                    b.receiveGroupText(peer(a)); a.sendGroupText(peer(b), "Commit in corso")
-                    assertTrue(entered.await(8, TimeUnit.SECONDS))
-                    b.cancelGroup()
-                    assertEquals(GroupTextState.Idle, b.groupTextState.value)
-                    assertIs<GroupTextState.Failed>(awaitText(a))
-                } finally { release.countDown() }
-            } }
-            assertEquals(0, bStore.trusted().size)
-            // The already-entered local commit may finish, but never produces an ACK after cancel.
         }
     }
 

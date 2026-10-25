@@ -1,6 +1,16 @@
-# Stato sviluppo — 24 ottobre 2026
+# Stato sviluppo — 25 ottobre 2026
 
-## Sintesi corrente — B7, ingresso roster Bonjour/iOS
+## Sintesi corrente — B8, consegna testo con roster completo
+
+**Precedente verificato:** `ba5e9298626f8d4fed0a3d8198acbb37d61e66b7`, [iOS completo 40118469089](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40118469089) completed/success, Native protocollo/persistenza, framework/export/app e XCTest in simulatore eseguiti. Bootstrap soltanto compilato, interop opt-in skipped. Nessun hardware o polling. B7 roster verificato automaticamente anche Apple, note precedenti preservate sotto.
+
+**Implementato/integrato Node/UI Android/desktop:** nuovo invio con roster intero verificato nello stesso TLS, destinatari offline congelati nella firma, ACK per il solo destinatario raggiunto dopo commit. Consegna copia per ID dall'autore, stessi UUID/firma/contatori, nuove prove/roster/scope a ogni TLS; duplicati idempotenti e ricevute durevoli separate mostrate nella UI. Vecchio percorso a due anche iOS conservato. Snapshot cambiato o nuova sessione rifiutano la copia senza rifirma o contatori nuovi; mai destinatari retroattivi o storia usata come autorizzazione. Codec Kotlin LTC/LGA additivi, busta/schema 5 e wire precedenti invariati. Decisioni/limiti in [ADR 018](docs/ADR-018-CONSEGNA-TESTO-CON-ROSTER.md).
+
+**Verifica locale JDK 17:** compilazione connettività 28 s success; nuovi casi comuni/Node 35 s success; servizio/owner/framing con commit fault/cancel in entrambi i percorsi 1m 58s success. Tre test comuni nuovi, tre scenari Node nuovi, uno owner e uno framing; tre regressioni durevoli esistenti estese al nuovo ingresso. Definitivo `./gradlew -Pandroid=true :domain:jvmTest :domain:testDebugUnitTest :protocol:jvmTest :protocol:testDebugUnitTest :persistence:jvmTest :connectivity:jvmTest :ui:jvmTest :ui:testDebugUnitTest :androidApp:assembleDebug :desktopApp:classes --console=plain` **3m 41s success**. XML: dominio **23/23**, protocollo **424 JVM / 388 Android**, persistenza **37**, connettività **244 casi, 243 passati e uno mDNS opt-in skipped**, UI **13/13**; **1164 passati**, zero failure/error. APK/classi desktop compilati. Nessun codice modificato dopo il definitivo, nessun test soppresso o harness nuovo.
+
+**Limiti/unico prossimo blocco:** ingresso nuovo soltanto Node/UI Android/desktop. Windows non esegue Native/Swift/simulatore; Apple ordinario verifica compilazione, completo da raggruppare col prossimo ingresso Bonjour/iOS e consegna di copia usando lo stesso core. Nessuna nuova prova fisica o interazione UI. Invio/consegna espliciti per destinatario, non fan-out/retry automatico o recupero da altri autori/roster storici. Sessioni usate multiple, controllo persistente/reconnect, paginazione, cronologia UI e recupero ancora obbligatori; fase 1/hardware e gate UI aperti.
+
+## Evidenze precedenti — B7, ingresso roster Bonjour/iOS
 
 **Precedente verificato da concluso:** `99c5cf65d75b76196248095737719e9962d12cfd`, [iOS ordinario 39983832282](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39983832282) e [PoC 39983832329](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39983832329) completed/success nell'unica lettura, nessun polling. Ordinario compila Apple, non esegue Native/simulatore: ultimo runtime resta `fcec8f7` / 182 XCTest. Note post-push precedenti conservate sotto.
 
@@ -13,6 +23,8 @@
 **Predisposto, NON ancora compilato/eseguito Apple:** nove nuovi XCTest con TLS/Keychain/SQLite reali: riapertura di entrambi i ruoli e scope usato ripristinato, tre partecipanti/fondatore poi delegato offline e niente storia retroattiva, roster vuoto/ampio non ridotto, prove legacy mancanti e tutti snapshot persi, modi incompatibili/cancel/riselezione, certificato TLS/firma/revisione alterati, DER cache hit, LRA alterato e cancel/deadline originale in attesa LRA. Nessun test soppresso o workflow modificato. Nessun nuovo hardware, interazione UI o interop Apple↔JVM attestato.
 
 **Unico prossimo blocco:** leggere da concluso il checkpoint Apple completo/correggere prima di estendere, poi primo invio con snapshot autenticato multipartecipante e ricevute esatte per destinatario, nuova capability/continuazione senza cambiare implicitamente LTX. Recupero, controllo persistente/reconnect, scelta operativa, paginazione roster e UI completa ancora obbligatori; roster non equivale a consenso globale o presenza. Fase 0 chiusa; fase 1/hardware residui Android ↔ Windows, iPhone/Mac Intel/Apple Silicon e gate UI restano aperti. Nessun polling.
+
+**Consegnato:** `ba5e9298626f8d4fed0a3d8198acbb37d61e66b7`, 19 file, unico commit/push. Dispatch [iOS completo 40118469089](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40118469089) accettato, bootstrap_interop=false, esito non letto. Unica lista post-push filtrata per SHA abbreviato vuota: nessun ricontrollo, stato ordinario non verificato né cancellazione di run non identificate; [controlli del commit](https://github.com/zanzaro-mirco/lantern-share/commit/ba5e9298626f8d4fed0a3d8198acbb37d61e66b7/checks). Nuovo Native/export/Swift/simulatore ancora da attestare, nessun polling. Note locali con PASSAGGIO da raggruppare al prossimo codice, niente secondo push Markdown.
 
 ## Evidenze precedenti — B7, roster autenticato Node/UI
 

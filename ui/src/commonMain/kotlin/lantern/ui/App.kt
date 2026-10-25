@@ -46,6 +46,7 @@ import lantern.domain.GroupTextController
 import lantern.domain.GroupTextState
 import lantern.domain.GroupTextFailure
 import lantern.domain.GroupRosterController
+import lantern.domain.GroupRosterTextController
 import lantern.domain.GroupRosterState
 import lantern.domain.GroupRosterFailure
 import lantern.domain.SignedGroupText
@@ -154,9 +155,13 @@ internal fun GroupTextPanel(controller: GroupTextController, peers: List<Peer>) 
     var body by remember { mutableStateOf("") }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Testo di gruppo · primo trasferimento", style = MaterialTheme.typography.titleMedium)
+            Text("Testo di gruppo · consegna esplicita", style = MaterialTheme.typography.titleMedium)
             Text("Gruppo già ammesso richiesto. Su un dispositivo scegli Invia, sull'altro Ricevi (120 s). Non usa l'associazione PoC.")
             OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth(), label = { Text("Testo di gruppo (massimo 8192 byte)") })
+            if (controller is GroupRosterTextController) {
+                RosterTextActions(controller, peers, body)
+                Text("Percorso iniziale a due dispositivi, disponibile anche su iPhone:")
+            }
             for (peer in peers) {
                 OutlinedButton(onClick = { controller.sendGroupText(peer, body) }, enabled = ContentLimits.isValidText(body)) {
                     Text("Invia testo gruppo a ${peer.name}")
@@ -178,7 +183,7 @@ internal fun GroupTextPanel(controller: GroupTextController, peers: List<Peer>) 
                 is GroupTextState.Failed -> {
                     Text(when (current.reason) {
                         GroupTextFailure.UNAVAILABLE -> "Gruppo o archivio non disponibile/verificabile."
-                        GroupTextFailure.ROSTER_REQUIRED -> "Serve il roster autenticato della sessione utilizzata; questo percorso iniziale non lo ricostruisce."
+                        GroupTextFailure.ROSTER_REQUIRED -> "Snapshot dei partecipanti mancante o incompatibile: nessun destinatario può essere omesso."
                         GroupTextFailure.SESSION_CHOICE_REQUIRED -> "Più sessioni utilizzate: serve una scelta esplicita."
                         GroupTextFailure.FAILED -> "Trasferimento interrotto o incompatibile; nessuna ricezione remota confermata."
                     })
@@ -189,6 +194,35 @@ internal fun GroupTextPanel(controller: GroupTextController, peers: List<Peer>) 
             }
             Text("Percorso iniziale esplicito, non chat multipartecipante completa o recupero. Stop elimina la sessione attiva, non la storia salvata.")
             if (state != GroupTextState.Idle) TextButton(onClick = controller::cancelGroup) { Text("Chiudi trasferimento gruppo") }
+        }
+    }
+}
+
+@Composable
+private fun RosterTextActions(controller: GroupRosterTextController, peers: List<Peer>, body: String) {
+    val last by controller.lastRosterTextDelivery.collectAsState()
+    var messageId by remember { mutableStateOf("") }
+    LaunchedEffect(last?.message?.content?.id) { last?.let { messageId = it.message.content.id } }
+    Text("Il testo include tutti i partecipanti noti della sessione, anche offline. Ogni scelta consegna al solo dispositivo indicato.")
+    for (peer in peers) {
+        OutlinedButton(onClick = { controller.sendRosterText(peer, body) }, enabled = ContentLimits.isValidText(body)) {
+            Text("Nuovo testo a ${peer.name}")
+        }
+        OutlinedButton(onClick = { controller.receiveRosterText(peer) }) { Text("Ricevi da ${peer.name}") }
+    }
+    last?.let { saved ->
+        Text("Ultima copia: ${saved.message.content.id}")
+        Text("Salvata su ${saved.receivedBy.size}/${saved.message.content.recipients.size} dispositivi, incluso il mittente.")
+        for (id in saved.message.content.recipients) {
+            Text("${peers.firstOrNull { it.id == id }?.name ?: id}: ${if (id in saved.receivedBy) "salvato" else "ricevuta mancante"}")
+        }
+    }
+    OutlinedTextField(messageId, { messageId = it.trim() }, Modifier.fillMaxWidth(),
+        label = { Text("ID copia già salvata da questo mittente") })
+    Text("Per consegnare la stessa copia a un altro destinatario, usa il suo ID e scegli Ricevi sull'altro dispositivo. Servono stessa sessione attiva e stessi partecipanti; la storia non riattiva una sessione.")
+    for (peer in peers) {
+        OutlinedButton(onClick = { controller.deliverRosterText(peer, messageId) }, enabled = messageId.isNotBlank()) {
+            Text("Consegna copia a ${peer.name}")
         }
     }
 }

@@ -1,4 +1,4 @@
-# Passaggio di consegne — 24 ottobre 2026
+# Passaggio di consegne — 25 ottobre 2026
 
 ## Ripartenza rapida
 
@@ -6,7 +6,17 @@ Progetto: `C:\Users\mzanz\codex_projects\lantern-share`. Repository pubblico: ht
 
 Identità, SQLDelight, TLS, associazione e testo/ricevute iOS sono compilati e verificati in simulatore dalla CI `08dfb86`: **non ricominciare il debug già risolto**. CI Android/desktop dello stesso commit riuscita. 19 XCTest, inclusi nove di messaggistica; salvataggio/riapertura verificati in simulatore, non su hardware Apple. Il collegamento Android ↔ Windows funziona; il crash `NetworkOnMainThreadException` durante “Blocca localmente” è corretto e verificato localmente, ma attende riprova sul telefono.
 
-## Ripartenza corrente — B7, ingresso roster Bonjour/iOS
+## Ripartenza corrente — B8, consegna testo con roster completo
+
+Verificato da concluso `ba5e929`: [iOS completo 40118469089](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40118469089) success, framework/export, test Native e simulatore eseguiti; bootstrap soltanto compilato, interop opt-in skipped. B7 verificato automaticamente anche Apple, non hardware. Una lettura compatta, nessun polling; note post-push precedenti preservate sotto.
+
+**Nuovo ingresso Node/UI Android/desktop:** Nuovo testo/Ricevi verifica nello stesso TLS anche LRO/LRA e congela tutti i partecipanti, offline inclusi. Consegna copia per ID riusa busta/firma/contatori esatti soltanto dall'autore e con sessione/snapshot corrente identici; ACK e stato salvato/mancante per dispositivo, duplicati idempotenti. Un ingresso successivo non riceve copie retroattive; snapshot mutato o stop di tutti non riattivano la storia. Percorso iniziale a due/iOS conservato, nessun fallback. [ADR 018](docs/ADR-018-CONSEGNA-TESTO-CON-ROSTER.md); niente schema/versioni/lock/workflow nuovi.
+
+Locale definitivo: checkpoint integrato **3m 41s success**, **1164 test passati**, un mDNS opt-in skipped, zero failure/error. APK Android e classi desktop compilati; TLS/P-256/SQLite riaperto veri, copie e ricevute persistenti. Comando/conteggi in STATO. Nessun nuovo hardware/interazione UI o runtime Apple del nuovo codice attestato da Windows.
+
+**Unico prossimo blocco:** leggere CI conclusa/correggere, poi stesso ingresso e consegna di copia Bonjour/iOS con core condiviso e checkpoint Native/simulatore raggruppato. Nessun EOF reader diagnostico fra LRA e testo. Distribuzione automatica, recupero con roster storici/da altri autori, controllo persistente/reconnect, scelta operativa, paginazione e UI completa restano aperti. Fase 1/hardware e gate UI invariati; nessun polling o push intermedio.
+
+## Evidenze precedenti — B7, ingresso roster Bonjour/iOS
 
 Checkpoint `99c5cf6`: [iOS ordinario 39983832282](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39983832282) e [PoC 39983832329](https://github.com/zanzaro-mirco/lantern-share/actions/runs/39983832329) conclusi success, unica lettura, nessun polling. Ordinario Apple compila soltanto; ultimo runtime attestato resta `fcec8f7`, 182 XCTest. Note post-push precedenti preservate sotto.
 
@@ -15,6 +25,8 @@ Stessa azione **Sincronizza roster** integrata in iPhone/pannello Compose: codec
 Locale definitivo: protocollo JVM/Android **421/385**, UI **13/13**, **832 passati**, zero failure/error/skipped, APK/classi desktop compilati in 13 s. Controllo aggiuntivo delle facciate Kotlin sul compilatore host, NON Native/export/Swift. **Nove nuovi XCTest mantenuti predisposti**, non eseguiti su Windows; nuovo checkpoint completo Apple necessario, nessun hardware/interop Apple↔JVM attestato.
 
 **Unico prossimo blocco:** leggere il checkpoint Apple completo da concluso/correggere prima di estendere; poi primo invio con snapshot autenticato multipartecipante, destinatari congelati completi e ricevute per destinatario, nuova continuazione negoziata senza alterare implicitamente LTX. Recupero/reconnect, scelta operativa, paginazione e UI completa restano aperti; fase 1/hardware e gate UI invariati. Push unico raggruppato, nessun polling o run duplicata.
+
+Consegnato `ba5e9298626f8d4fed0a3d8198acbb37d61e66b7`, 19 file, unico commit/push. Avviato [iOS completo 40118469089](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40118469089), bootstrap_interop=false, esito non letto. L'unica lista post-push filtrata per hash abbreviato non ha restituito run: nessun secondo tentativo o stato ordinario attestato, nessuna cancellazione di run non identificate. [Controlli del commit](https://github.com/zanzaro-mirco/lantern-share/commit/ba5e9298626f8d4fed0a3d8198acbb37d61e66b7/checks). Nessun polling; nuovo Native/Swift/simulatore ancora da verificare. Nota con STATO locale da raggruppare al prossimo codice, niente secondo push documentale.
 
 ## Evidenze precedenti — B7, roster autenticato Node/UI
 

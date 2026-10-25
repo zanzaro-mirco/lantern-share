@@ -2,13 +2,13 @@ package lantern.protocol
 
 import lantern.domain.SignedGroupText
 
-/** Initial direct transfer scope; not a reusable permission or a multiparty roster protocol. */
-data class GroupTextTransferContext(val groupId: String, val sessionId: String, val senderId: String, val recipientId: String) {
-    init {
-        require(listOf(groupId, sessionId, senderId, recipientId).all(Wire::isFingerprint))
-        require(senderId != recipientId)
-    }
-    val recipients: Set<String> get() = setOf(senderId, recipientId)
+/** Frozen recipients supplied by the authenticated live exchange, never inferred from a message. */
+interface GroupTextDeliveryContext {
+    val groupId: String
+    val sessionId: String
+    val senderId: String
+    val recipientId: String
+    val recipients: Set<String>
 
     fun checkMessage(message: SignedGroupText) {
         val c = message.content
@@ -16,6 +16,16 @@ data class GroupTextTransferContext(val groupId: String, val sessionId: String, 
             "Group text transfer context mismatch"
         }
     }
+}
+
+/** Initial direct transfer scope; not a reusable permission or a multiparty roster protocol. */
+data class GroupTextTransferContext(override val groupId: String, override val sessionId: String,
+    override val senderId: String, override val recipientId: String) : GroupTextDeliveryContext {
+    init {
+        require(listOf(groupId, sessionId, senderId, recipientId).all(Wire::isFingerprint))
+        require(senderId != recipientId)
+    }
+    override val recipients: Set<String> get() = setOf(senderId, recipientId)
 }
 
 /** Opt-in only: LGM -> LSN -> matching scope -> one signed text -> exact post-commit ACK. */
