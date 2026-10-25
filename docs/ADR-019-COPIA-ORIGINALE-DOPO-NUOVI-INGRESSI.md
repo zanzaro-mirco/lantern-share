@@ -2,6 +2,8 @@
 
 Data: 25 ottobre 2026. Seguito di [ADR 018](ADR-018-CONSEGNA-TESTO-CON-ROSTER.md); stessi ingressi Node/UI Android/desktop e Bonjour/iOS.
 
+> Evoluzione: l'inoltro della stessa busta da un destinatario non autore è una modalità distinta, [ADR 020](ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md). Le regole sotto restano quelle della copia dell'autore.
+
 ## Risultato e accettazione
 
 **Consegna copia** dell'autore funziona anche quando, dopo la firma, nella stessa
@@ -65,7 +67,7 @@ separata, non presa qui.
 
 Core Kotlin per negoziazione, scope, contesto e ACK; Node e owner JVM per
 capacità e continuazione; facciate iOS Kotlin e owner Swift come in ADR 018.
-Esclusi: recupero da altri autori, distribuzione automatica, connessione
+Esclusi: inoltro da altri destinatari (poi ADR 020), distribuzione automatica, connessione
 persistente, paginazione, scelta fra sessioni usate e UI completa. Evidenze e
 limiti di verifica in [STATO](../STATO_SVILUPPO.md); fase 1/hardware e gate UI
 invariati.

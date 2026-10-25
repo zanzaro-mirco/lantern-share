@@ -40,6 +40,8 @@ final class GroupAdmissionSession {
     private var rosterExchange: IosGroupRosterExchange?
     private var rosterFailure: IosGroupRosterFailure = .failed
     private var textTransfer: IosGroupTextTransfer?
+    /** Local preflight choice for a saved copy: forwarding a received text instead of an authored one. */
+    private var relayedCopy = false
     private var textFailure: IosGroupTextFailure = .failed
     private var committing = false
     private var drained = false
@@ -78,8 +80,9 @@ final class GroupAdmissionSession {
                 _ = try GroupMembership.prepare(identity: identity, persistence: persistence)
                 guard try membershipUnchanged() else { fail(.unavailable); return }
                 if let messageID = selection.messageId {
-                    try IosGroupRosterTextProtocol.shared.checkSavedCopy(persistence: persistence, id: messageID,
-                        groupId: anchor.groupId, authorId: identity.id, recipientId: selection.peerId)
+                    // Authored or received copy; never back to its author. Decides the requested copy mode.
+                    relayedCopy = try IosGroupRosterTextProtocol.shared.checkCopyRelayed(persistence: persistence, id: messageID,
+                        groupId: anchor.groupId, localId: identity.id, recipientId: selection.peerId)
                 }
                 if selection.mode == .session || selection.mode == .text || selection.mode == .roster || selection.mode == .rosterText {
                     sessionOffer = try sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
@@ -168,7 +171,7 @@ final class GroupAdmissionSession {
             switch selection.mode {
             case .rosterText:
                 capabilities = IosGroupRosterTextProtocol.shared.capabilities(sending: selection.sending,
-                    savedCopy: selection.messageId != nil)
+                    savedCopy: selection.messageId != nil && !relayedCopy, relayedCopy: relayedCopy)
             case .roster:
                 capabilities = IosGroupRosterProtocol.shared.capabilities()
             case .text:
@@ -298,6 +301,11 @@ final class GroupAdmissionSession {
         let sending = selection.sending
         let outgoing: (IosGroupTextTransfer) throws -> IosGroupTextEnvelope = { [weak self] transfer in
             guard let self, self.textContextCurrent() else { throw TextError.expired }
+            if let id = self.selection.messageId, transfer.relayedCopy {
+                return try GroupMembership.withVerifier { verify in
+                    try transfer.prepareRelayed(id: id, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, verify: verify)
+                }
+            }
             if let id = self.selection.messageId {
                 return try transfer.prepareSaved(id: id, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) },
                     verify: { bytes, signature in
@@ -312,6 +320,11 @@ final class GroupAdmissionSession {
         }
         let incoming: (IosGroupTextTransfer, KotlinByteArray, SecCertificate) throws -> IosGroupTextEnvelope = { [weak self] transfer, payload, certificate in
             guard let self, self.textContextCurrent() else { throw TextError.expired }
+            if transfer.relayedCopy { // The author's signature, checked against its roster join, not this TLS peer.
+                return try GroupMembership.withVerifier { verify in
+                    try transfer.receiveRelayed(payload: payload, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) }, verify: verify)
+                }
+            }
             return try transfer.receive(payload: payload, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) },
                 verify: { bytes, signature in
                     KotlinBoolean(bool: AppleIdentity.verify(certificate: certificate, message: Self.data(bytes), signature: signature))
@@ -336,12 +349,12 @@ final class GroupAdmissionSession {
                 }, merge: { [weak self] payload, certificate in
                     guard let self else { throw TextError.expired }
                     return try self.mergeRoster(payload, certificate: certificate)
-                }, selectRoster: { [weak self] snapshot, digest, savedCopy in
+                }, selectRoster: { [weak self] snapshot, digest, savedCopy, relayedCopy in
                     guard let self, self.textContextCurrent(), let exchange = self.rosterExchange else { throw TextError.expired }
                     let context = try exchange.installForText(snapshot: snapshot,
                         senderId: sending ? self.identity.id : self.selection.peerId,
                         recipientId: sending ? self.selection.peerId : self.identity.id, digest: digest, savedCopy: savedCopy,
-                        isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
+                        relayedCopy: relayedCopy, isCurrent: { KotlinBoolean(bool: self.textContextCurrent()) })
                     let transfer = IosGroupTextTransfer(persistence: self.persistence, memory: self.sessionMemory,
                         scope: context, localIdentity: self.identity.id)
                     self.textTransfer = transfer

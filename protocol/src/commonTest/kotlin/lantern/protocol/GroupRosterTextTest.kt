@@ -2,8 +2,11 @@ package lantern.protocol
 
 import lantern.domain.GroupAdmissionClaim
 import lantern.domain.GroupTextContent
+import lantern.domain.GroupTextCounters
+import lantern.domain.GroupTextRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.SignedGroupText
+import lantern.domain.StoredGroupText
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -126,6 +129,86 @@ class GroupRosterTextTest {
         assertFails { GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(participant(a, true, setOf(copy)), receiver, 0), true) }
         assertFails { GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(receiver, participant(a, true, setOf(copy)), 0), false) }
         assertTrue(GroupRosterTextCodec.sendsFirst(ProtocolHandshakeOffers(author, receiver, 0), true))
+    }
+
+    @Test
+    fun relayedCopyComesFromAnotherFrozenRecipientAndUsesTheAuthorsRosterCertificate() {
+        val later = "9".repeat(64)
+        val live = GroupSessionRoster(anchor, session, listOf(join(c), join(a), join(b), join(later)), true)
+        val relay = GroupRosterTextContext(live, b, c, digest, relayedCopy = true)
+        val authorCopy = GroupRosterTextContext(live, b, c, digest, savedCopy = true)
+        val original = message(setOf(a, b, c))
+        relay.checkMessage(original)
+        assertEquals(setOf(a, b, c), relay.expectedRecipients(original))
+        assertEquals(a, relay.authorCertificate(original).identity)
+        val scope = GroupRosterTextCodec.scope(relay)
+        assertEquals(324, scope.size)
+        assertContentEquals(byteArrayOf(76, 84, 67, 3), scope.copyOfRange(0, 4))
+        assertContentEquals(GroupRosterTextCodec.scope(authorCopy).copyOfRange(4, 324), scope.copyOfRange(4, 324))
+        GroupRosterTextCodec.acknowledgement(relay, original, digest)
+        // Distinct modes: neither an author copy nor a new text fits a relayed envelope.
+        assertFails { authorCopy.checkMessage(original) }
+        assertFails { GroupRosterTextContext(live, b, c, digest).checkMessage(original) }
+        assertFails { authorCopy.authorCertificate(original) }
+        assertFails { GroupRosterTextContext(live, b, c, digest, savedCopy = true, relayedCopy = true) }
+        // Author as relay, back to the author, later joiner, relay outside the snapshot, author unknown live.
+        assertFails { GroupRosterTextContext(live, a, c, digest, relayedCopy = true).checkMessage(original) }
+        assertFails { GroupRosterTextContext(live, b, a, digest, relayedCopy = true).checkMessage(original) }
+        assertFails { GroupRosterTextContext(live, b, later, digest, relayedCopy = true).checkMessage(original) }
+        assertFails { GroupRosterTextContext(live, later, c, digest, relayedCopy = true).checkMessage(original) }
+        assertFails { relay.checkMessage(message(setOf(a, c))) }
+        assertFails { GroupRosterTextContext(GroupSessionRoster(anchor, session, listOf(join(b), join(c)), true), b, c, digest,
+            relayedCopy = true).checkMessage(original) }
+    }
+
+    @Test
+    fun relayedCopyIsAnExplicitSenderRequirementExclusiveWithAuthorCopies() {
+        val required = GroupRosterTextCodec.requiredFeatures
+        val copy = GroupRosterTextCodec.COPY_FEATURE
+        val relay = GroupRosterTextCodec.RELAY_FEATURE
+        fun participant(id: String, sender: Boolean, supported: Set<String> = emptySet(), demanded: Set<String> = emptySet()) =
+            ProtocolHandshakeParticipant(id, digest, ProtocolCapabilities(1, required + supported +
+                if (sender) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE, required + demanded))
+        val relayer = participant(b, true, setOf(relay), setOf(relay))
+        val receiver = participant(c, false, setOf(copy, relay))
+        assertTrue(GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(relayer, receiver, 0), true))
+        assertTrue(GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(receiver, relayer, 0), false))
+        assertFalse(GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(relayer, receiver, 0), true))
+        val author = participant(a, true, setOf(copy), setOf(copy))
+        assertFalse(GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(author, receiver, 0), true))
+        assertTrue(GroupRosterTextCodec.savedCopy(ProtocolHandshakeOffers(author, receiver, 0), true))
+        assertFalse(GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(participant(b, true), receiver, 0), true))
+        // ADR 019 receivers lack the relay feature; supported-only, receiver-demanded and dual requests fail.
+        assertFails { GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(relayer, participant(c, false, setOf(copy)), 0), true) }
+        assertFails { GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(participant(b, true, setOf(relay)), receiver, 0), true) }
+        assertFails { GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(participant(b, true),
+            participant(c, false, setOf(copy, relay), setOf(relay)), 0), true) }
+        assertFails { GroupRosterTextCodec.relayedCopy(ProtocolHandshakeOffers(participant(b, true, setOf(copy, relay), setOf(copy, relay)),
+            receiver, 0), true) }
+    }
+
+    @Test
+    fun receiverAcceptsAnotherTlsSenderOnlyAsNegotiatedRelay() {
+        val saved = mutableListOf<SignedGroupText>()
+        val repository = object : GroupTextRepository {
+            override fun reserveGroupTextCounters(groupId: String, localIdentity: String) = GroupTextCounters(1, 1)
+            override fun saveGroupText(message: SignedGroupText, localIdentity: String) = saved.add(message)
+            override fun groupText(id: String): StoredGroupText? = null
+            override fun groupTextHistory(groupId: String, sessionId: String, limit: Int) = emptyList<StoredGroupText>()
+            override fun acknowledgeGroupText(message: SignedGroupText, recipientId: String) = false
+            override fun groupSessionWasUsed(groupId: String, sessionId: String) = false
+        }
+        val original = message(setOf(a, b, c))
+        fun receive(peer: String, local: String, relayed: Boolean) = GroupTextReceiver(repository).receive(original,
+            anchor.groupId, session, local, peer, setOf(a, b, c), { true }, relayed) { _, _ -> true }
+        assertFails { receive(b, c, false) } // A direct delivery still comes from the author only.
+        assertFails { receive(a, c, true) }
+        assertFails { receive(b, a, true) }
+        assertFails { receive("9".repeat(64), c, true) }
+        assertTrue(saved.isEmpty())
+        assertEquals(c, receive(b, c, true).recipientId)
+        assertEquals(c, receive(a, c, false).recipientId)
+        assertEquals(2, saved.size)
     }
 
     @Test

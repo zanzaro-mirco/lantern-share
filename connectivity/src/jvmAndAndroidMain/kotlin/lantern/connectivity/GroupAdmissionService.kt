@@ -117,6 +117,8 @@ internal class GroupAdmissionService(
         var sessionOffer: GroupSessionOffer? = null
         @Volatile var attemptedMessageId: String? = null
         @Volatile var textFailure = GroupTextFailure.FAILED
+        /** Decided by the local preflight from the saved copy: forwarding a received text, not authoring it. */
+        @Volatile var relayedCopy = false
         @Volatile var rosterFailure = GroupRosterFailure.FAILED
     }
 
@@ -184,9 +186,12 @@ internal class GroupAdmissionService(
                     if (mode == GroupSelectionMode.TEXT || mode == GroupSelectionMode.ROSTER_TEXT) {
                         check(store is GroupTextRepository) { "Group text repository unavailable" }
                         if (messageId != null) {
-                            val saved = checkNotNull(store.groupText(messageId)).message
-                            check(saved.content.authorId == identity.id && saved.content.groupId == selection.anchor?.groupId &&
-                                peer.id in saved.content.recipients) { "Not an authored copy for this recipient" }
+                            val saved = checkNotNull(store.groupText(messageId))
+                            val content = saved.message.content
+                            // The author or another frozen recipient that durably saved it; never back to the author.
+                            check(content.groupId == selection.anchor?.groupId && identity.id in saved.receivedBy &&
+                                peer.id in content.recipients && peer.id != content.authorId) { "Not a saved copy for this recipient" }
+                            selection.relayedCopy = content.authorId != identity.id
                         }
                     }
                     if (mode == GroupSelectionMode.SESSION || mode == GroupSelectionMode.TEXT || mode == GroupSelectionMode.ROSTER || mode == GroupSelectionMode.ROSTER_TEXT) {
@@ -263,10 +268,13 @@ internal class GroupAdmissionService(
             val capabilities = if (selection.mode == GroupSelectionMode.ROSTER_TEXT) {
                 val required = GroupRosterTextCodec.requiredFeatures
                 val role = if (selection.sending) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE
-                // A saved copy is an explicit author requirement; receivers accept either continuation.
+                // A saved copy is an explicit author or relay requirement; receivers accept every continuation.
                 val copy = setOf(GroupRosterTextCodec.COPY_FEATURE)
-                if (selection.messageId != null) ProtocolCapabilities(1, required + role + copy, required + copy)
-                else if (!selection.sending) ProtocolCapabilities(1, required + role + copy, required)
+                val relay = setOf(GroupRosterTextCodec.RELAY_FEATURE)
+                if (selection.messageId != null) {
+                    val mode = if (selection.relayedCopy) relay else copy
+                    ProtocolCapabilities(1, required + role + mode, required + mode)
+                } else if (!selection.sending) ProtocolCapabilities(1, required + role + copy + relay, required)
                 else ProtocolCapabilities(1, required + role, required)
             } else if (selection.mode == GroupSelectionMode.TEXT) {
                 val required = membershipFeatures + GroupTextTransferCodec.FEATURE
@@ -388,23 +396,33 @@ internal class GroupAdmissionService(
             // Conservative before a potentially ambiguous commit. Never clear on failure/cancel.
             localSession = LocalSession(anchor, selection.membership, held.candidate.copy(used = true), held.participants, held.roster)
         }
+        fun verifyAuthor(context: GroupRosterTextContext, message: SignedGroupText, bytes: ByteArray, signature: String): Boolean {
+            checkContext()
+            val certificate = context.authorCertificate(message)
+            val valid = GroupRootAdoptionJournalInspector.withVerifier { verify -> verify(certificate, bytes, signature) }
+            checkContext()
+            return valid
+        }
         fun outgoing(context: GroupTextDeliveryContext): SignedGroupText {
             checkContext()
             val saved = selection.messageId?.let { checkNotNull(texts.groupText(it)).message }
             val signed = if (saved != null) {
                 // A local copy is data, not permission. The negotiated copy scope requires the same
                 // session and its frozen snapshot inside today's verified roster, never re-signed.
-                check(context is GroupRosterTextContext && context.savedCopy)
+                check(context is GroupRosterTextContext && context.relayedCopy == selection.relayedCopy &&
+                    (context.savedCopy || context.relayedCopy))
                 try {
                     context.checkMessage(saved)
                 } catch (mismatch: IllegalArgumentException) {
                     selection.textFailure = GroupTextFailure.ROSTER_REQUIRED
                     throw mismatch
                 }
-                check(Identity.verify(identity.certificate, GroupTextCodec.signedBytes(saved.content), saved.signature))
+                val bytes = GroupTextCodec.signedBytes(saved.content)
+                check(if (context.relayedCopy) verifyAuthor(context, saved, bytes, saved.signature)
+                    else Identity.verify(identity.certificate, bytes, saved.signature))
                 saved
             } else {
-                check(context !is GroupRosterTextContext || !context.savedCopy)
+                check(context !is GroupRosterTextContext || (!context.savedCopy && !context.relayedCopy))
                 val counters = texts.reserveGroupTextCounters(anchor.groupId, identity.id)
                 val content = GroupTextContent(UUID.randomUUID().toString(), anchor.groupId, context.sessionId, identity.id,
                     counters.authorSequence, counters.logicalTime, context.recipients, checkNotNull(selection.text))
@@ -431,11 +449,16 @@ internal class GroupAdmissionService(
                     return texts.saveGroupText(message, localIdentity)
                 }
             }
+            val relayed = context is GroupRosterTextContext && context.relayedCopy
             return GroupTextReceiver(inboxStore).receive(received, anchor.groupId, context.sessionId, identity.id, selection.peer.id,
                 context.expectedRecipients(received), {
                     checkContext()
                     true
-                }) { bytes, signature -> Identity.verify(certificate, bytes, signature) }
+                }, relayed) { bytes, signature ->
+                    // A relay forwards the author's signature: verify it against the author's roster join, not this TLS peer.
+                    if (relayed) verifyAuthor(context as GroupRosterTextContext, received, bytes, signature)
+                    else Identity.verify(certificate, bytes, signature)
+                }
         }
         fun completed(saved: SignedGroupText) {
             checkContext()

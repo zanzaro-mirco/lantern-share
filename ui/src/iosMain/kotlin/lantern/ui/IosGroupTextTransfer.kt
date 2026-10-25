@@ -48,6 +48,8 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
         private set
     var attemptedMessageId: String? = null
         private set
+    /** Negotiated relay of another author's saved copy; verified with the author's roster certificate. */
+    val relayedCopy: Boolean get() = rosterContext?.relayedCopy == true
 
     init { require(localIdentity == context.senderId || localIdentity == context.recipientId) }
 
@@ -56,7 +58,8 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
         val roster = rosterContext
         if (roster != null) {
             GroupRosterTextCodec.sendsFirst(offers.offers, sending)
-            require(GroupRosterTextCodec.savedCopy(offers.offers, sending) == roster.savedCopy)
+            require(GroupRosterTextCodec.savedCopy(offers.offers, sending) == roster.savedCopy &&
+                GroupRosterTextCodec.relayedCopy(offers.offers, sending) == roster.relayedCopy)
         } else GroupTextTransferCodec.sendsFirst(offers.offers, sending)
         require(localIdentity == offers.localIdentity && membership.evidence.anchor == scope.anchor &&
             context.groupId == scope.anchor.groupId && context.senderId == (if (sending) offers.localIdentity else offers.remoteIdentity) &&
@@ -73,6 +76,19 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
     @Throws(Exception::class)
     fun prepareSaved(id: String, isCurrent: () -> Boolean, verify: (ByteArray, String) -> Boolean): IosGroupTextEnvelope {
         require(localIdentity == context.senderId && rosterContext?.savedCopy == true)
+        return sendSaved(id, isCurrent) { _, bytes, signature -> verify(bytes, signature) }
+    }
+
+    /** A received copy forwarded to another frozen recipient: same bytes, author's roster certificate, no counters. */
+    @Throws(Exception::class)
+    fun prepareRelayed(id: String, isCurrent: () -> Boolean,
+                       verify: (IosGroupAdmissionCertificate, ByteArray, String) -> Boolean?): IosGroupTextEnvelope {
+        require(localIdentity == context.senderId && relayedCopy)
+        return sendSaved(id, isCurrent) { message, bytes, signature -> verifyAuthor(message, bytes, signature, isCurrent, verify) }
+    }
+
+    private fun sendSaved(id: String, isCurrent: () -> Boolean,
+                          verify: (SignedGroupText, ByteArray, String) -> Boolean): IosGroupTextEnvelope {
         current(isCurrent)
         val message = checkNotNull(persistence.groupTexts.groupText(id)).message
         // Same session, frozen snapshot inside today's verified roster; later joiners never added.
@@ -83,7 +99,7 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
             throw mismatch
         }
         GroupTextCodec.encode(message)
-        check(verify(GroupTextCodec.signedBytes(message.content), message.signature))
+        check(verify(message, GroupTextCodec.signedBytes(message.content), message.signature))
         current(isCurrent)
         memory.markTextUsed(scope)
         attemptedMessageId = id
@@ -95,7 +111,7 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
     @Throws(Exception::class)
     fun prepareOutgoing(id: String, body: String, isCurrent: () -> Boolean,
                         sign: (ByteArray) -> String?): IosGroupTextEnvelope {
-        require(localIdentity == context.senderId && rosterContext?.savedCopy != true)
+        require(localIdentity == context.senderId && rosterContext?.savedCopy != true && !relayedCopy)
         current(isCurrent)
         val counters = persistence.groupTexts.reserveGroupTextCounters(context.groupId, localIdentity)
         current(isCurrent)
@@ -114,6 +130,19 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
     @Throws(Exception::class)
     fun receive(payload: ByteArray, isCurrent: () -> Boolean,
                 verify: (ByteArray, String) -> Boolean): IosGroupTextEnvelope {
+        require(!relayedCopy) { "A relayed copy is verified with the author's roster certificate" }
+        return receiveWith(payload, isCurrent) { _, bytes, signature -> verify(bytes, signature) }
+    }
+
+    @Throws(Exception::class)
+    fun receiveRelayed(payload: ByteArray, isCurrent: () -> Boolean,
+                       verify: (IosGroupAdmissionCertificate, ByteArray, String) -> Boolean?): IosGroupTextEnvelope {
+        require(relayedCopy)
+        return receiveWith(payload, isCurrent) { message, bytes, signature -> verifyAuthor(message, bytes, signature, isCurrent, verify) }
+    }
+
+    private fun receiveWith(payload: ByteArray, isCurrent: () -> Boolean,
+                            verify: (SignedGroupText, ByteArray, String) -> Boolean): IosGroupTextEnvelope {
         require(localIdentity == context.recipientId)
         val message = GroupTextCodec.decode(payload)
         context.checkMessage(message)
@@ -126,8 +155,19 @@ class IosGroupTextTransfer(private val persistence: IosPersistence, private val 
             }
         }
         GroupTextReceiver(store).receive(message, context.groupId, context.sessionId, localIdentity,
-            context.senderId, context.expectedRecipients(message), { current(isCurrent); true }, verify)
+            context.senderId, context.expectedRecipients(message), { current(isCurrent); true }, relayedCopy) { bytes, signature ->
+            verify(message, bytes, signature)
+        }
         return IosGroupTextEnvelope(message)
+    }
+
+    private fun verifyAuthor(message: SignedGroupText, bytes: ByteArray, signature: String, isCurrent: () -> Boolean,
+                             verify: (IosGroupAdmissionCertificate, ByteArray, String) -> Boolean?): Boolean {
+        current(isCurrent)
+        val certificate = IosGroupAdmissionCertificate(checkNotNull(rosterContext).authorCertificate(message))
+        val valid = checkNotNull(verify(certificate, bytes, signature))
+        current(isCurrent)
+        return valid
     }
 
     @Throws(Exception::class)

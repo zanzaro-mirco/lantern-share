@@ -212,14 +212,14 @@ private fun RosterTextActions(controller: GroupRosterTextController, peers: List
     }
     last?.let { saved ->
         Text("Ultima copia: ${saved.message.content.id}")
-        Text("Salvata su ${saved.receivedBy.size}/${saved.message.content.recipients.size} dispositivi, incluso il mittente.")
+        Text("Ricevute note a questo dispositivo: ${saved.receivedBy.size}/${saved.message.content.recipients.size}, incluso il mittente.")
         for (id in saved.message.content.recipients) {
             Text("${peers.firstOrNull { it.id == id }?.name ?: id}: ${if (id in saved.receivedBy) "salvato" else "ricevuta mancante"}")
         }
     }
     OutlinedTextField(messageId, { messageId = it.trim() }, Modifier.fillMaxWidth(),
-        label = { Text("ID copia già salvata da questo mittente") })
-    Text("Per consegnare la stessa copia a un altro destinatario, usa il suo ID e scegli Ricevi sull'altro dispositivo. Servono stessa sessione attiva e stessi partecipanti; la storia non riattiva una sessione.")
+        label = { Text("ID copia già salvata su questo dispositivo (scritta o ricevuta)") })
+    Text("Per consegnare la stessa copia a un altro destinatario originale, usa il suo ID e scegli Ricevi sull'altro dispositivo. Anche chi l'ha ricevuta può inoltrarla, non all'autore. Serve la stessa sessione attiva; la storia non riattiva una sessione.")
     for (peer in peers) {
         OutlinedButton(onClick = { controller.deliverRosterText(peer, messageId) }, enabled = messageId.isNotBlank()) {
             Text("Consegna copia a ${peer.name}")

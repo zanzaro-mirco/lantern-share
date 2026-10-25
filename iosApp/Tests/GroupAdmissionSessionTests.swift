@@ -545,8 +545,9 @@ final class GroupAdmissionSessionTests: XCTestCase {
                                         }, merge: { payload, certificate in
                                             XCTAssertEqual(SecCertificateCopyData(certificate) as Data, SecCertificateCopyData(higher.identity.certificate) as Data)
                                             return try self.mergeRoster(XCTUnwrap(rosterExchange), payload: payload, peer: higher)
-                                        }, selectRoster: { snapshot, digest, savedCopy in
+                                        }, selectRoster: { snapshot, digest, savedCopy, relayedCopy in
                                             XCTAssertFalse(savedCopy)
+                                            XCTAssertFalse(relayedCopy)
                                             let scope = try XCTUnwrap(rosterExchange).installForText(snapshot: snapshot,
                                                 senderId: lower.identity.id, recipientId: higher.identity.id, digest: digest,
                                                 isCurrent: { KotlinBoolean(bool: true) })
@@ -1466,6 +1467,40 @@ final class GroupAdmissionSessionTests: XCTestCase {
         beginRosterText(b, a, body: "Contatore dopo duplicati")
         let next = awaitText(b, a)
         try queue.sync { XCTAssertEqual(try b.store.groupText(id: next.messageId)?.envelope.authorSequence, 2) }
+    }
+
+    func testRosterTextOriginalRecipientRelaysSameEnvelopeToReturningFounder() throws {
+        let pair = try fixture(founderInitiates: true)
+        let a = pair.issuer, b = pair.member, c = try side()
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        beginRoster(a, b)
+        _ = awaitRoster(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        try connect(b, c)
+        try confirmBoth(b, c)
+        closeAndDrain(b); closeAndDrain(c)
+        beginRosterText(b, c, body: "Per A tramite C")
+        let first = awaitText(b, c)
+        let payload = try queue.sync { try data(XCTUnwrap(b.store.groupText(id: first.messageId)).envelope.payload()) }
+        closeAndDrain(b); closeAndDrain(c)
+        let prepared = queue.sync { c.prepared }
+        queue.sync { c.presentation.deliverRosterText(id: b.identity.id, name: "member", messageId: first.messageId) }
+        awaitState { c.presentation.textSnapshot().phase == .failed }
+        queue.sync { XCTAssertEqual(c.prepared, prepared) } // Never back to the author; rejected before its pin.
+        closeAndDrain(c)
+        queue.sync { a.sessionMemory.reset() }
+        try reopen(a)
+        // Negotiated relay scope: B's unchanged signature, checked against B's roster join, B itself absent.
+        try connect(c, a, rosterTextSender: c, rosterTextMessageId: first.messageId)
+        XCTAssertEqual(awaitText(c, a).messageId, first.messageId)
+        closeAndDrain(c); closeAndDrain(a)
+        try queue.sync {
+            XCTAssertEqual(try data(XCTUnwrap(a.store.groupText(id: first.messageId)).envelope.payload()), payload)
+            XCTAssertEqual(try a.store.groupText(id: first.messageId)?.receivedBy, [a.identity.id])
+            XCTAssertEqual(Set(try XCTUnwrap(c.store.groupText(id: first.messageId)).receivedBy), Set([a.identity.id, c.identity.id]))
+            XCTAssertEqual(Set(try XCTUnwrap(b.store.groupText(id: first.messageId)).receivedBy), Set([b.identity.id, c.identity.id]))
+        }
     }
 
     func testRosterTextLaterAdmissionKeepsOriginalCopyForFrozenRecipientsOnly() throws {

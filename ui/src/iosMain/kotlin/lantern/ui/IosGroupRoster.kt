@@ -89,11 +89,16 @@ class IosGroupRosterExchange internal constructor(private val memory: IosGroupSe
                        isCurrent: () -> Boolean): IosGroupTextContext =
         installForText(snapshot, senderId, recipientId, digest, savedCopy = false, isCurrent = isCurrent)
 
-    /** [savedCopy] comes from the negotiated HELLO and is checked again by the transfer binding. */
     @Throws(Exception::class)
     fun installForText(snapshot: IosGroupRosterSnapshot, senderId: String, recipientId: String, digest: String,
-                       savedCopy: Boolean, isCurrent: () -> Boolean): IosGroupTextContext {
-        val context = GroupRosterTextContext(snapshot.roster, senderId, recipientId, digest, savedCopy)
+                       savedCopy: Boolean, isCurrent: () -> Boolean): IosGroupTextContext =
+        installForText(snapshot, senderId, recipientId, digest, savedCopy, relayedCopy = false, isCurrent = isCurrent)
+
+    /** Both copy modes come from the negotiated HELLO and are checked again by the transfer binding. */
+    @Throws(Exception::class)
+    fun installForText(snapshot: IosGroupRosterSnapshot, senderId: String, recipientId: String, digest: String,
+                       savedCopy: Boolean, relayedCopy: Boolean, isCurrent: () -> Boolean): IosGroupTextContext {
+        val context = GroupRosterTextContext(snapshot.roster, senderId, recipientId, digest, savedCopy, relayedCopy)
         install(snapshot, isCurrent)
         return IosGroupTextContext(context, anchor, marker)
     }
@@ -138,15 +143,29 @@ object IosGroupRosterTextProtocol {
         require(saved.groupId == groupId && saved.authorId == authorId && recipientId in saved.recipients)
     }
 
+    /** Same preflight as Node: the author or another frozen recipient that saved it; true when relaying. */
+    @Throws(Exception::class)
+    fun checkCopyRelayed(persistence: IosPersistence, id: String, groupId: String, localId: String, recipientId: String): Boolean {
+        val saved = checkNotNull(persistence.groupTexts.groupText(id))
+        val content = saved.message.content
+        require(content.groupId == groupId && localId in saved.receivedBy && recipientId in content.recipients &&
+            recipientId != content.authorId)
+        return content.authorId != localId
+    }
+
     fun capabilities(sending: Boolean): String = capabilities(sending, savedCopy = false)
 
-    /** Same rule as Node: a copy author requires the copy feature, every receiver only supports it. */
-    fun capabilities(sending: Boolean, savedCopy: Boolean): String {
-        require(sending || !savedCopy)
+    fun capabilities(sending: Boolean, savedCopy: Boolean): String = capabilities(sending, savedCopy, relayedCopy = false)
+
+    /** Same rule as Node: a copy author or relay requires its feature, every receiver only supports both. */
+    fun capabilities(sending: Boolean, savedCopy: Boolean, relayedCopy: Boolean): String {
+        require((sending || !savedCopy && !relayedCopy) && !(savedCopy && relayedCopy))
         val features = GroupRosterTextCodec.requiredFeatures.toList()
         val role = if (sending) GroupTextTransferCodec.SENDER_FEATURE else GroupTextTransferCodec.RECEIVER_FEATURE
-        val copy = if (savedCopy || !sending) listOf(GroupRosterTextCodec.COPY_FEATURE) else emptyList()
-        val required = if (savedCopy) features + copy else features
+        val copy = if (!sending) listOf(GroupRosterTextCodec.COPY_FEATURE, GroupRosterTextCodec.RELAY_FEATURE)
+            else if (savedCopy) listOf(GroupRosterTextCodec.COPY_FEATURE)
+            else if (relayedCopy) listOf(GroupRosterTextCodec.RELAY_FEATURE) else emptyList()
+        val required = if (sending) features + copy else features
         fun json(values: List<String>) = values.joinToString(",", "[", "]") { "\"$it\"" }
         return "{\"version\":1,\"supportedFeatures\":${json(features + role + copy)},\"requiredFeatures\":${json(required)}}"
     }
@@ -154,4 +173,6 @@ object IosGroupRosterTextProtocol {
     fun sendsFirst(offers: IosHandshakeV1Offers, sending: Boolean): Boolean = GroupRosterTextCodec.sendsFirst(offers.offers, sending)
     @Throws(Exception::class)
     fun savedCopy(offers: IosHandshakeV1Offers, sending: Boolean): Boolean = GroupRosterTextCodec.savedCopy(offers.offers, sending)
+    @Throws(Exception::class)
+    fun relayedCopy(offers: IosHandshakeV1Offers, sending: Boolean): Boolean = GroupRosterTextCodec.relayedCopy(offers.offers, sending)
 }

@@ -155,6 +155,52 @@ class GroupTextTransferServiceTest {
     }
 
     @Test
+    fun originalRecipientRelaysSameSignedCopyToReturningRecipientWithoutAuthorOrRetroactiveRecipients() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        val fourth = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+            openDesktopRepository(f.directory.resolve("fourth.db")).use { dStore ->
+                f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+                    node(third, cStore).use { c -> node(fourth, dStore).use { d ->
+                        a.start(); b.start(); c.start(); d.start(); ports(a, b); ports(c, d)
+                        val roster = synchronize(a, b)
+                        a.stop() // A is an offline original recipient; B, the author, leaves after sending.
+                        admit(b, c)
+                        val sent = rosterTransfer(b, c, "Per A tramite C")
+                        assertEquals(roster.sessionId, sent.content.sessionId)
+                        assertEquals(setOf(f.a.id, f.b.id, third.id), sent.content.recipients.toSet())
+                        c.deliverRosterText(peer(b), sent.content.id) // Never back to the author.
+                        assertNull(assertIs<GroupTextState.Failed>(awaitText(c)).attemptedMessageId)
+                        admit(b, d)
+                        b.stop()
+                        c.deliverRosterText(peer(d), sent.content.id) // A later member is not a frozen recipient.
+                        assertNull(assertIs<GroupTextState.Failed>(awaitText(c)).attemptedMessageId)
+                        assertNull(dStore.groupText(sent.content.id))
+                        a.start(); ports(a, c) // Run memory lost; C retains the session roster with B's join.
+                        assertNull(aStore.groupText(sent.content.id))
+                        deliverCopy(c, a, sent.content.id, sent)
+                        assertEquals(setOf(f.a.id), assertNotNull(aStore.groupText(sent.content.id)).receivedBy)
+                        assertEquals(setOf(third.id, f.a.id), assertNotNull(cStore.groupText(sent.content.id)).receivedBy)
+                        assertEquals(setOf(third.id, f.a.id), assertNotNull(c.lastRosterTextDelivery.value).receivedBy)
+                        // The author is not informed: its receipts stay those of its own deliveries.
+                        assertEquals(setOf(f.b.id, third.id), assertNotNull(bStore.groupText(sent.content.id)).receivedBy)
+                        deliverCopy(c, a, sent.content.id, sent) // Exact duplicate stays idempotent.
+                        assertEquals(1, aStore.groupTextHistory(f.anchor.groupId, sent.content.sessionId).size)
+                        assertNull(dStore.groupText(sent.content.id))
+                        b.start(); ports(b, a)
+                        val next = rosterTransfer(b, a, "Contatore dell'autore invariato")
+                        assertEquals(2L, next.content.authorSequence)
+                        assertEquals(sent.content.sessionId, next.content.sessionId)
+                        for (store in listOf(aStore, bStore, cStore, dStore)) {
+                            assertTrue(store.trusted().isEmpty()); assertNull(store.pendingGroupAdoption())
+                        }
+                    } }
+                } } }
+            }
+        }
+    }
+
+    @Test
     fun rosterTextCannotFallBackToLegacyTextOrDiagnosticsAndStopCannotRestoreSessionFromSavedCopy() = withMembers { f ->
         f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
             a.start(); b.start(); ports(a, b)
@@ -172,7 +218,7 @@ class GroupTextTransferServiceTest {
             assertNotEquals(original.content.sessionId, fresh.content.sessionId)
             assertEquals(2L, fresh.content.authorSequence)
             assertNotNull(aStore.groupText(original.content.id)); assertNotNull(bStore.groupText(original.content.id))
-            // A received copy cannot be forwarded as if it were authored by B.
+            // A received copy is never relayed back to its author, as authored copy or relay.
             b.deliverRosterText(peer(a), original.content.id)
             assertIs<GroupTextState.Failed>(awaitText(b))
             assertNull(b.lastRosterTextDelivery.value)

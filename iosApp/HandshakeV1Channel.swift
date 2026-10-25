@@ -325,7 +325,7 @@ final class HandshakeV1Channel {
         verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
         propose: @escaping (IosGroupSessionOffer) throws -> IosGroupRosterSnapshot,
         merge: @escaping (KotlinByteArray, SecCertificate) throws -> IosGroupRosterSnapshot,
-        selectRoster: @escaping (IosGroupRosterSnapshot, String, Bool) throws -> IosGroupTextTransfer,
+        selectRoster: @escaping (IosGroupRosterSnapshot, String, Bool, Bool) throws -> IosGroupTextTransfer,
         outgoing: @escaping (IosGroupTextTransfer) throws -> IosGroupTextEnvelope,
         incoming: @escaping (IosGroupTextTransfer, KotlinByteArray, SecCertificate) throws -> IosGroupTextEnvelope,
         acknowledged: @escaping (IosGroupTextTransfer, IosGroupTextEnvelope, KotlinByteArray, String) throws -> Void,
@@ -336,13 +336,14 @@ final class HandshakeV1Channel {
         do {
             guard let offers = try bridge.offersForGroupAdmission(), try evidenceActive() else { return false }
             let first = try IosGroupRosterTextProtocol.shared.sendsFirst(offers: offers, sending: sending)
-            // Saved-copy mode is the author's negotiated HELLO requirement, never read from the envelope.
+            // Copy modes are the sender's negotiated HELLO requirement, never read from the envelope.
             let savedCopy = try IosGroupRosterTextProtocol.shared.savedCopy(offers: offers, sending: sending)
+            let relayedCopy = try IosGroupRosterTextProtocol.shared.relayedCopy(offers: offers, sending: sending)
             return beginRoster(membership: membership, offer: offer, awaitPeerClose: false,
                 verifyRemote: verifyRemote, propose: propose, merge: merge) { [weak self] snapshot in
                 guard let self, try self.evidenceActive() else { return }
                 let digest = SHA256.hash(data: Self.data(try snapshot.payload())).map { String(format: "%02x", $0) }.joined()
-                let transfer = try selectRoster(snapshot, digest, savedCopy)
+                let transfer = try selectRoster(snapshot, digest, savedCopy, relayedCopy)
                 try transfer.checkBinding(offers: offers, membership: membership, sending: sending)
                 guard try self.evidenceActive() else { return }
                 try self.exchangeText(transfer, first: first, sending: sending,
