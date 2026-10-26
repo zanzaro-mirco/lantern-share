@@ -59,7 +59,7 @@ final class GroupSessionMemoryTests: XCTestCase {
             marker: marker, newSessionId: id("f")).framedBytes()).last, 0)
     }
 
-    func testUsedChoiceConflictAndDifferentRootDoNotReplaceHeldSession() throws {
+    func testUsedChoiceAndDifferentRootDoNotReplaceHeldSessionButSameSessionJoinsAsUsed() throws {
         let memory = IosGroupSessionMemory()
         let local = try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("c"))
         let remote = try IosGroupSessionMemory().propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("d"))
@@ -69,11 +69,18 @@ final class GroupSessionMemoryTests: XCTestCase {
         _ = try memory.select(local: usedLocal, remote: usedRemote, groupId: group, founderId: founder, marker: nil)
         let held = try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f"))
         XCTAssertEqual(data(try held.framedBytes()), expected) // Choose is not a merge.
-        XCTAssertThrowsError(try memory.select(local: held, remote: usedLocal,
-            groupId: group, founderId: founder, marker: nil)) // Contradictory observations of same ID.
+        // ADR 021: the same held session observed used by the peer (interrupted delivery) joins as used.
+        _ = try memory.select(local: held, remote: usedLocal, groupId: group, founderId: founder, marker: nil)
+        var usedExpected = expected
+        usedExpected[usedExpected.count - 1] = 3
+        let usedHeld = try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f"))
+        XCTAssertEqual(data(try usedHeld.framedBytes()), usedExpected)
+        _ = try memory.select(local: usedHeld, remote: held, groupId: group, founderId: founder, marker: nil)
+        XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()),
+            usedExpected) // Never downgraded by a later empty observation.
         let other = try IosGroupSessionMemory().propose(groupId: id("e"), founderId: founder, marker: nil, newSessionId: id("f"))
-        XCTAssertThrowsError(try memory.select(local: held, remote: other, groupId: group, founderId: founder, marker: nil))
-        XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()), expected)
+        XCTAssertThrowsError(try memory.select(local: usedHeld, remote: other, groupId: group, founderId: founder, marker: nil))
+        XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()), usedExpected)
     }
 
     private func used(_ offer: IosGroupSessionOffer) throws -> IosGroupSessionOffer {

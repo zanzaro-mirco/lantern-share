@@ -41,6 +41,8 @@ if (withAndroid) extensions.configure<com.android.build.gradle.LibraryExtension>
 
 tasks.withType<Test>().configureEach {
     systemProperty("lantern.multicast", providers.gradleProperty("multicast").orElse("false").get())
+    // Real TLS/Node tests: a CI stall must name the test still running, not only the job timeout.
+    testLogging { events("started", "passed", "failed", "skipped") }
     if (providers.gradleProperty("macKeychain").orNull != "true") {
         exclude("**/MacKeychainNativeTest*")
     } else {
