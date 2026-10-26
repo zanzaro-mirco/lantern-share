@@ -9,7 +9,14 @@ import kotlinx.coroutines.launch
 internal class AsyncResourceCloser(private val scope: CoroutineScope) {
     fun close(resource: Closeable): Job = closeAll(listOf(resource))
 
-    fun closeAll(resources: Collection<Closeable>): Job = scope.launch {
-        resources.forEach { resource -> runCatching { resource.close() } }
+    /**
+     * Copies [resources] at the call, so a live concurrent set may lose elements meanwhile: Kotlin's
+     * `toList()` reads `size` and then `first()`, and throws when a handler removes its socket in between.
+     */
+    fun closeAll(resources: Collection<Closeable>): Job {
+        val snapshot = ArrayList(resources)
+        return scope.launch {
+            snapshot.forEach { resource -> runCatching { resource.close() } }
+        }
     }
 }

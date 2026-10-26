@@ -2,7 +2,7 @@
 
 ## Ripartenza corrente
 
-Repository pubblico: https://github.com/zanzaro-mirco/lantern-share. Cartella: `C:/Users/mzanz/codex_projects/lantern-share`, branch `main`, ultimo commit di codice pubblicato **`1fabae6`**. Non ripartire da uno scheletro: identità, SQLite, TLS, associazione e comunicazione PoC sono già implementati. La vecchia cartella `app_condivisione_kmp` non è più il progetto corrente.
+Repository pubblico: https://github.com/zanzaro-mirco/lantern-share. Cartella: `C:/Users/mzanz/codex_projects/lantern-share`, branch `main`, ultimo commit di codice pubblicato **`6d1425f`**. Non ripartire da uno scheletro: identità, SQLite, TLS, associazione e comunicazione PoC sono già implementati. La vecchia cartella `app_condivisione_kmp` non è più il progetto corrente.
 
 Leggere `AGENTS.md`, [piano](PIANO_SVILUPPO.md), [architettura](ARCHITETTURA_E_QUALITA.md) e la sola [sintesi corrente](STATO_SVILUPPO.md). Per la funzionalità corrente servono ADR 015–020 e i sorgenti indicati sotto. [Indice aggiornato di tutti i documenti](docs/STATO_DOCUMENTAZIONE.md).
 
@@ -12,14 +12,16 @@ La guida dettagliata per il passaggio a Claude Code è **`../LANTERN_RIPARTENZA_
 
 - B1–B7 integrati: ammissione durevole locale con politica A, inviti delegati, verifica di appartenenza, prima scelta di sessione, testo durevole e roster autenticato che conserva gli offline. Non hardware.
 - B8 e B9: **Nuovo testo / Ricevi / Consegna copia** su Node/Android/desktop e Bonjour/iOS, copia dell'autore anche dopo nuovi ingressi con destinatari congelati. `1fabae6`: [completo Apple 40220901275](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40220901275) **success**, 201/201 XCTest, Native/framework/app/simulatore; iOS ordinario e PoC success. Non hardware.
-- **B10, pubblicato nel commit successivo a `1fabae6`, non ancora attestato su Apple:** copia inoltrata da un destinatario originale non autore, [ADR 020](docs/ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md). Feature `group-roster-text-relay`, LTC versione 3, firma verificata con il certificato della join dell'autore nel roster vivo; mai verso l'autore, membri successivi o non destinatari; nessuna rifirma, contatore o destinatario retroattivo. Implementato in core, Node/owner JVM, facciate iOS Kotlin e owner/sessione Swift. Evidenze in [STATO](STATO_SVILUPPO.md): JVM/host verificati localmente (1099 test integrati), **Native/Swift/simulatore e hardware non verificati**.
+- **B10, pubblicato in `6d1425f`, attestato in simulatore (completo 40241551612, 202/202 XCTest):** copia inoltrata da un destinatario originale non autore, [ADR 020](docs/ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md). Feature `group-roster-text-relay`, LTC versione 3, firma verificata con il certificato della join dell'autore nel roster vivo; mai verso l'autore, membri successivi o non destinatari; nessuna rifirma, contatore o destinatario retroattivo. Implementato in core, Node/owner JVM, facciate iOS Kotlin e owner/sessione Swift. Evidenze in [STATO](STATO_SVILUPPO.md): JVM/TLS/SQLite e Native/Swift/simulatore verificati, **hardware non verificato**.
+- **Stabilità avvio/chiusura Node, pubblicata nel commit successivo a `6d1425f`:** `AsyncResourceCloser.closeAll` prende l'istantanea al momento della chiamata; `Node` non usa più `toList()` sul set concorrente dei socket (causa della `NoSuchElementException` in `selectGroupConnection` e dello `stop()` interrotto che lasciava `accept` vivo in `close()`). Regressione deterministica con mutazione verificata, test Node su loopback, 5/5 esecuzioni di `GroupTextTransferServiceTest`, connettività 248. Solo JVM/Android; nessun effetto su wire/schema/iOS.
 
-Un solo checkpoint Apple completo autorizzato per B10; nessuna release o firma reale.
+Blocco di stabilità pubblicato con autorizzazione, senza checkpoint Apple completo (nessun file iOS/comune toccato). Nessuna release o firma reale.
 
 ## Unico prossimo blocco
 
-1. Leggere **una volta** da concluso il completo Apple avviato dopo il push di B10; se fallisce, leggere i soli errori del job e correggere prima di ampliare.
-2. Se riuscito, proposta da confermare: **stabilità di avvio/chiusura dei Node nei test JVM** (blocco intermittente in `Node.close` con `accept` TLS attivo e `NoSuchElementException` in `selectGroupConnection`, vedi STATO), oppure il **nuovo tentativo dopo una consegna interrotta** quando le due offerte della stessa sessione divergono su `used`. Specificare criteri prima del codice; scelta dell'utente.
+1. **Post-push locale, fatto:** commit `6d1425f`, [completo Apple 40241551612](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241551612) letto una volta da concluso: **success**, 202/202 XCTest (incluso l'inoltro C → A), Native/framework/app/simulatore; [iOS ordinario 40241543316](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241543316) e [PoC 40241543317](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241543317) success. Hardware non verificato.
+2. Stabilità di avvio/chiusura dei Node: **pubblicata**, verificata su JVM; PoC e iOS ordinario partono dal push e si leggono una volta da conclusi, senza polling.
+3. Proposta da confermare: **nuovo tentativo dopo una consegna interrotta** quando le due offerte della stessa sessione divergono su `used`. Specificare criteri prima del codice; scelta dell'utente.
 
 Esclusi dal blocco: distribuzione automatica o a catena, sincronizzazione della cronologia, propagazione delle ricevute all'autore, connessione persistente/reconnect, paginazione, scelta fra sessioni usate e UI completa. Limiti noti di B9/B10: ordine temporale della firma non dimostrabile dal ricevente; l'autore deve avere una join nel roster vivo (ADR 019–020).
 

@@ -328,7 +328,8 @@ class Node(
         run?.let {
             val resources = buildList<Closeable> {
                 it.server?.let(::add)
-                addAll(it.sockets.toList())
+                // Never toList() on the live set: a throw here would skip closing the listener.
+                addAll(it.sockets)
             }
             cleanupJob = resourceCloser.closeAll(resources)
         }
@@ -393,7 +394,7 @@ class Node(
         reject()
         // A protocol is chosen explicitly, never sniffed/fallen back from untrusted bytes.
         // Drain old PoC sockets before enabling selected v1 TLS. The listener stays alive.
-        val cleanup = resourceCloser.closeAll(run.sockets.toList())
+        val cleanup = resourceCloser.closeAll(run.sockets)
         admissions.select(peer, replaceInterrupted, cleanup, mode, text, messageId)
         discovered(run, peer)
     }

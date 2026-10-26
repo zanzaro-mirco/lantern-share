@@ -2,7 +2,9 @@
 
 ## Sintesi corrente
 
-Ultimo codice pubblicato: **`1fabae6`**, branch `main` (B9 in `6e18f64` più correzione del test di facciata). Il commit successivo pubblica il blocco **B10**, copia inoltrata da un destinatario, non ancora attestato su Apple. Prototipo reale multipiattaforma, app di prodotto ancora incompleta. [Piano e accettazione](PIANO_SVILUPPO.md), [ripartenza](PASSAGGIO_CONSEGNE.md), [indice documentale](docs/STATO_DOCUMENTAZIONE.md).
+> **Nota post-push locale:** B10 pubblicato in **`6d1425f`** su `main`. [Completo Apple 40241551612](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241551612) (dispatch, `bootstrap_interop=false`) letto una volta da concluso: **success**, **202/202 XCTest** (incluso `testRosterTextOriginalRecipientRelaysSameEnvelopeToReturningFounder`), Native/framework/app/simulatore; [iOS ordinario 40241543316](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241543316) e [PoC 40241543317](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241543317) success. B10 attestato in simulatore; **hardware non verificato**.
+
+Ultimo codice pubblicato: **`6d1425f`**, branch `main` (B10, copia inoltrata da un destinatario, attestato in simulatore). Il commit successivo pubblica il blocco di qualità sull'istantanea dei socket vivi di `Node`. Causa di entrambi i sintomi: `run.sockets.toList()` su un set concorrente; `toList()` di Kotlin legge `size` e poi `first()`, e il `finally` di `handle` può rimuovere l'unico socket in mezzo. In `selectGroupConnection` (`Node.kt:396`) era la `NoSuchElementException`; in `stop()` interrompeva l'arresto dopo `activeRun = null` e prima di programmare la chiusura del listener, così `close()` attendeva per sempre `accept`. Prototipo reale multipiattaforma, app di prodotto ancora incompleta. [Piano e accettazione](PIANO_SVILUPPO.md), [ripartenza](PASSAGGIO_CONSEGNE.md), [indice documentale](docs/STATO_DOCUMENTAZIONE.md).
 
 | Capacità | Implementazione e integrazione | Evidenza e limite |
 |---|---|---|
@@ -12,7 +14,8 @@ Ultimo codice pubblicato: **`1fabae6`**, branch `main` (B9 in `6e18f64` più cor
 | Testo durevole B6 | Firma, destinatari congelati, contatori e ricevute separate dal PoC, schema 5 | `fcec8f7`, completo Apple 39965540210: 182 XCTest complessivi riusciti; una busta per tentativo, non chat persistente |
 | Roster autenticato B7 | Attestazioni proprie, offline conservati, unione monotona e accordo esatto; Node/Bonjour/UI | `ba5e929`, completo Apple 40118469089 riuscito, Native/export/app/simulatore; nessun nuovo hardware |
 | Testo con roster B8 e copia dell'autore dopo nuovi ingressi B9 | Nuovo testo/Ricevi/Consegna copia su Android/desktop/iOS; copia con snapshot firmato contenuto nel roster vivo, [ADR 018](docs/ADR-018-CONSEGNA-TESTO-CON-ROSTER.md)–[019](docs/ADR-019-COPIA-ORIGINALE-DOPO-NUOVI-INGRESSI.md) | `1fabae6`: [completo Apple 40220901275](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40220901275) **success**, 201/201 XCTest, Native/export/app/simulatore; iOS ordinario e PoC success. Non hardware |
-| Copia inoltrata da destinatario B10 | Implementato in core, Node/owner JVM, facciate iOS Kotlin e owner/sessione Swift, [ADR 020](docs/ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md) | JVM con TLS/P-256/SQLite reali e compilazione host delle facciate iOS verificati localmente; **Native/Swift/simulatore e hardware non verificati** |
+| Copia inoltrata da destinatario B10 | Implementato in core, Node/owner JVM, facciate iOS Kotlin e owner/sessione Swift, [ADR 020](docs/ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md) | `6d1425f`: [completo Apple 40241551612](https://github.com/zanzaro-mirco/lantern-share/actions/runs/40241551612) **success**, 202/202 XCTest, Native/export/app/simulatore; JVM con TLS/P-256/SQLite reali. Non hardware |
+| Stabilità avvio/chiusura Node (qualità, non funzionalità) | Istantanea dei socket presa da `AsyncResourceCloser.closeAll` al momento della chiamata; `Node` passa il set vivo | Pubblicato dopo `6d1425f`. JVM verificato; nessun effetto su wire, schema, protocollo o iOS |
 
 ## Checkpoint Apple di B9
 
@@ -32,11 +35,25 @@ Ultimo codice pubblicato: **`1fabae6`**, branch `main` (B9 in `6e18f64` più cor
 
 **3 min 53 s success**: protocollo **430 JVM / 394 Android**, connettività **246** (1 skipped, mDNS opt-in), UI **15 JVM / 15 Android**; **1099 passati**, zero failure/error, APK e classi desktop compilati. Persistenza non modificata e non rieseguita. Nuove regressioni: tre test comuni (contesto e certificato dell'autore, negoziazione esclusiva, receiver con mittente TLS diverso solo in inoltro) e un test JVM reale a quattro nodi: B firma per {A, B, C} con A offline; C rifiuta l'inoltro verso B (autore) e verso D (ammesso dopo) senza tentare il messaggio; A rientra senza memoria di run e riceve da C, in assenza di B, gli stessi byte; ricevuta registrata da C, ricevute di B invariate, duplicato idempotente, contatore successivo di B 2.
 
-**Osservazione aperta, ripetuta:** una prima esecuzione della classe `GroupTextTransferServiceTest` è fallita in `reopenedMembersTransferBothDirectionsAndPreserveUsedScopeAndHistoryInBothTlsOrders` con `NoSuchElementException` in `Node.selectGroupConnection`; la seconda si è bloccata oltre 14 minuti in `Node.close` dentro `threeMemberRosterRetainsOfflineFounderThenOfflineDelegateWithoutRetroactiveRecipients`, con un thread fermo in `SSLServerSocket.accept` (`Node.kt:121`). Entrambi i test sono preesistenti e testo legacy/roster, senza percorso di copia. La terza esecuzione della classe (18/18) e la suite integrata sono riuscite. Problema intermittente di avvio/chiusura dei Node nei test, non diagnosticato né corretto: da trattare in un blocco separato.
+**Osservazione storica, diagnosticata dopo B10 (vedi sotto):** una prima esecuzione della classe `GroupTextTransferServiceTest` è fallita in `reopenedMembersTransferBothDirectionsAndPreserveUsedScopeAndHistoryInBothTlsOrders` con `NoSuchElementException` in `Node.selectGroupConnection`; la seconda si è bloccata oltre 14 minuti in `Node.close` dentro `threeMemberRosterRetainsOfflineFounderThenOfflineDelegateWithoutRetroactiveRecipients`, con un thread fermo in `SSLServerSocket.accept` (`Node.kt:121`). Entrambi i test sono preesistenti e testo legacy/roster, senza percorso di copia. La terza esecuzione della classe (18/18) e la suite integrata sono riuscite. Problema intermittente di avvio/chiusura dei Node nei test, trattato nel blocco successivo.
 
 **Compilato sull'host, non Native:** K2JVMCompiler su tutte le facciate `iosMain` salvo `IosEntry`, controller comune e boundary di persistenza di test: success. **Non Kotlin/Native, export Objective-C, Swift, XCTest o TLS Apple.** XCTest aggiornati ma non compilati né eseguiti: nuovo `testRosterTextOriginalRecipientRelaysSameEnvelopeToReturningFounder` (rifiuto verso l'autore prima del pin, inoltro C → A con B assente, stessi byte e ricevute separate) e closure `selectRoster` a quattro argomenti.
 
 **Limiti dichiarati:** quelli di ADR 019 sull'ordine temporale; l'autore deve avere una join firmata nel roster vivo (anche conservata da altri); un ricevente B9 senza la nuova feature rifiuta in HELLO gli inoltri.
+
+## Stabilità avvio/chiusura Node nei test JVM
+
+**Criteri fissati prima del codice:** C1 `stop()`, `close()` e selezioni di gruppo non lanciano per modifiche concorrenti del set dei socket e `stop()` programma sempre la chiusura di listener e socket; C2 `close()` termina entro un limite dopo cicli `start`/`stop` con connessioni in arrivo; C3 wire/schema/protocollo/identità invariati, suite connettività e cinque esecuzioni consecutive di `GroupTextTransferServiceTest` con timeout; C4 rendicontazione senza dichiarare riprodotto ciò che non lo è.
+
+**Implementato:** causa nei due stack salvati: `Node.kt:396` è `run.sockets.toList()`; i due blocchi in `Node.close` (`unsignedLegacy…` e `threeMemberRoster…`, entrambi con `a.stop()` dopo un trasferimento) avevano come unico frame Lantern vivo `accept` (`Node.kt:121`), coerente con uno `stop()` interrotto dalla stessa eccezione prima di `closeAll`. Su Windows JDK 17 la chiusura del listener sblocca `accept` (`NativeThread.current()` = 0, chiusura immediata), quindi il listener non era stato chiuso. `AsyncResourceCloser.closeAll` copia ora la collezione con `ArrayList(resources)` (via `toArray`, debolmente consistente) al momento della chiamata; `Node` passa `run.sockets` in `selectGroupConnection` e `addAll(it.sockets)` in `stop()`. I socket accettati dopo la chiamata non vengono chiusi, come prima.
+
+**Testato automaticamente su questo host (JDK 17, Gradle Wrapper):** `AsyncResourceCloserTest.closeAllCopiesLiveSetWhenHandlerRemovesItsSocketBetweenSizeAndIteration`, deterministico: un set che perde l'unico elemento fra `size` e iterazione fa fallire `toList()` con `NoSuchElementException`, mentre `closeAll` non lancia e chiude solo l'istantanea. Mutazione verificata: rimettendo `toList()` in `closeAll` il test fallisce con `NoSuchElementException`. `NodeLifecycleTest.stopSelectionAndCloseSurviveConcurrentSocketChurn`: Node reale su loopback, quattro thread aprono e chiudono connessioni durante 8 cicli `start`/50 selezioni/`stop`, `close()` entro 20 s (2,5 s). La variante di stress più pesante (20×500, 41 s) **passava anche sul codice non corretto**: la gara non è riproducibile in modo affidabile e resta coperta dal test deterministico. Cinque esecuzioni consecutive di `GroupTextTransferServiceTest` con `--rerun` e timeout 900 s: **18/18 ciascuna**, 128–133 s, nessun blocco. Verifica integrata:
+
+```powershell
+.\gradlew.bat -Pandroid=true :connectivity:jvmTest :ui:jvmTest :ui:testDebugUnitTest :androidApp:assembleDebug :desktopApp:classes --rerun-tasks --console=plain
+```
+
+**4 min 8 s success**: connettività **248** (1 skipped, mDNS opt-in), UI **15 JVM / 15 Android**, APK e classi desktop compilati. Protocollo e persistenza non modificati e non rieseguiti. **Limite:** cinque esecuzioni riuscite non dimostrano l'assenza di altre gare; nessuna modifica a Swift/iOS (Bonjour non usa questo codice), nessun checkpoint Apple necessario per questo blocco.
 
 ## Garanzie correnti e limiti
 
@@ -44,7 +61,7 @@ B8 ripete TLS/pin, membership, sessione e roster completo prima di LTC/testo/LGA
 
 ## Prossimo blocco e lavoro aperto
 
-B10 pubblicato con autorizzazione e un solo checkpoint Apple completo, da leggere una volta da concluso senza polling; correggere eventuali errori prima di ampliare. Prossimo blocco proposto in PASSAGGIO.
+B10 attestato in simulatore (`6d1425f`, completo 40241551612). Stabilità Node pubblicata con autorizzazione, senza checkpoint Apple completo (nessun file iOS/comune toccato). Prossimo blocco proposto in PASSAGGIO.
 
 Restano obbligatori, senza estendere automaticamente il prossimo blocco: distribuzione automatica, controllo persistente/reconnect/cambio LAN e collegamento manuale, scelta operativa fra sessioni usate, paginazione oltre budget, uscita durevole dal gruppo, cronologia/ricerca/pulizia, immagini/file/ripresa/integrità, background/notifiche/condivisione/integrazioni OS, UI completa/accessibilità, packaging/firme/beta e matrice di prodotto. Requisiti completi nel piano; nessuna percentuale di completamento ricavata dai test.
 
