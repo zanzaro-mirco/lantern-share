@@ -1263,6 +1263,32 @@ final class GroupAdmissionSessionTests: XCTestCase {
                 IosGroupTextTransfer(persistence: receiver.store, memory: receiver.sessionMemory, scope: rc, localIdentity: receiver.identity.id))
     }
 
+    func testRosterTextRetryAfterInterruptedDeliveryJoinsSameSessionAsUsed() throws {
+        let pair = try fixture(founderInitiates: true)
+        let sender = pair.issuer, receiver = pair.member
+        try confirmBoth(sender, receiver)
+        closeAndDrain(sender); closeAndDrain(receiver)
+        try queue.sync {
+            let (outgoing, _) = try rosterTransfers(sender, receiver)
+            let current = { KotlinBoolean(bool: true) }
+            let verifyAuthor = { (bytes: KotlinByteArray, signature: String) in
+                KotlinBoolean(bool: AppleIdentity.verify(certificate: sender.identity.certificate, message: self.data(bytes), signature: signature)) }
+            let message = try outgoing.prepareOutgoing(id: UUID().uuidString.lowercased(), body: "Interrotto",
+                isCurrent: current, sign: { try? sender.identity.sign(self.data($0)) })
+            // Interrupted delivery: the author holds the session as used, the receiver as empty (ADR 021).
+            XCTAssertNil(try receiver.store.groupText(id: message.id))
+            let (copyOut, copyIn) = try rosterTransfers(sender, receiver, savedCopy: true)
+            let saved = try copyOut.prepareSaved(id: message.id, isCurrent: current, verify: verifyAuthor)
+            XCTAssertEqual(saved.sessionId, message.sessionId)
+            let received = try copyIn.receive(payload: saved.payload(), isCurrent: current, verify: verifyAuthor)
+            let digest = SHA256.hash(data: data(try saved.payload())).map { String(format: "%02x", $0) }.joined()
+            let ack = Data(data(try copyIn.acknowledgementFrame(envelope: received, digest: digest)).dropFirst(4))
+            try copyOut.acknowledge(payload: bytes(ack), envelope: saved, digest: digest, isCurrent: current)
+            XCTAssertEqual(try receiver.store.groupText(id: message.id)?.receivedBy, [receiver.identity.id])
+            XCTAssertEqual(Set(try XCTUnwrap(sender.store.groupText(id: message.id)).receivedBy), Set([sender.identity.id, receiver.identity.id]))
+        }
+    }
+
     func testRosterTextFacadeSavedCopyRequiresValidSignatureCurrentRunAndExactACK() throws {
         let pair = try fixture(founderInitiates: true)
         let sender = pair.issuer, receiver = pair.member

@@ -51,11 +51,15 @@ class SessionSelectionTest {
     }
 
     @Test
-    fun conflictingObservationsAreRejectedInEitherOrder() {
+    fun observationsOfOneSessionDifferingInUsedJoinAsUsedInEitherOrder() {
+        // ADR 021: an interrupted delivery leaves the author used and the receiver empty.
         val observations = listOf(session("a"), session("a", true))
         for (order in listOf(observations, observations.reversed())) {
-            assertFailsWith<IllegalArgumentException> { SessionSelector.select("group", order) }
+            assertEquals(SessionSelection.Join(session("a", true)), SessionSelector.select("group", order))
         }
+        val choice = listOf(session("a"), session("a", true), session("b", true))
+        assertEquals(SessionSelection.Choose(listOf(session("a", true), session("b", true))), SessionSelector.select("group", choice))
+        assertEquals(SessionSelection.Join(session("b", true)), SessionSelector.select("group", listOf(session("a"), session("b"), session("b", true))))
     }
 
     @Test

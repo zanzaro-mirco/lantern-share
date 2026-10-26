@@ -27,11 +27,9 @@ object SessionSelector {
         val sessions = candidates.filter { it.groupId == groupId }
             .groupBy { it.sessionId }
             .map { (_, observations) ->
-                // Do not resolve contradictory observations by arrival order or guesswork.
-                require(observations.all { it == observations.first() }) {
-                    "Conflicting observations for the same session"
-                }
-                observations.first()
+                // Only `used` can differ (ADR 021): an interrupted delivery leaves the author used and the
+                // receiver empty. Join the monotonic flag, independent of arrival order, never downgrading.
+                observations.first().copy(used = observations.any { it.used })
             }
             .sortedBy { it.sessionId }
         if (sessions.isEmpty()) return SessionSelection.Create

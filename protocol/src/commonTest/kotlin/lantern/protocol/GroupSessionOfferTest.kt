@@ -69,7 +69,9 @@ class GroupSessionOfferTest {
         val choice = assertIs<SessionSelection.Choose>(a.select(anchor, b))
         assertEquals(listOf(a.session, b.session), choice.sessions)
         assertEquals(choice, b.select(anchor, a))
-        assertFailsWith<IllegalArgumentException> { a.select(anchor, offer("b", false)) }
+        // ADR 021: the same held session observed empty by the other side is joined as used, never downgraded.
+        assertEquals(SessionSelection.Join(a.session), a.select(anchor, offer("b", false)))
+        assertEquals(SessionSelection.Join(a.session), offer("b", false).select(anchor, a))
         assertFailsWith<IllegalArgumentException> { a.select(anchor.copy(groupId = "d".repeat(64)), b) }
     }
 

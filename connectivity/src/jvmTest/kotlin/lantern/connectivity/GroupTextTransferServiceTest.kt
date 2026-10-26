@@ -225,6 +225,53 @@ class GroupTextTransferServiceTest {
         } } }
     }
 
+    @Test
+    fun deliveryInterruptedAfterAuthorMarkedSessionUsedRetriesInSameSessionWithoutReusingCounters() {
+        for (roster in listOf(true, false)) withMembers { f ->
+            f.stores { aStore, bStore ->
+                val author = FailingTextSave(aStore)
+                node(f.a, author).use { a -> node(f.b, bStore).use { b ->
+                    a.start(); b.start(); ports(a, b)
+                    a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+                    val held = awaitSession(a).session
+                    assertEquals(held, awaitSession(b).session)
+                    assertFalse(held.used)
+                    // A marks the session used before its durable save, which fails: no envelope reaches B.
+                    author.failNext = true
+                    startText(a, b, "Interrotto", roster)
+                    val interrupted = assertIs<GroupTextState.Failed>(awaitText(a))
+                    val attempted = assertNotNull(interrupted.attemptedMessageId)
+                    assertIs<GroupTextState.Failed>(awaitText(b))
+                    assertNull(aStore.groupText(attempted)); assertNull(bStore.groupText(attempted))
+                    assertTrue(bStore.groupTextHistory(f.anchor.groupId, held.sessionId).isEmpty())
+                    // A holds the session as used, B as empty: the retry joins it as used, never a new or downgraded one.
+                    val retried = if (roster) rosterTransfer(a, b, "Ripresa") else transfer(a, b, "Ripresa")
+                    assertEquals(held.sessionId, retried.content.sessionId)
+                    assertEquals(2L, retried.content.authorSequence)
+                    assertEquals(setOf(f.a.id, f.b.id), assertNotNull(aStore.groupText(retried.content.id)).receivedBy)
+                    assertEquals(setOf(f.b.id), assertNotNull(bStore.groupText(retried.content.id)).receivedBy)
+                    a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+                    val after = awaitSession(a).session
+                    assertEquals(after, awaitSession(b).session)
+                    assertEquals(held.copy(used = true), after)
+                } }
+            }
+        }
+    }
+
+    /** Durable save failure injected once, after the service marked the session used. */
+    private class FailingTextSave(private val inner: SqliteDeviceRepository) : DeviceRepository by inner,
+        GroupAdoptionRepository by inner, GroupTextRepository by inner {
+        @Volatile var failNext = false
+        override fun saveGroupText(message: SignedGroupText, localIdentity: String): Boolean {
+            if (failNext) {
+                failNext = false
+                error("Injected storage failure")
+            }
+            return inner.saveGroupText(message, localIdentity)
+        }
+    }
+
     private fun rosterTransfer(sender: Node, receiver: Node, text: String): SignedGroupText {
         receiver.receiveRosterText(peer(sender)); sender.sendRosterText(peer(receiver), text)
         val sent = assertIs<GroupTextState.Sent>(awaitText(sender))
