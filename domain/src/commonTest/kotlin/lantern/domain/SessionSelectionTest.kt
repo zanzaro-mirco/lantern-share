@@ -68,4 +68,18 @@ class SessionSelectionTest {
         assertFailsWith<IllegalArgumentException> { session("a", group = "") }
         assertFailsWith<IllegalArgumentException> { SessionSelector.select("\t", emptyList()) }
     }
+
+    @Test
+    fun explicitChoiceKeepsHeldSessionOrAdoptsThePeersAsUsedAndRefusesAnythingElse() {
+        val mine = session("a", true)
+        val theirs = session("b", true)
+        val offered = (SessionSelector.select("group", listOf(mine, theirs)) as SessionSelection.Choose).sessions
+        assertEquals(SessionChoiceEffect.Keep, SessionChoice.apply(offered, mine, mine))
+        assertEquals(SessionChoiceEffect.Adopt(theirs), SessionChoice.apply(offered, mine, theirs))
+        // The effect never trusts the caller's `used` flag: only what was offered counts.
+        assertEquals(SessionChoiceEffect.Adopt(theirs), SessionChoice.apply(offered, mine, theirs.copy(used = false)))
+        assertFailsWith<IllegalArgumentException> { SessionChoice.apply(offered, mine, session("c", true)) }
+        assertFailsWith<IllegalArgumentException> { SessionChoice.apply(offered, mine, theirs.copy(groupId = "other")) }
+        assertFailsWith<IllegalArgumentException> { SessionChoice.apply(offered, session("x", true), theirs) }
+    }
 }

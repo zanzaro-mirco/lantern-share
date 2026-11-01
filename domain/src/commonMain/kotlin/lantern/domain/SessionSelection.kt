@@ -21,6 +21,29 @@ sealed interface SessionSelection {
  * History, stale discovery entries and sessions from a previous LAN must not be supplied.
  * `used` is monotonic for a session: removing local history does not make it empty again.
  */
+/** Local effect of an explicit choice among used sessions (ADR 022). */
+sealed interface SessionChoiceEffect {
+    /** The chosen session is already the held one: nothing changes. */
+    data object Keep : SessionChoiceEffect
+    /** The held session is abandoned for the peer's. Scope is unknown until a signed roster restores it. */
+    data class Adopt(val session: SessionCandidate) : SessionChoiceEffect
+}
+
+object SessionChoice {
+    /**
+     * [offered] is the `Choose` list, [held] this device's own session. Both must be in it and [chosen]
+     * must be one of them: a stale or foreign choice is refused, never guessed. Never merges sessions.
+     */
+    fun apply(offered: List<SessionCandidate>, held: SessionCandidate, chosen: SessionCandidate): SessionChoiceEffect {
+        require(offered.any { it.sessionId == held.sessionId }) { "Held session is not among the offered ones" }
+        val match = requireNotNull(offered.firstOrNull { it.sessionId == chosen.sessionId && it.groupId == chosen.groupId }) {
+            "Chosen session was not offered"
+        }
+        return if (match.sessionId == held.sessionId) SessionChoiceEffect.Keep
+        else SessionChoiceEffect.Adopt(match.copy(used = true))
+    }
+}
+
 object SessionSelector {
     fun select(groupId: String, candidates: List<SessionCandidate>): SessionSelection {
         require(groupId.isNotBlank()) { "Group ID must not be blank" }

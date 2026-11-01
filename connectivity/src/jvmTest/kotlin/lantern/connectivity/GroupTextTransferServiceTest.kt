@@ -16,6 +16,7 @@ import lantern.domain.GroupRosterState
 import lantern.domain.GroupRosterFailure
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.Peer
+import lantern.domain.SessionCandidate
 import lantern.domain.SignedGroupText
 import lantern.persistence.openDesktopRepository
 import lantern.persistence.SqliteDeviceRepository
@@ -31,6 +32,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /** Actual Nodes, mutual TLS, delegated group admission, P-256 and reopened SQLite, not wire-0 trust. */
@@ -556,6 +558,69 @@ class GroupTextTransferServiceTest {
     }
 
     @Test
+    fun explicitChoiceBetweenUsedSessionsNeedsRenegotiationAndAdoptedSessionRefusesLegacyTextButRosterTextRestoresScope() = withMembers { f ->
+        val third = createDesktopIdentity().identity()
+        openDesktopRepository(f.directory.resolve("third.db")).use { thirdStore ->
+            f.stores { aStore, bStore ->
+                node(f.b, bStore).use { b -> node(third, thirdStore).use { c ->
+                    b.start(); c.start(); ports(b, c)
+                    admit(b, c)
+                } }
+                node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, thirdStore).use { c ->
+                    a.start(); b.start(); c.start(); ports(a, b); ports(b, c)
+                    synchronize(a, b)
+                    val first = rosterTransfer(a, b, "uno").content.sessionId
+                    // Only B forgets its session: C joins a different session, used in turn.
+                    b.stop(); b.start(); ports(b, c)
+                    synchronize(b, c)
+                    val second = rosterTransfer(b, c, "due").content.sessionId
+                    assertNotEquals(first, second)
+
+                    a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+                    val choiceA = awaitChoice(a); val choiceB = awaitChoice(b)
+                    assertEquals(setOf(first, second), choiceA.sessions.map { it.sessionId }.toSet())
+                    assertTrue(choiceA.sessions.all { it.used })
+                    assertEquals(first, choiceA.held?.sessionId); assertEquals(second, choiceB.held?.sessionId)
+
+                    // A choice that was never offered changes nothing.
+                    a.chooseGroupSession(choiceA, SessionCandidate(f.anchor.groupId, randomNonce(), true))
+                    assertSame(choiceA, a.groupSessionState.value)
+
+                    // Both keep their own: nothing is merged, the next negotiation asks again.
+                    a.chooseGroupSession(choiceA, choiceA.held!!); b.chooseGroupSession(choiceB, choiceB.held!!)
+                    assertEquals(GroupSessionState.Idle, a.groupSessionState.value)
+                    assertEquals(GroupSessionState.Idle, b.groupSessionState.value)
+                    a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+                    val againA = awaitChoice(a); val againB = awaitChoice(b)
+                    assertEquals(first, againA.held?.sessionId); assertEquals(second, againB.held?.sessionId)
+
+                    // A adopts B's session, B keeps it. The choice alone selects nothing.
+                    val theirs = againA.sessions.first { it.sessionId == second }
+                    a.chooseGroupSession(againA, theirs); b.chooseGroupSession(againB, againB.held!!)
+                    assertEquals(GroupSessionState.Idle, a.groupSessionState.value)
+                    a.chooseGroupSession(againA, theirs) // stale: already consumed
+                    assertEquals(GroupSessionState.Idle, a.groupSessionState.value)
+                    a.negotiateGroupSession(peer(b)); b.negotiateGroupSession(peer(a))
+                    assertEquals(second, awaitSession(a).session.sessionId)
+                    assertEquals(second, awaitSession(b).session.sessionId)
+
+                    // Used, but A has no scope for it yet: legacy text cannot omit participants it does not know.
+                    startText(a, b, "troppo presto", false)
+                    assertEquals(GroupTextFailure.ROSTER_REQUIRED, assertIs<GroupTextState.Failed>(awaitText(a)).reason)
+                    assertIs<GroupTextState.Failed>(awaitText(b))
+                    assertEquals(1, bStore.groupTextHistory(f.anchor.groupId, second).size)
+                    // Roster text rebuilds the signed scope on the same exchange: B's retained snapshot restores it.
+                    val sent = rosterTransfer(a, b, "dopo la scelta")
+                    assertEquals(second, sent.content.sessionId)
+                    assertTrue(third.id in sent.content.recipients && f.b.id in sent.content.recipients)
+                    // The author counter lives in the group store, not in the abandoned session.
+                    assertEquals(2L, sent.content.authorSequence)
+                } } }
+            }
+        }
+    }
+
+    @Test
     fun receiverCommitFaultProducesNoAckAndDoesNotEraseSenderCopy() {
         for (roster in listOf(false, true)) withMembers { f ->
             f.stores { aStore, bStore ->
@@ -714,6 +779,9 @@ class GroupTextTransferServiceTest {
 
     private fun awaitText(node: Node) = runBlocking { withTimeout(12_000) {
         node.groupTextState.first { it is GroupTextState.Sent || it is GroupTextState.Received || it is GroupTextState.Failed }
+    } }
+    private fun awaitChoice(node: Node) = runBlocking { withTimeout(12_000) {
+        assertIs<GroupSessionState.NeedsChoice>(node.groupSessionState.first { it is GroupSessionState.NeedsChoice || it is GroupSessionState.Failed })
     } }
     private fun awaitSession(node: Node) = runBlocking { withTimeout(12_000) {
         assertIs<GroupSessionState.Selected>(node.groupSessionState.first { it is GroupSessionState.Selected || it is GroupSessionState.Failed })

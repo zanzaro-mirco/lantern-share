@@ -21,7 +21,10 @@ import lantern.domain.GroupTextRepository
 import lantern.domain.GroupTextContent
 import lantern.domain.SignedGroupText
 import lantern.domain.ContentLimits
+import lantern.domain.GroupSessionChoiceController
 import lantern.domain.GroupSessionState
+import lantern.domain.SessionChoice
+import lantern.domain.SessionChoiceEffect
 import lantern.domain.SessionCandidate
 import lantern.domain.SessionSelection
 import lantern.domain.GroupMembershipCheckState
@@ -74,7 +77,7 @@ internal class GroupAdmissionService(
     private val repository: GroupAdoptionRepository?,
     private val scope: CoroutineScope,
     private val running: () -> Boolean,
-) : GroupRosterTextController, AutoCloseable {
+) : GroupRosterTextController, GroupSessionChoiceController, AutoCloseable {
     private val mutable = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     override val admissionState = mutable.asStateFlow()
     private val revision = MutableStateFlow(0L)
@@ -94,6 +97,9 @@ internal class GroupAdmissionService(
     private var localSession: LocalSession? = null
     private class LocalSession(val anchor: GroupTrustAnchor, val membership: PendingGroupAdoption?, val candidate: SessionCandidate,
         val participants: Set<String>? = null, val roster: GroupSessionRoster? = null)
+    private class PendingChoice(val choice: GroupSessionState.NeedsChoice, val anchor: GroupTrustAnchor, val membership: PendingGroupAdoption?)
+    // Only the exact published NeedsChoice, under sessionLock. Cleared by cancel, stop and every choice.
+    private var pendingChoice: PendingChoice? = null
     private val selected = AtomicReference<Selection?>()
     private val scheduler = Executors.newSingleThreadScheduledExecutor { task ->
         Thread(task, "lantern-group-deadline").apply { isDaemon = true }
@@ -241,12 +247,29 @@ internal class GroupAdmissionService(
         mutable.value = GroupAdmissionState.Idle
         membershipCheck.value = GroupMembershipCheckState.Idle
         sessionState.value = GroupSessionState.Idle
+        synchronized(sessionLock) { pendingChoice = null }
         textState.value = GroupTextState.Idle
         rosterState.value = GroupRosterState.Idle
     }
 
     /** Called by Node.stop under its run lock. A later LAN/run never revives this observation. */
-    fun resetSessions() = synchronized(sessionLock) { localSession = null }
+    fun resetSessions() = synchronized(sessionLock) { localSession = null; pendingChoice = null }
+
+    override fun chooseGroupSession(choice: GroupSessionState.NeedsChoice, session: SessionCandidate) {
+        synchronized(sessionLock) {
+            val pending = pendingChoice?.takeIf { it.choice === choice && sessionState.value === choice } ?: return
+            val held = localSession?.takeIf { it.anchor == pending.anchor && sameMembership(it.membership, pending.membership) } ?: return
+            val effect = try {
+                SessionChoice.apply(choice.sessions, held.candidate, session)
+            } catch (_: IllegalArgumentException) {
+                return
+            }
+            if (effect is SessionChoiceEffect.Adopt) localSession = LocalSession(pending.anchor, pending.membership, effect.session)
+            pendingChoice = null
+            // A local decision only: agreement comes from a new explicit negotiation, never from here.
+            sessionState.value = GroupSessionState.Idle
+        }
+    }
 
     fun block(peerId: String) {
         if (selected.get()?.peer?.id == peerId) cancelGroup()
@@ -376,7 +399,12 @@ internal class GroupAdmissionService(
                         localSession?.roster?.takeIf { participants != null && it.sessionId == result.session.sessionId })
                     sessionState.value = GroupSessionState.Selected(selection.peer, result.session)
                 }
-                is SessionSelection.Choose -> sessionState.value = GroupSessionState.NeedsChoice(selection.peer, result.sessions)
+                is SessionSelection.Choose -> {
+                    val choice = GroupSessionState.NeedsChoice(selection.peer, result.sessions,
+                        result.sessions.firstOrNull { it.sessionId == offer.session.sessionId })
+                    pendingChoice = PendingChoice(choice, anchor, selection.membership)
+                    sessionState.value = choice
+                }
                 SessionSelection.Create -> error("Two session offers cannot require creation")
             }
         }

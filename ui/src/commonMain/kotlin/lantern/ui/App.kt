@@ -40,6 +40,7 @@ import lantern.domain.GroupAdmissionRole
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupMembershipController
 import lantern.domain.GroupMembershipCheckState
+import lantern.domain.GroupSessionChoiceController
 import lantern.domain.GroupSessionController
 import lantern.domain.GroupSessionState
 import lantern.domain.GroupTextController
@@ -249,7 +250,19 @@ internal fun GroupSessionPanel(controller: GroupSessionController) {
                 GroupSessionState.Idle -> Unit
                 is GroupSessionState.Negotiating -> Text("Seleziona Negozia sessione anche su ${current.peer.name} (120 s). L'appartenenza viene verificata su questo TLS.")
                 is GroupSessionState.Selected -> SelectionContainer { Text("Sessione selezionata localmente: ${current.session.sessionId}") }
-                is GroupSessionState.NeedsChoice -> Text("Sessioni già utilizzate: serve una scelta esplicita. Nessuna fusione automatica.")
+                is GroupSessionState.NeedsChoice -> {
+                    Text("Sessioni già utilizzate: serve una scelta esplicita. Nessuna fusione automatica.")
+                    if (controller is GroupSessionChoiceController) {
+                        Text("Tenere la tua o passare a quella dell'altro dispositivo abbandona la tua sessione su questo schermo. " +
+                            "Poi negozia di nuovo su entrambi.")
+                        current.sessions.forEach { session ->
+                            val own = session.sessionId == current.held?.sessionId
+                            OutlinedButton(onClick = { controller.chooseGroupSession(current, session) }) {
+                                Text((if (own) "Tieni la tua: " else "Passa a: ") + session.sessionId.take(12))
+                            }
+                        }
+                    }
+                }
                 is GroupSessionState.Failed -> Text("Negoziazione non riuscita o interrotta. Nessun trust o dato persistente modificato.")
             }
             Text("Prima negoziazione esplicita. Nessuna chat, riconnessione o conferma dell'esito remoto. Lo stop del servizio elimina la sessione in memoria, non il gruppo.")

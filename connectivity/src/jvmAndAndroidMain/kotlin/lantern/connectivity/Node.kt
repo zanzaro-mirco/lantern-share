@@ -18,6 +18,9 @@ import lantern.domain.DeviceRepository
 import lantern.domain.DeviceState
 import lantern.domain.DiscoveryService
 import lantern.domain.GroupRosterTextController
+import lantern.domain.GroupSessionChoiceController
+import lantern.domain.GroupSessionState
+import lantern.domain.SessionCandidate
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupAdoptionRepository
 import lantern.domain.Peer
@@ -38,7 +41,7 @@ class Node(
     private val discovery: DiscoveryService,
     private val address: InetAddress,
     private val requestedPort: Int = 0,
-) : DeviceController, GroupRosterTextController, AutoCloseable {
+) : DeviceController, GroupRosterTextController, GroupSessionChoiceController, AutoCloseable {
     private val mutable = MutableStateFlow(DeviceState(
         name = repository.name(),
         id = identity.id,
@@ -417,6 +420,9 @@ class Node(
     }
 
     override fun confirmGroup(comparison: GroupAdmissionState.Comparing) = admissions.confirmGroup(comparison)
+
+    override fun chooseGroupSession(choice: GroupSessionState.NeedsChoice, session: SessionCandidate) =
+        admissions.chooseGroupSession(choice, session)
 
     @Synchronized
     override fun cancelGroup() = admissions.cancelGroup()
