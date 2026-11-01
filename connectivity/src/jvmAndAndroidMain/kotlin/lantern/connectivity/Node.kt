@@ -210,12 +210,20 @@ class Node(
         }
     }
 
+    /** Remaining wait before the next dial of [peerId]; null while a dial is still in flight. */
+    internal fun reconnectWaitMillis(peerId: String): Long? {
+        val run = activeRun ?: return null
+        if (peerId in run.dialing) return null
+        return ((run.retryAt[peerId] ?: return 0L) - monotonicMillis()).coerceAtLeast(0L)
+    }
+
     private fun connect(run: ServiceRun, peer: Peer) {
         if (!isCurrent(run) || run.channels.containsKey(peer.id) ||
             monotonicMillis() < (run.retryAt[peer.id] ?: Long.MIN_VALUE) || !run.dialing.add(peer.id)
         ) return
         scope.launch {
             var socket: SSLSocket? = null
+            var exchanged = false
             try {
                 val remote = InetAddress.getByName(peer.host)
                 require(remote.isSiteLocalAddress || remote.isLinkLocalAddress || remote.isLoopbackAddress) { "Indirizzo non locale" }
@@ -223,21 +231,29 @@ class Node(
                     .socketFactory.createSocket() as SSLSocket
                 if (!registerSocket(run, socket)) return@launch
                 socket.connect(InetSocketAddress(remote, peer.port), CONNECT_TIMEOUT_MILLIS)
-                handle(run, socket, peer.id)
+                exchanged = handle(run, socket, peer.id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 report(run, "Collegamento fallito", error)
             } finally {
                 socket?.let { run.sockets.remove(it); closeSocket(it) }
+                // A completed group exchange is a success: only failures and PoC channels back off.
+                if (exchanged) {
+                    run.failures.remove(peer.id)
+                    run.retryAt.remove(peer.id)
+                } else {
+                    val failures = run.failures.merge(peer.id, 1, Int::plus) ?: 1
+                    run.retryAt[peer.id] = monotonicMillis() + Reconnection.delayMillis(failures - 1, Math.random())
+                }
+                // Last: nobody may see the peer free while its outcome is still unrecorded.
                 run.dialing.remove(peer.id)
-                val failures = run.failures.merge(peer.id, 1, Int::plus) ?: 1
-                run.retryAt[peer.id] = monotonicMillis() + Reconnection.delayMillis(failures - 1, Math.random())
             }
         }
     }
 
-    private suspend fun handle(run: ServiceRun, socket: SSLSocket, expectedPeer: String?) {
+    /** True only for a completed group exchange; PoC channels and failures report false. */
+    private suspend fun handle(run: ServiceRun, socket: SSLSocket, expectedPeer: String?): Boolean {
         var connection: PeerConnection? = null
         try {
             check(isCurrent(run))
@@ -252,19 +268,20 @@ class Node(
             require(expectedPeer == null || expectedPeer == remoteId)
             if (expectedPeer == null) require(Reconnection.initiates(remoteId, identity.id))
             if (admissionToken != null) {
-                admissions.handle(socket, remoteId, admissionToken)
-                return
+                return admissions.handle(socket, remoteId, admissionToken)
             }
             connection = PeerConnection(
                 socket, remoteId, certificate, identity, authorization, repository,
                 isActive = { isCurrent(run) }, onEvent = { event -> onConnectionEvent(run, remoteId, event) },
             )
-            if (run.channels.putIfAbsent(remoteId, connection) != null) return
+            if (run.channels.putIfAbsent(remoteId, connection) != null) return false
             connection.run()
+            return false
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             report(run, "Canale chiuso", error)
+            return false
         } finally {
             connection?.let { peer ->
                 if (run.channels.remove(peer.remoteId, peer)) update(run) {

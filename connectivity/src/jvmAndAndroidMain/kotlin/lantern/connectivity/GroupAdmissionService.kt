@@ -252,8 +252,11 @@ internal class GroupAdmissionService(
         if (selected.get()?.peer?.id == peerId) cancelGroup()
     }
 
-    /** Consumes only the selected v1 socket. Called after mutual TLS and pin verification. */
-    suspend fun handle(socket: SSLSocket, peerId: String, token: Any) {
+    /**
+     * Consumes only the selected v1 socket. Called after mutual TLS and pin verification.
+     * True only when the exchange ran to its end without throwing: failures are published, not rethrown.
+     */
+    suspend fun handle(socket: SSLSocket, peerId: String, token: Any): Boolean {
         val selection = selected.get() ?: error("No group selection")
         check(selection === token && selection.peer.id == peerId && eligible(selection) && selection.claimed.compareAndSet(false, true))
         selection.socket = socket
@@ -292,29 +295,31 @@ internal class GroupAdmissionService(
             check(bootstrap.start() && bootstrap.readNext())
             if (selection.mode == GroupSelectionMode.MEMBERSHIP_CHECK) {
                 verifyMembership(selection, bootstrap)
-                return
+                return true
             }
             if (selection.mode == GroupSelectionMode.SESSION) {
                 negotiateSession(selection, bootstrap)
-                return
+                return true
             }
             if (selection.mode == GroupSelectionMode.TEXT || selection.mode == GroupSelectionMode.ROSTER_TEXT) {
                 transferText(selection, bootstrap)
-                return
+                return true
             }
             if (selection.mode == GroupSelectionMode.ROSTER) {
                 synchronizeRoster(selection, bootstrap)
-                return
+                return true
             }
             val remoteFeatures = checkNotNull(bootstrap.remoteCapabilitiesForGroup()).supportedFeatures
             // Public role metadata prevents two readers/two issuers from waiting in the wrong
             // phase. It grants no authority: actual root/proof/signatures/consent are mandatory.
             check(remoteRole in remoteFeatures && localRole !in remoteFeatures)
             if (anchor == null) receive(selection, bootstrap) else issue(selection, bootstrap, anchor)
+            return true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             fail(selection, GroupAdmissionFailure.FAILED)
+            return false
         } finally {
             selection.expiry?.cancel()
             retire(selection)

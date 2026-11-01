@@ -540,6 +540,22 @@ class GroupTextTransferServiceTest {
     }
 
     @Test
+    fun completedGroupExchangeClearsDialBackoffWhileFailedOneKeepsIt() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            a.sendGroupText(peer(b), "a"); b.sendGroupText(peer(a), "b")
+            assertIs<GroupTextState.Failed>(awaitText(a))
+            assertIs<GroupTextState.Failed>(awaitText(b))
+            assertTrue(dialBackoff(a, b) > 0, "a failed exchange keeps the backoff")
+            // `a` has the smaller id and always dials: the first valid exchange waits out the failure only.
+            transfer(a, b, "uno")
+            assertEquals(0L, dialBackoff(a, b), "a completed exchange is not a failure")
+            transfer(b, a, "due")
+            assertEquals(0L, dialBackoff(a, b))
+        } } }
+    }
+
+    @Test
     fun receiverCommitFaultProducesNoAckAndDoesNotEraseSenderCopy() {
         for (roster in listOf(false, true)) withMembers { f ->
             f.stores { aStore, bStore ->
@@ -702,6 +718,15 @@ class GroupTextTransferServiceTest {
     private fun awaitSession(node: Node) = runBlocking { withTimeout(12_000) {
         assertIs<GroupSessionState.Selected>(node.groupSessionState.first { it is GroupSessionState.Selected || it is GroupSessionState.Failed })
     } }
+    /** Waits for the dial outcome to be recorded; the dialer is the node with the smaller id. */
+    private fun dialBackoff(dialer: Node, remote: Node): Long {
+        val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(6)
+        while (true) {
+            dialer.reconnectWaitMillis(remote.identity.id)?.let { return it }
+            check(System.nanoTime() < until) { "dial outcome never recorded" }
+            Thread.sleep(10)
+        }
+    }
     private fun peer(node: Node) = Peer(node.identity.id, "member", "127.0.0.1", node.port)
     private fun ports(a: Node, b: Node) {
         val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(6)
