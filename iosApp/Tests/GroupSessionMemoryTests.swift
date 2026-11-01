@@ -83,6 +83,59 @@ final class GroupSessionMemoryTests: XCTestCase {
         XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()), usedExpected)
     }
 
+    /// ADR 022: an explicit choice is local; keeping changes nothing, adopting replaces the held session by the peer's as used.
+    func testExplicitChoiceKeepsOrAdoptsTheirsAsUsedAndRefusesStaleOrReset() throws {
+        func negotiate(_ memory: IosGroupSessionMemory, _ local: IosGroupSessionOffer, _ remote: IosGroupSessionOffer)
+            throws -> (IosGroupAdmissionController, IosGroupSessionChoiceHandle) {
+            var selected: IosGroupAdmissionSelection?
+            let controller = IosGroupAdmissionController(requestSelect: { selected = $0 }, requestConfirm: { _ in }, requestCancel: {})
+            controller.negotiateSession(id: id("a"), name: "member")
+            let selection = try XCTUnwrap(selected)
+            controller.selected(value: selection)
+            controller.sessionSelected(value: selection,
+                result: try memory.select(local: local, remote: remote, groupId: group, founderId: founder, marker: nil))
+            XCTAssertEqual(controller.sessionSnapshot().phase, .needsChoice)
+            let handle = IosGroupSessionChoiceHandle()
+            controller.choiceHandler = { handle.request = $0 }
+            return (controller, handle)
+        }
+        let memory = IosGroupSessionMemory()
+        let mine = try used(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("c")))
+        let theirsEmpty = try IosGroupSessionMemory().propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("d"))
+        _ = try memory.select(local: try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("c")),
+                              remote: mine, groupId: group, founderId: founder, marker: nil)
+        let theirs = try used(theirsEmpty)
+        let held = try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f"))
+        let heldBytes = data(try held.framedBytes())
+        // Keep: nothing changes and the answer idles the panel.
+        var (controller, handle) = try negotiate(memory, try used(held), theirs)
+        controller.chooseSession(sessionId: id("c"))
+        var request = try XCTUnwrap(handle.request)
+        XCTAssertTrue(memory.choose(request: request))
+        controller.sessionChosen(request: request, applied: true)
+        XCTAssertEqual(controller.sessionSnapshot().phase, .idle)
+        XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()), heldBytes)
+        // Adopt: the held session is replaced by theirs, used, never merged.
+        (controller, handle) = try negotiate(memory, try used(held), theirs)
+        controller.chooseSession(sessionId: id("d"))
+        request = try XCTUnwrap(handle.request)
+        XCTAssertTrue(memory.choose(request: request))
+        XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()),
+                       data(try theirs.framedBytes()))
+        // Applying the same request again is idempotent: it now keeps the adopted session and merges nothing.
+        XCTAssertTrue(memory.choose(request: request))
+        XCTAssertEqual(data(try memory.propose(groupId: group, founderId: founder, marker: nil, newSessionId: id("f")).framedBytes()),
+                       data(try theirs.framedBytes()))
+        // A reset run refuses any choice.
+        (controller, handle) = try negotiate(memory, try used(held), theirs)
+        controller.chooseSession(sessionId: id("d"))
+        let afterReset = try XCTUnwrap(handle.request)
+        memory.reset()
+        XCTAssertFalse(memory.choose(request: afterReset))
+    }
+
+    private final class IosGroupSessionChoiceHandle { var request: IosGroupSessionChoice? }
+
     private func used(_ offer: IosGroupSessionOffer) throws -> IosGroupSessionOffer {
         var frame = data(try offer.framedBytes())
         frame[frame.count - 1] = 3 // Untrusted test observation, parsed by the production shared codec.

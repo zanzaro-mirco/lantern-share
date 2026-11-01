@@ -1,6 +1,8 @@
 package lantern.ui
 
 import lantern.domain.GroupTrustAnchor
+import lantern.domain.SessionChoice
+import lantern.domain.SessionChoiceEffect
 import lantern.domain.SessionCandidate
 import lantern.domain.SessionSelection
 import lantern.protocol.GroupSessionOffer
@@ -53,7 +55,27 @@ class IosGroupSessionMemory {
             held = Held(anchor, marker, result.session, previous?.participants, previous?.roster)
             revision++
         }
-        return IosGroupSessionResult(result)
+        return IosGroupSessionResult(result, local.offer.session)
+    }
+
+    /**
+     * Applies an explicit choice (ADR 022): keeping the held session changes nothing, adopting the peer's
+     * abandons the held one for it as used, scope unknown. Nothing is merged and no revision is skipped.
+     * False for a stale or foreign choice; the caller reports it back to the controller.
+     */
+    fun choose(request: IosGroupSessionChoice): Boolean {
+        val current = held ?: return false
+        if (current.anchor.groupId != request.session.groupId) return false
+        val effect = try {
+            SessionChoice.apply(request.choice.sessions, current.session, request.session)
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        if (effect is SessionChoiceEffect.Adopt) {
+            held = Held(current.anchor, current.marker, effect.session)
+            revision++
+        }
+        return true
     }
 
     /** Only after fresh membership/LSN on this TLS; never derive a used roster from its endpoints. */

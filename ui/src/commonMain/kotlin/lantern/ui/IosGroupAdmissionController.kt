@@ -11,7 +11,9 @@ import lantern.domain.GroupRosterFailure
 import lantern.domain.GroupTextState
 import lantern.domain.GroupTextFailure
 import lantern.domain.SignedGroupText
+import lantern.domain.GroupSessionChoiceController
 import lantern.domain.GroupSessionState
+import lantern.domain.SessionCandidate
 import lantern.domain.SessionSelection
 import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupAdmissionFailure
@@ -50,7 +52,10 @@ data class IosGroupMembershipDisplay(val phase: IosGroupMembershipPhase, val gro
 
 enum class IosGroupSessionPhase { IDLE, NEGOTIATING, SELECTED, NEEDS_CHOICE, FAILED }
 data class IosGroupSessionDisplay(val phase: IosGroupSessionPhase, val groupId: String, val sessionId: String)
-class IosGroupSessionResult internal constructor(internal val decision: SessionSelection)
+class IosGroupSessionResult internal constructor(internal val decision: SessionSelection, internal val held: SessionCandidate? = null)
+
+/** Opaque request for the native queue: the exact published choice and the session picked (ADR 022). */
+class IosGroupSessionChoice internal constructor(internal val choice: GroupSessionState.NeedsChoice, internal val session: SessionCandidate)
 
 /**
  * Shared presentation contract for the native service. Native callbacks only enqueue work;
@@ -61,7 +66,7 @@ class IosGroupAdmissionController(
     private val requestSelect: (IosGroupAdmissionSelection) -> Unit,
     private val requestConfirm: (IosGroupAdmissionDisplayTicket) -> Unit,
     private val requestCancel: () -> Unit,
-) : GroupRosterTextController {
+) : GroupRosterTextController, GroupSessionChoiceController {
     private val state = MutableStateFlow<GroupAdmissionState>(GroupAdmissionState.Idle)
     private val revision = MutableStateFlow(0L)
     private var selection: IosGroupAdmissionSelection? = null
@@ -150,6 +155,29 @@ class IosGroupAdmissionController(
 
     fun negotiateSession(id: String, name: String) = negotiateGroupSession(Peer(id, name, "", 0))
 
+    /**
+     * Set once by the native service. Without it a choice is ignored, never applied silently: the session
+     * memory belongs to the serial native queue, so the handler must enqueue and answer with [sessionChosen].
+     */
+    var choiceHandler: ((IosGroupSessionChoice) -> Unit)? = null
+
+    override fun chooseGroupSession(choice: GroupSessionState.NeedsChoice, session: SessionCandidate) {
+        val handler = choiceHandler ?: return
+        if (this.session.value === choice && choice.sessions.any { it.sessionId == session.sessionId }) {
+            handler(IosGroupSessionChoice(choice, session))
+        }
+    }
+
+    fun chooseSession(sessionId: String) {
+        val current = session.value as? GroupSessionState.NeedsChoice ?: return
+        current.sessions.firstOrNull { it.sessionId == sessionId }?.let { chooseGroupSession(current, it) }
+    }
+
+    /** The native queue reports whether its memory applied the choice; stale answers never touch a newer state. */
+    fun sessionChosen(request: IosGroupSessionChoice, applied: Boolean) {
+        if (applied && session.value === request.choice) session.value = GroupSessionState.Idle
+    }
+
     override fun confirmGroup(comparison: GroupAdmissionState.Comparing) {
         val current = displayed.value ?: return
         if (current.comparison !== comparison || !state.compareAndSet(comparison, GroupAdmissionState.AwaitingPeer(comparison.peer))) return
@@ -230,7 +258,8 @@ class IosGroupAdmissionController(
         if (selection !== value || value.mode != IosGroupSelectionMode.SESSION || session.value !is GroupSessionState.Negotiating) return
         session.value = when (val decision = result.decision) {
             is SessionSelection.Join -> GroupSessionState.Selected(value.peer, decision.session)
-            is SessionSelection.Choose -> GroupSessionState.NeedsChoice(value.peer, decision.sessions)
+            is SessionSelection.Choose -> GroupSessionState.NeedsChoice(value.peer, decision.sessions,
+                decision.sessions.firstOrNull { it.sessionId == result.held?.sessionId })
             SessionSelection.Create -> GroupSessionState.Failed(value.peer, GroupAdmissionFailure.FAILED)
         }
     }

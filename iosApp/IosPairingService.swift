@@ -373,6 +373,13 @@ final class BonjourProbe: ObservableObject {
                 self?.queue.async { [weak self] in self?.cancelGroup() }
             }
         )
+        // ADR 022: the session memory belongs to the serial service queue, so the choice is applied there.
+        groupAdmission.choiceHandler = { [weak self] request in
+            self?.queue.async { [weak self] in
+                guard let self else { return }
+                self.groupAdmission.sessionChosen(request: request, applied: self.groupSessionMemory.choose(request: request))
+            }
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.openStores() }
     }
 

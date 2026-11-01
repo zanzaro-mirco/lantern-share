@@ -6,6 +6,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupMembershipCheckState
 import lantern.domain.GroupSessionState
@@ -312,6 +313,41 @@ class IosGroupAdmissionControllerTest {
         controller.cancelled()
         controller.sessionSelected(next, result)
         assertEquals(IosGroupSessionPhase.IDLE, controller.sessionSnapshot().phase)
+    }
+
+    @Test
+    fun explicitChoiceReachesTheNativeQueueOnlyForThePublishedChoiceAndIdlesOnlyWhenApplied() {
+        val mine = SessionCandidate("b".repeat(64), "c".repeat(64), true)
+        val theirs = SessionCandidate("b".repeat(64), "d".repeat(64), true)
+        val requests = mutableListOf<IosGroupSessionChoice>()
+        controller.negotiateGroupSession(peer)
+        val selected = selections.last()
+        controller.selected(selected)
+        controller.sessionSelected(selected, IosGroupSessionResult(SessionSelection.Choose(listOf(mine, theirs)), mine))
+        val choice = assertIs<GroupSessionState.NeedsChoice>(controller.groupSessionState.value)
+        assertEquals(mine, choice.held)
+        // Without the native handler nothing is applied or pretended.
+        controller.chooseSession(theirs.sessionId)
+        assertSame(choice, controller.groupSessionState.value)
+        controller.choiceHandler = { requests.add(it) }
+        controller.chooseSession("e".repeat(64))
+        controller.chooseGroupSession(choice, SessionCandidate("b".repeat(64), "e".repeat(64), true))
+        assertTrue(requests.isEmpty())
+        controller.chooseSession(theirs.sessionId)
+        val request = requests.single()
+        // The memory refused (or the answer is late): the choice stays published.
+        controller.sessionChosen(request, false)
+        assertSame(choice, controller.groupSessionState.value)
+        controller.sessionChosen(request, true)
+        assertEquals(IosGroupSessionPhase.IDLE, controller.sessionSnapshot().phase)
+        // A stale click on the consumed choice never reaches the native queue again.
+        controller.chooseGroupSession(choice, theirs)
+        assertEquals(1, requests.size)
+        // A late answer cannot idle a newer negotiation.
+        controller.negotiateGroupSession(peer)
+        controller.selected(selections.last())
+        controller.sessionChosen(request, true)
+        assertEquals(IosGroupSessionPhase.NEGOTIATING, controller.sessionSnapshot().phase)
     }
 
     @Test
