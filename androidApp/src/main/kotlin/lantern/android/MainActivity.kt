@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
         try {
             val controller = createNode(address)
             node = controller
-            val group = LocalGroupService(controller.identity, checkNotNull(repository))
+            val group = LocalGroupService(controller.identity, checkNotNull(repository), controller::leaveLocalGroup)
             localGroup = group
             setContent {
                 Column {

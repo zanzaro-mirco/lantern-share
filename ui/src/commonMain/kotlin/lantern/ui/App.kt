@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +33,7 @@ import lantern.domain.DeviceController
 import lantern.domain.DeviceState
 import lantern.domain.Peer
 import lantern.domain.LocalGroupController
+import lantern.domain.LocalGroupExitController
 import lantern.domain.LocalGroupFailure
 import lantern.domain.LocalGroupState
 import lantern.domain.GroupAdmissionController
@@ -274,6 +276,17 @@ internal fun GroupSessionPanel(controller: GroupSessionController) {
 @Composable
 internal fun LocalGroupPanel(controller: LocalGroupController) {
     val state by controller.state.collectAsState()
+    var exitConfirmation by remember { mutableStateOf<LocalGroupState?>(null) }
+    val displayed = exitConfirmation
+    if (displayed != null && displayed === state && controller is LocalGroupExitController) {
+        AlertDialog(
+            onDismissRequest = { exitConfirmation = null },
+            title = { Text("Uscire dal gruppo?") },
+            text = { Text("Il servizio LAN verrà arrestato. Identità e cronologia restano salvate. Per rientrare servirà una nuova ammissione; gli altri dispositivi non vengono modificati.") },
+            confirmButton = { TextButton(onClick = { exitConfirmation = null; controller.leave(displayed) }) { Text("Esci dal gruppo") } },
+            dismissButton = { TextButton(onClick = { exitConfirmation = null }) { Text("Annulla") } },
+        )
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Gruppo locale", style = MaterialTheme.typography.titleMedium)
@@ -284,6 +297,7 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
                     Button(onClick = controller::create) { Text("Crea gruppo locale") }
                 }
                 LocalGroupState.Creating -> Text("Salvataggio del gruppo…")
+                LocalGroupState.Leaving -> Text("Uscita dal gruppo e arresto del servizio…")
                 is LocalGroupState.Founded -> SelectionContainer { Text("Gruppo: ${current.anchor.groupId}") }
                 is LocalGroupState.Adopted -> SelectionContainer { Text("Membro del gruppo: ${current.anchor.groupId}") }
                 is LocalGroupState.Failed -> {
@@ -295,6 +309,9 @@ internal fun LocalGroupPanel(controller: LocalGroupController) {
                     OutlinedButton(onClick = controller::reload) { Text("Rileggi stato salvato") }
                 }
                 LocalGroupState.Closed -> Text("Gestione gruppo arrestata.")
+            }
+            if (controller is LocalGroupExitController && (state is LocalGroupState.Founded || state is LocalGroupState.Adopted)) {
+                OutlinedButton(onClick = { exitConfirmation = state }) { Text("Esci dal gruppo") }
             }
             Text("Lo stato locale non abilita sessioni o messaggi di gruppo. La creazione non associa dispositivi.")
         }

@@ -37,7 +37,7 @@ fun main() {
             val identity = unlockIdentity(directory) ?: return
             openDesktopRepository(directory.resolve("lantern.db")).use { repository ->
                 Node(identity, repository, LanDiscovery(address), address).use { node ->
-                    LocalGroupService(identity, repository).use { group ->
+                    LocalGroupService(identity, repository, node::leaveLocalGroup).use { group ->
                         application(exitProcessOnExit = false) {
                             Window(onCloseRequest = ::exitApplication, title = "Lantern · LAN") {
                                 LanternApp(node, group)

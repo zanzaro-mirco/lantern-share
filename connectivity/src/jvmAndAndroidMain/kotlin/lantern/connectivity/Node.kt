@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.joinAll
 import lantern.domain.ContentLimits
 import lantern.domain.DeviceController
 import lantern.domain.DeviceRepository
@@ -23,6 +24,7 @@ import lantern.domain.GroupSessionState
 import lantern.domain.SessionCandidate
 import lantern.domain.GroupAdmissionState
 import lantern.domain.GroupAdoptionRepository
+import lantern.domain.GroupTrustAnchor
 import lantern.domain.Peer
 import lantern.domain.Reconnection
 import lantern.protocol.Wire
@@ -56,6 +58,7 @@ class Node(
     @Volatile private var activeRun: ServiceRun? = null
     @Volatile private var cleanupJob: Job? = null
     @Volatile private var closed = false
+    private var leavingGroup = false
     private val admissions = GroupAdmissionService(identity, repository as? GroupAdoptionRepository, scope) {
         !closed && activeRun != null
     }
@@ -100,6 +103,7 @@ class Node(
     @Synchronized
     override fun start() {
         check(!closed) { "Nodo chiuso" }
+        if (leavingGroup) return
         if (activeRun != null) return
         val run = ServiceRun()
         activeRun = run
@@ -368,6 +372,31 @@ class Node(
             lifetime.cancelAndJoin()
         }
         admissions.close()
+    }
+
+    /** Stops LAN traffic and drains even retired selections before deleting local authority.
+     * Called by the local-group IO owner, never by a child of this Node's lifetime.
+     * Start is ignored until the transaction (or its failure) has completed.
+     */
+    suspend fun leaveLocalGroup(expected: GroupTrustAnchor) {
+        synchronized(this) {
+            check(!closed && !leavingGroup)
+            leavingGroup = true
+            stop()
+        }
+        try {
+            while (true) {
+                val workers = lifetime.children.toList()
+                if (workers.isEmpty()) break
+                workers.joinAll()
+            }
+            val groups = checkNotNull(repository as? GroupAdoptionRepository)
+            check(groups.leaveLocalGroup(expected, identity.id)) { "Membership changed before exit" }
+            check(groups.localGroup() == null && groups.pendingGroupAdoption() == null)
+            admissions.clearLastDelivery()
+        } finally {
+            synchronized(this) { leavingGroup = false }
+        }
     }
 
     private fun allowsHandshake(peerId: String): Boolean =

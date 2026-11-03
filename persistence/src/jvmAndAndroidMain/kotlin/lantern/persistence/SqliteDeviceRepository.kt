@@ -31,6 +31,10 @@ class SqliteDeviceRepository(private val driver: SqlDriver) : DeviceRepository, 
     override fun localGroup(): GroupTrustAnchor? = store.localGroup()
 
     @Synchronized
+    override fun leaveLocalGroup(expected: GroupTrustAnchor, currentIdentityId: String): Boolean =
+        store.leaveLocalGroup(expected, currentIdentityId)
+
+    @Synchronized
     override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
         store.foundLocalGroup(anchor, currentIdentityId)
 

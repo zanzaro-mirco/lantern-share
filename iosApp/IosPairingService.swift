@@ -364,6 +364,7 @@ final class BonjourProbe: ObservableObject {
             requestCreate: { [weak self] in self?.createLocalGroup() },
             requestReload: { [weak self] in self?.reloadLocalGroup() }
         )
+        localGroup.leaveHandler = { [weak self] in self?.leaveLocalGroup() }
         groupAdmission = IosGroupAdmissionController(
             requestSelect: { [weak self] in self?.selectGroup($0) },
             requestConfirm: { [weak self] ticket in
@@ -435,6 +436,29 @@ final class BonjourProbe: ObservableObject {
 
     private func reloadLocalGroup() {
         queue.async { [weak self] in self?.loadLocalGroup() }
+    }
+
+    private func leaveLocalGroup() {
+        queue.async { [weak self] in
+            guard let self, self.localGroup.hasPendingExit() else { return }
+            self.stopResources()
+            self.onMain {
+                self.state.updateDevices(values: [])
+                self.state.updatePairing(peerId: "", code: "")
+                self.state.updateConnected(peerId: "")
+                self.state.updateStatus(value: "Servizio LAN arrestato")
+            }
+            // Includes earlier retired selections, not just the current one. Never wait on
+            // this queue: native signature/commit cleanup must be able to run on it.
+            self.admissionDrains.notify(queue: self.queue) { [self] in
+                guard let identity, let persistence else { localGroup.exitFailed(); return }
+                do {
+                    try localGroup.finishExit(identityId: identity.id, persistence: persistence)
+                    groupAdmission.clearLastDelivery()
+                }
+                catch { localGroup.exitFailed() }
+            }
+        }
     }
 
     private func loadLocalGroup() {
@@ -600,7 +624,7 @@ final class BonjourProbe: ObservableObject {
     }
 
     private func startResources() {
-        guard browser == nil, listener == nil, let identity, let transport, persistence != nil else { return }
+        guard !localGroup.hasPendingExit(), browser == nil, listener == nil, let identity, let transport, persistence != nil else { return }
         do {
             let listener = try transport.listen { [allowedPeers] in allowedPeers.values() }
             listener.service = service(for: identity)

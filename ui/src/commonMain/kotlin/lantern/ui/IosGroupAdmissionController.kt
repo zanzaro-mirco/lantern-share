@@ -82,6 +82,7 @@ class IosGroupAdmissionController(
     private val roster = MutableStateFlow<GroupRosterState>(GroupRosterState.Idle)
     override val groupRosterState = roster.asStateFlow()
     private val lastDelivery = MutableStateFlow<StoredGroupText?>(null)
+    fun clearLastDelivery() { lastDelivery.value = null }
     override val lastRosterTextDelivery = lastDelivery.asStateFlow()
 
     override fun sendRosterText(peer: Peer, text: String) {

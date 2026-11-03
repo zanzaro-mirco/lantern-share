@@ -32,6 +32,8 @@ class IosDeviceRepository internal constructor(
     override fun name(): String = locked(store::name)
     override fun rename(name: String) { locked { store.rename(name) } }
     override fun localGroup(): GroupTrustAnchor? = locked(store::localGroup)
+    override fun leaveLocalGroup(expected: GroupTrustAnchor, currentIdentityId: String): Boolean =
+        locked { store.leaveLocalGroup(expected, currentIdentityId) }
     override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String): Boolean =
         locked { store.foundLocalGroup(anchor, currentIdentityId) }
     override fun pendingGroupAdoption(): PendingGroupAdoption? = locked(store::pendingGroupAdoption)

@@ -10,16 +10,18 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import lantern.domain.LocalGroupController
+import lantern.domain.LocalGroupExitController
 import lantern.domain.LocalGroupFailure
 import lantern.domain.LocalGroupRepository
 import lantern.domain.LocalGroupState
 import lantern.domain.GroupAdoptionRepository
+import lantern.domain.GroupTrustAnchor
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Owns local foundation work and read-only durable membership presentation, not transport,
- * sessions or repository lifetime. Pending adoption journals are never consumed on startup.
+ * Owns foundation, membership presentation and explicit exit requests, not transport or
+ * repository lifetime. The app supplies the exit owner that stops/drains the Node first.
+ * Pending adoption journals are never consumed on startup.
  * The app supplies the same immutable OS identity as its Node and must close this service
  * before closing the database. Identity replacement requires recreating both owners.
  * UI entry points only reserve state/launch IO; opening the screen never creates a group.
@@ -27,16 +29,44 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LocalGroupService(
     private val identity: Identity,
     private val repository: LocalGroupRepository,
-) : LocalGroupController, AutoCloseable {
+    private val exitGroup: (suspend (GroupTrustAnchor) -> Unit)? = null,
+) : LocalGroupExitController, AutoCloseable {
     private val mutable = MutableStateFlow<LocalGroupState>(LocalGroupState.Loading)
     override val state = mutable.asStateFlow()
     private val closed = AtomicBoolean(false)
     private val refreshPending = AtomicBoolean(false)
+    private val exitRecoveryRequired = AtomicBoolean(false)
     private val lifecycleGate = Any()
     private val lifetime = SupervisorJob()
     private val scope = CoroutineScope(lifetime + Dispatchers.IO)
 
     init { load() }
+
+    override fun leave(displayed: LocalGroupState) {
+        val exit = exitGroup ?: return
+        val anchor = when (displayed) {
+            is LocalGroupState.Founded -> displayed.anchor
+            is LocalGroupState.Adopted -> displayed.anchor
+            else -> return
+        }
+        if (closed.get() || mutable.value !== displayed || !mutable.compareAndSet(displayed, LocalGroupState.Leaving)) return
+        scope.launch {
+            try {
+                ensureActive()
+                exit(anchor)
+                check(readState() == LocalGroupState.Empty) { "Membership still present after exit" }
+                mutable.compareAndSet(LocalGroupState.Leaving, LocalGroupState.Empty)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                exitRecoveryRequired.set(true)
+                mutable.compareAndSet(LocalGroupState.Leaving, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+            } finally {
+                // A membership callback queued before the drain must not hide an uncertain write.
+                refreshPending.set(false)
+            }
+        }
+    }
 
     override fun create() {
         if (closed.get() || !mutable.compareAndSet(LocalGroupState.Empty, LocalGroupState.Creating)) return
@@ -75,11 +105,14 @@ class LocalGroupService(
         if (closed.get()) return
         val previous = mutable.value
         if (previous !is LocalGroupState.Failed) return
-        if (mutable.compareAndSet(previous, LocalGroupState.Loading)) load()
+        if (mutable.compareAndSet(previous, LocalGroupState.Loading)) {
+            exitRecoveryRequired.set(false)
+            load()
+        }
     }
 
     override fun refreshMembership() {
-        if (closed.get()) return
+        if (closed.get() || exitRecoveryRequired.get()) return
         refreshPending.set(true)
         drainRefresh()
     }
@@ -87,7 +120,7 @@ class LocalGroupService(
     private fun drainRefresh() {
         while (!closed.get() && refreshPending.get()) {
             val previous = mutable.value
-            if (previous == LocalGroupState.Loading || previous == LocalGroupState.Creating || previous == LocalGroupState.Closed) return
+            if (previous == LocalGroupState.Loading || previous == LocalGroupState.Creating || previous == LocalGroupState.Leaving || previous == LocalGroupState.Closed) return
             if (!refreshPending.compareAndSet(true, false)) continue
             if (mutable.compareAndSet(previous, LocalGroupState.Loading)) {
                 load()
@@ -113,7 +146,7 @@ class LocalGroupService(
     }
 
     private fun readState(): LocalGroupState {
-        // Repositories are append-only for membership; a concurrent commit between these reads
+        // Exit drains admission writers first. A concurrent admission between these reads
         // can yield a safe mismatch, never a promoted pending journal. Reload is explicit.
         val committed = (repository as? GroupAdoptionRepository)?.committedGroupAdoption()
         return GroupRootAdoptionJournalInspector.presentation(repository.localGroup(), identity.id, committed)

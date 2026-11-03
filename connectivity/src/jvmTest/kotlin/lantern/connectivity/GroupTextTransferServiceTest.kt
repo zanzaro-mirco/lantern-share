@@ -38,6 +38,142 @@ import kotlin.test.assertTrue
 /** Actual Nodes, mutual TLS, delegated group admission, P-256 and reopened SQLite, not wire-0 trust. */
 class GroupTextTransferServiceTest {
     @Test
+    fun exitWaitsForEnteredTextCommitAndNeverAcknowledgesItAfterStop() = withMembers { f ->
+        f.stores { aStore, bStore ->
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val boundary = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore, GroupTextRepository by bStore {
+                override fun saveGroupText(message: SignedGroupText, localIdentity: String): Boolean {
+                    entered.countDown()
+                    check(release.await(8, TimeUnit.SECONDS))
+                    return bStore.saveGroupText(message, localIdentity)
+                }
+            }
+            node(f.a, aStore).use { a -> node(f.b, boundary).use { b ->
+                val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+                try {
+                    a.start(); b.start(); ports(a, b)
+                    startText(a, b, "Commit prima dell'uscita", true)
+                    assertTrue(entered.await(8, TimeUnit.SECONDS))
+                    val exit = worker.submit { runBlocking { b.leaveLocalGroup(f.anchor) } }
+                    runBlocking { withTimeout(5_000) { b.state.first { !it.active } } }
+                    assertFalse(exit.isDone)
+                    assertEquals(f.anchor, bStore.localGroup())
+                    val failed = assertIs<GroupTextState.Failed>(awaitText(a))
+                    release.countDown()
+                    exit.get(5, TimeUnit.SECONDS)
+                    val saved = assertNotNull(aStore.groupText(assertNotNull(failed.attemptedMessageId)))
+                    assertNotNull(bStore.groupText(saved.message.content.id))
+                    assertFalse(f.b.id in saved.receivedBy)
+                    assertNull(bStore.localGroup())
+                    assertIs<GroupTextState.Idle>(b.groupTextState.value)
+                } finally {
+                    release.countDown()
+                    worker.shutdownNow()
+                    check(worker.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            } }
+        }
+    }
+    @Test
+    fun exitDrainsRetiredPreparationAndRejectsStartUntilDeletionFinishes() = withMembers { f ->
+        f.stores { aStore, bStore ->
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val deleted = java.util.concurrent.atomic.AtomicBoolean(false)
+            val observed = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore, GroupTextRepository by bStore {
+                override fun committedGroupAdoption(): lantern.domain.PendingGroupAdoption? {
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                    return bStore.committedGroupAdoption()
+                }
+                override fun leaveLocalGroup(expected: GroupTrustAnchor, currentIdentityId: String): Boolean {
+                    assertEquals(0L, release.count)
+                    deleted.set(true)
+                    return bStore.leaveLocalGroup(expected, currentIdentityId)
+                }
+            }
+            node(f.a, aStore).use { a -> node(f.b, observed).use { b ->
+                val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+                try {
+                    a.start(); b.start(); ports(a, b)
+                    b.receiveRosterText(peer(a))
+                    assertTrue(entered.await(5, TimeUnit.SECONDS))
+                    val exit = worker.submit { runBlocking { b.leaveLocalGroup(f.anchor) } }
+                    runBlocking { withTimeout(5_000) { b.state.first { !it.active } } }
+                    b.start()
+                    assertFalse(b.state.value.active)
+                    assertFalse(deleted.get())
+                    assertFalse(exit.isDone)
+                    release.countDown()
+                    exit.get(5, TimeUnit.SECONDS)
+                    assertTrue(deleted.get())
+                    assertNull(bStore.localGroup())
+                    assertIs<GroupTextState.Idle>(b.groupTextState.value)
+                    b.start(); ports(a, b)
+                } finally {
+                    release.countDown()
+                    worker.shutdownNow()
+                    check(worker.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            } }
+        }
+    }
+    @Test
+    fun durableExitStopsAdoptedMemberAndOldCopiesRequireFreshAdmission() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            val saved = rosterTransfer(b, a, "Prima dell'uscita")
+            val oldPeer = peer(b)
+            // A live selection is invalidated and drained along with the completed text owner.
+            b.receiveRosterText(peer(a))
+            LocalGroupService(f.b, bStore, b::leaveLocalGroup).use { group ->
+                val displayed = runBlocking { withTimeout(5_000) {
+                    group.state.first { it is lantern.domain.LocalGroupState.Adopted }
+                } }
+                group.leave(displayed)
+                runBlocking { withTimeout(10_000) {
+                    group.state.first { it == lantern.domain.LocalGroupState.Empty }
+                } }
+                group.leave(displayed) // The old panel confirmation cannot act again.
+                assertEquals(lantern.domain.LocalGroupState.Empty, group.state.value)
+            }
+            assertFalse(b.state.value.active)
+            assertEquals(0, b.port)
+            assertIs<GroupTextState.Idle>(b.groupTextState.value)
+            assertIs<GroupSessionState.Idle>(b.groupSessionState.value)
+            assertNull(b.lastRosterTextDelivery.value)
+            assertNull(bStore.localGroup())
+            assertNull(bStore.committedGroupAdoption())
+            assertNotNull(bStore.groupText(saved.content.id))
+            assertNotNull(aStore.localGroup())
+            openDesktopRepository(f.directory.resolve("b.db")).use { assertNull(it.localGroup()) }
+            b.start(); ports(a, b)
+            b.deliverRosterText(peer(a), saved.content.id)
+            assertIs<GroupTextState.Failed>(awaitText(b))
+            assertNull(bStore.localGroup())
+            // A fresh live comparison is required, not a journal or saved text replay.
+            admit(a, b)
+            val next = rosterTransfer(b, a, "Dopo la nuova ammissione")
+            assertEquals(2L, next.content.authorSequence)
+            assertEquals(saved.content.sessionId, next.content.sessionId) // A kept the session alive.
+            assertEquals(oldPeer.id, b.identity.id)
+        } } }
+    }
+
+    @Test
+    fun founderCanExitWithoutRemovingOtherMembers() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            synchronize(a, b)
+            runBlocking { withTimeout(10_000) { a.leaveLocalGroup(f.anchor) } }
+            assertNull(aStore.localGroup())
+            assertEquals(f.anchor, bStore.localGroup())
+            assertFalse(a.state.value.active)
+            assertTrue(b.state.value.active)
+        } } }
+    }
+    @Test
     fun rosterTextDeliversSameSignedCopyToThreeRecipientsIncludingReturningFounderAndPersistsExactReceipts() = withMembers { f ->
         val third = createDesktopIdentity().identity()
         var deliveredId = ""

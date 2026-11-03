@@ -22,6 +22,34 @@ import kotlin.test.assertTrue
 
 class LocalGroupServiceTest {
     @Test
+    fun exitRejectsStaleClicksAndUncertainAcknowledgementNeedsExplicitReload() = withDatabase { path ->
+        val identity = createDesktopIdentity().identity()
+        val writes = AtomicInteger()
+        openDesktopRepository(path).use { repository ->
+            val anchor = GroupTrustAnchor("c".repeat(64), identity.id)
+            repository.foundLocalGroup(anchor, identity.id)
+            LocalGroupService(identity, repository, { expected ->
+                writes.incrementAndGet()
+                check(repository.leaveLocalGroup(expected, identity.id))
+                error("lost exit acknowledgement")
+            }).use { service ->
+                val displayed = await(service) { it is LocalGroupState.Founded }
+                service.leave(LocalGroupState.Founded(anchor))
+                assertEquals(0, writes.get())
+                service.leave(displayed)
+                await(service) { it is LocalGroupState.Failed }
+                service.refreshMembership()
+                assertEquals(LocalGroupState.Failed(LocalGroupFailure.STORAGE), service.state.value)
+                repeat(10) { service.leave(displayed); service.create() }
+                assertEquals(1, writes.get())
+                assertNull(repository.localGroup())
+                service.reload()
+                await(service) { it == LocalGroupState.Empty }
+                assertEquals(1, writes.get())
+            }
+        }
+    }
+    @Test
     fun membershipRefreshDuringInitialReadIsNotLostAndNeverWrites() = withDatabase { path ->
         val identity = createDesktopIdentity().identity()
         val entered = CountDownLatch(1)

@@ -255,6 +255,8 @@ internal class GroupAdmissionService(
     /** Called by Node.stop under its run lock. A later LAN/run never revives this observation. */
     fun resetSessions() = synchronized(sessionLock) { localSession = null; pendingChoice = null }
 
+    fun clearLastDelivery() { lastDelivery.value = null }
+
     override fun chooseGroupSession(choice: GroupSessionState.NeedsChoice, session: SessionCandidate) {
         synchronized(sessionLock) {
             val pending = pendingChoice?.takeIf { it.choice === choice && sessionState.value === choice } ?: return

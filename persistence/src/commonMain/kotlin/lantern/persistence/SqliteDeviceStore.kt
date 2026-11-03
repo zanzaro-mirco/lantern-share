@@ -57,6 +57,26 @@ internal class SqliteDeviceStore(driver: SqlDriver) : GroupTextRepository {
             GroupTrustAnchor(it.group_id, it.founder_id), it.payload)
     }
 
+    fun leaveLocalGroup(expected: GroupTrustAnchor, currentIdentityId: String): Boolean = database.transactionWithResult {
+        // Acquire the SQLite write lock before inspecting: independent connections cannot
+        // replace the root between the check and the deletes. Roll back on any mismatch.
+        queries.deleteLocalFoundation(expected.groupId, expected.founderId, currentIdentityId)
+        val foundationRemoved = queries.lastInsertCount().executeAsOne()
+        queries.deleteCommittedAdoption(expected.groupId, expected.founderId, currentIdentityId)
+        val removed = foundationRemoved + queries.lastInsertCount().executeAsOne()
+        check(removed <= 1L) { "Conflicting local memberships" }
+        if (removed == 1L) {
+            check(localGroup() == null) { "Conflicting membership during exit" }
+            val pending = pendingGroupAdoption()
+            check(pending == null || (pending.anchor == expected && pending.localIdentity == currentIdentityId)) {
+                "Conflicting journal during exit"
+            }
+            queries.deleteLeavingJournal(expected.groupId, expected.founderId, currentIdentityId)
+            check(pendingGroupAdoption() == null)
+        }
+        removed == 1L
+    }
+
     fun stageGroupAdoption(record: PendingGroupAdoption, currentIdentityId: String): Boolean =
         database.transactionWithResult {
             require(record.localIdentity == currentIdentityId) { "Staged adoption identity changed" }

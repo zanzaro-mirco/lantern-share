@@ -53,6 +53,12 @@ SELECT 1, ?, ? WHERE NOT EXISTS (SELECT 1 FROM local_group)
 AND NOT EXISTS (SELECT 1 FROM group_adoption);
 lastInsertCount:
 SELECT changes();
+deleteLocalFoundation:
+DELETE FROM local_group WHERE group_id = ? AND founder_id = ? AND founder_id = ?;
+deleteCommittedAdoption:
+DELETE FROM group_adoption WHERE group_id = ? AND founder_id = ? AND local_identity = ?;
+deleteLeavingJournal:
+DELETE FROM group_adoption_journal WHERE group_id = ? AND founder_id = ? AND local_identity = ?;
 pendingAdoptionJournalRecord:
 SELECT singleton, attempt_id, local_identity, peer_identity, group_id, founder_id, typeof(payload) AS payload_type, payload
 FROM group_adoption_journal;

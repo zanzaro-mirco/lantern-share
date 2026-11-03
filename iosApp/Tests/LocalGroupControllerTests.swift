@@ -6,6 +6,68 @@ import Security
 @testable import Lantern
 
 final class LocalGroupControllerTests: XCTestCase {
+    func testExplicitExitReservesOnceRemovesFoundationAndSurvivesReopen() throws {
+        let namespace = "dev.lantern.exit-tests.\(UUID().uuidString)"
+        defer { removeIdentity(namespace) }
+        let identity = try AppleIdentityStore(namespace: namespace).open()
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+        defer { store.close() }
+        let owner = try LocalGroupFoundation(identity: identity)
+        let ticket = try XCTUnwrap(owner.prepare(persistence: store))
+        _ = try owner.commit(ticket: ticket, currentIdentity: identity, persistence: store)
+        let controller = IosLocalGroupController(requestCreate: {}, requestReload: {})
+        try controller.loaded(identityId: identity.id, persistence: store)
+        controller.requestExit() // No installed owner must never pretend to have left.
+        XCTAssertEqual(controller.snapshot().phase.name, "FOUNDED")
+        var exits = 0
+        controller.leaveHandler = { exits += 1 }
+        controller.requestExit()
+        for _ in 0..<10 { controller.requestExit(); controller.create(); controller.reload(); controller.refreshMembership() }
+        XCTAssertEqual(exits, 1)
+        XCTAssertEqual(controller.snapshot().phase.name, "LEAVING")
+        // The real service drains native owners before this synchronous Kotlin transaction.
+        try controller.finishExit(identityId: identity.id, persistence: store)
+        XCTAssertEqual(controller.snapshot().phase.name, "EMPTY")
+        XCTAssertNil(try store.localGroup())
+        XCTAssertNil(try store.pendingGroupAdoption())
+        XCTAssertNil(try store.committedGroupAdoption())
+        try controller.finishExit(identityId: identity.id, persistence: store) // No replay.
+        let reopened = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+        defer { reopened.close() }
+        let recovered = IosLocalGroupController(requestCreate: { XCTFail("automatic creation") }, requestReload: {})
+        try recovered.loaded(identityId: identity.id, persistence: reopened)
+        XCTAssertEqual(recovered.snapshot().phase.name, "EMPTY")
+        controller.close(); recovered.close()
+    }
+
+    func testExitFailureRequiresExplicitReloadAndClosedControllerIgnoresCompletion() throws {
+        let namespace = "dev.lantern.exit-failure-tests.\(UUID().uuidString)"
+        defer { removeIdentity(namespace) }
+        let identity = try AppleIdentityStore(namespace: namespace).open()
+        let store = try IosEntryKt.openIosPersistence(databaseDirectory: directory.path)
+        defer { store.close() }
+        let owner = try LocalGroupFoundation(identity: identity)
+        let ticket = try XCTUnwrap(owner.prepare(persistence: store))
+        _ = try owner.commit(ticket: ticket, currentIdentity: identity, persistence: store)
+        var reloads = 0
+        let controller = IosLocalGroupController(requestCreate: {}, requestReload: { reloads += 1 })
+        controller.leaveHandler = {}
+        try controller.loaded(identityId: identity.id, persistence: store)
+        controller.requestExit()
+        controller.exitFailed()
+        controller.refreshMembership()
+        XCTAssertEqual(reloads, 0)
+        XCTAssertEqual(controller.snapshot().phase.name, "FAILED")
+        controller.reload()
+        XCTAssertEqual(reloads, 1)
+        try controller.loaded(identityId: identity.id, persistence: store)
+        XCTAssertEqual(controller.snapshot().phase.name, "FOUNDED")
+        controller.requestExit()
+        controller.close()
+        try controller.finishExit(identityId: identity.id, persistence: store)
+        XCTAssertEqual(controller.snapshot().phase.name, "CLOSED")
+        XCTAssertNotNil(try store.localGroup())
+    }
     private var directory: URL!
 
     override func setUpWithError() throws {

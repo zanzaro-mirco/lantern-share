@@ -9,10 +9,16 @@ sealed interface LocalGroupState {
     data object Loading : LocalGroupState
     data object Empty : LocalGroupState
     data object Creating : LocalGroupState
+    data object Leaving : LocalGroupState
     data class Founded(val anchor: GroupTrustAnchor) : LocalGroupState
     data class Adopted(val anchor: GroupTrustAnchor) : LocalGroupState
     data class Failed(val reason: LocalGroupFailure) : LocalGroupState
     data object Closed : LocalGroupState
+}
+
+/** Explicit exit from the exact membership currently displayed, never a background cleanup. */
+interface LocalGroupExitController : LocalGroupController {
+    fun leave(displayed: LocalGroupState)
 }
 
 interface LocalGroupController {
