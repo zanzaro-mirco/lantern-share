@@ -451,12 +451,14 @@ final class BonjourProbe: ObservableObject {
             // Includes earlier retired selections, not just the current one. Never wait on
             // this queue: native signature/commit cleanup must be able to run on it.
             self.admissionDrains.notify(queue: self.queue) { [self] in
-                guard let identity, let persistence else { localGroup.exitFailed(); return }
-                do {
-                    try localGroup.finishExit(identityId: identity.id, persistence: persistence)
-                    groupAdmission.clearLastDelivery()
+                guard let identity = self.identity, let persistence = self.persistence else {
+                    self.localGroup.exitFailed(); return
                 }
-                catch { localGroup.exitFailed() }
+                do {
+                    try self.localGroup.finishExit(identityId: identity.id, persistence: persistence)
+                    self.groupAdmission.clearLastDelivery()
+                }
+                catch { self.localGroup.exitFailed() }
             }
         }
     }
