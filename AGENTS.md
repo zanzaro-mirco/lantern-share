@@ -7,9 +7,11 @@
 - La specifica di prodotto è `PIANO_SVILUPPO.md`: non ridurre requisiti. La fase 0 è chiusa sul collaudo fisico Android ↔ Windows riuscito. I collaudi residui Android ↔ Windows e quelli su iPhone e Mac Intel/Apple Silicon sono obbligatori nella fase 1.
 - Le richieste dell'utente prevalgono su queste istruzioni. Comunica in italiano. Modello preferito dall'utente: GPT 5.6 Sol, ragionamento medio; la selezione avviene nell'interfaccia, non attraverso questo file.
 
-## Passaggio fra strumenti — 25 ottobre 2026
+## Ripartenza su Codex — 3 novembre 2026
 
-Le regole di questo file valgono anche quando lo sviluppo riparte con Claude Code. `CLAUDE.md` le richiama senza duplicare metodo o specifica. Guida dettagliata della consegna: `../LANTERN_RIPARTENZA_CLAUDE_CODE.md`, esterna a Git; [indice documentale](docs/STATO_DOCUMENTAZIONE.md). Le preferenze di modello riportate sopra erano riferite alla precedente interfaccia e non impongono un modello a Claude Code. Il repository e la sua sintesi corrente prevalgono su fotografie esterne più vecchie. Consultare gli archivi soltanto per evidenze storiche, non come coda di lavoro.
+Lo sviluppo torna su Codex dopo la parentesi con Claude Code (25 ottobre – 3 novembre 2026), che ha pubblicato stabilità dei Node, B11, backoff dopo scambi riusciti e B12 (ADR 021–022) fino a `b9e89e9`, note in `7248296`. Non c'è nulla da rifare: la fonte della ripartenza è il repository (`PASSAGGIO_CONSEGNE.md`, sintesi di `STATO_SVILUPPO.md`, [indice documentale](docs/STATO_DOCUMENTAZIONE.md)). `CLAUDE.md` e `../LANTERN_RIPARTENZA_CLAUDE_CODE.md` (esterna a Git, fotografia del 25 ottobre) sono storici e non vanno seguiti per lo stato corrente; se si usa di nuovo Claude Code valgono queste stesse regole. Modello preferito dell'utente: GPT 5.6 Sol, ragionamento medio, selezionato nell'interfaccia. Consultare gli archivi soltanto per evidenze storiche, non come coda di lavoro.
+
+Note pratiche di questo checkout Windows: la cartella appartiene a un altro utente locale, quindi usare `git -c safe.directory=*` per comando (nessuna modifica globale) e `gh ... --repo zanzaro-mirco/lantern-share`; cercare le run con lo **SHA completo** (`git rev-parse HEAD`), l'abbreviato dà liste vuote. JDK 17: `JAVA_HOME=C:/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot` con il Gradle Wrapper; il modulo Android richiede `-Pandroid=true`, e `:ui:compileKotlinJvm` / `:desktopApp:classes` compilano UI e desktop (non esiste `:ui:compileKotlinDesktop`). **Non leggere né citare `../passphrase.txt`** (passphrase locale dell'identità desktop): fuori dal repository e mai nei log o nei prompt.
 
 ## Incrementi e consumo di crediti
 

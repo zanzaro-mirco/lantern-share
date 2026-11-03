@@ -2,9 +2,9 @@
 
 ## Fotografia verificata e gerarchia
 
-Codice pubblicato `3d22698c2bcb6ccbd4bfd4bd8f304e0ec243576f`. PoC 40209117434 completed/success; completo Apple 40209149857 in_progress nell'unica lettura di questa consegna, framework compilato ma nuovo Native/Swift/XCTest non ancora attestato. 844 test locali passati nel blocco di codice precedente; nessun test/build nuovo per questa richiesta documentale. Fase 0 chiusa, fase 1/hardware e gate UI aperti.
+Codice pubblicato `b9e89e9` (B12 con ingresso iOS), note in `7248296`; completo Apple 41358627560 success, 204/204 XCTest; iOS ordinario e PoC success. Nessun test/build nuovo per le modifiche documentali di ripartenza su Codex (3 novembre 2026). Fase 0 chiusa, fase 1/hardware e gate UI aperti.
 
-Requisiti: PIANO. Metodo: AGENTS/ARCHITETTURA, richiamati da CLAUDE. Stato/evidenze: STATO. Prossima azione: PASSAGGIO. Decisioni e formati: ADR e contratti tecnici. Gli archivi preservano storia, non impartiscono istruzioni correnti. Date e vecchi conteggi negli ADR restano riferiti all'incremento che li ha prodotti; il riquadro iniziale riconcilia lo stato attuale.
+Requisiti: PIANO. Metodo: AGENTS/ARCHITETTURA (letti da Codex; richiamati anche da CLAUDE). Stato/evidenze: STATO. Prossima azione: PASSAGGIO. Decisioni e formati: ADR e contratti tecnici. Gli archivi preservano storia, non impartiscono istruzioni correnti. Date e vecchi conteggi negli ADR restano riferiti all'incremento che li ha prodotti; il riquadro iniziale riconcilia lo stato attuale.
 
 La guida esterna `../LANTERN_RIPARTENZA_CLAUDE_CODE.md` (relativa alla radice repository) è nella cartella superiore su questa macchina, fuori Git; il repository resta autonomo grazie a CLAUDE/PASSAGGIO. Nessuna chiave, database, passphrase o credenziale è inclusa.
 
@@ -14,8 +14,8 @@ Sono inclusi tutti i Markdown sorgente del repository, esclusi build/cache/dipen
 
 | Documento | Ruolo | Stato riconciliato / intervento |
 |---|---|---|
-| [AGENTS.md](../AGENTS.md) | Istruzioni operative comuni | Metodo preservato, passaggio Claude esplicitato |
-| [CLAUDE.md](../CLAUDE.md) | Ingresso istruzioni Claude Code | Rimanda ad AGENTS e letture mirate |
+| [AGENTS.md](../AGENTS.md) | Istruzioni operative comuni | Metodo preservato; sezione di ripartenza su Codex del 3 novembre 2026 e note pratiche del checkout |
+| [CLAUDE.md](../CLAUDE.md) | Ingresso istruzioni Claude Code | Rimanda ad AGENTS e a PASSAGGIO; storico per Codex |
 | [README.md](../README.md) | Avvio, capacità e toolchain | B8 corrente e confini CI aggiornati |
 | [PIANO_SVILUPPO.md](../PIANO_SVILUPPO.md) | Specifica e coda normativa | Requisiti invariati, B8 e unico prossimo blocco aggiornati |
 | [ARCHITETTURA_E_QUALITA.md](../ARCHITETTURA_E_QUALITA.md) | Confini e revisione | Stadi storici distinti da schema 5 e integrazione corrente |
