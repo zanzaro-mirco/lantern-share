@@ -28,7 +28,6 @@ import lantern.domain.GroupTrustAnchor
 import lantern.domain.Peer
 import lantern.domain.Reconnection
 import lantern.protocol.Wire
-import java.io.Closeable
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.security.cert.X509Certificate
@@ -350,12 +349,7 @@ class Node(
         authorization.cancel()
         run?.job?.cancel()
         run?.let {
-            val resources = buildList<Closeable> {
-                it.server?.let(::add)
-                // Never toList() on the live set: a throw here would skip closing the listener.
-                addAll(it.sockets)
-            }
-            cleanupJob = resourceCloser.closeAll(resources)
+            cleanupJob = resourceCloser.closeAll(it.sockets, first = it.server)
         }
         runCatching { discovery.stop() }
         mutable.update { it.copy(active = false, peers = emptyList(), connected = emptySet(), pairingPeer = null, comparisonCode = null, status = "Servizio arrestato") }

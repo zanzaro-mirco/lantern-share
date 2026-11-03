@@ -17,6 +17,30 @@ import kotlinx.coroutines.runBlocking
 
 class AsyncResourceCloserTest {
     @Test
+    fun closeAllClosesListenerFirstWhenSocketsDisappearBetweenSizeAndIteration() {
+        val closed = mutableListOf<String>()
+        val listener = Closeable { closed += "listener" }
+        val racing = object : AbstractMutableSet<Closeable>() {
+            val live: MutableSet<Closeable> = ConcurrentHashMap.newKeySet()
+            override val size: Int get() = live.size.also { live.clear() }
+            override fun iterator() = live.iterator()
+            override fun add(element: Closeable) = live.add(element)
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            racing.add(Closeable { closed += "removed" })
+            runBlocking { AsyncResourceCloser(scope).closeAll(racing, first = listener).join() }
+            assertEquals(listOf("listener"), closed)
+
+            val sockets = listOf(Closeable { closed += "socket" })
+            runBlocking { AsyncResourceCloser(scope).closeAll(sockets, first = listener).join() }
+            assertEquals(listOf("listener", "listener", "socket"), closed)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun closeRunsOnOwnedIoDispatcherInsteadOfCallingThread() {
         val executor = Executors.newSingleThreadExecutor { task -> Thread(task, "lantern-close-io") }
         val dispatcher = executor.asCoroutineDispatcher()
