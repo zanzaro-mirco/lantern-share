@@ -39,8 +39,11 @@ risposte in ritardo.
 Regressioni SQLite per conservazione dati, identità/radice errate e rollback del
 journal; servizio UI per click stantii ed errore dopo commit; Node/TLS/SQLite
 reali per uscita di fondatore/membro, rientro esplicito, preparazione e commit
-concorrenti. Due XCTest del controller nativo predisposti, non eseguiti.
-Evidenze e comandi in STATO; Apple e hardware distinti dalle verifiche JVM.
+concorrenti. I due XCTest del controller nativo sono riusciti nel completo Apple
+41804002151 su `bc6ba39` (4 novembre 2026, 206 test, zero fallimenti): uscita
+della fondazione su SQLite Native/riapertura ed errore con rilettura esplicita,
+senza riattivare un controller chiuso. Evidenze e comandi in STATO.
+Simulatore automatico, UI interattiva e hardware restano livelli distinti.
 
 Esclusi revoca globale, notifiche agli altri membri, recupero, reconnect,
 pulizia della storia, distribuzione automatica e UI completa.

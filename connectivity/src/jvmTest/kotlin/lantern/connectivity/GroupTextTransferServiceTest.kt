@@ -38,6 +38,49 @@ import kotlin.test.assertTrue
 /** Actual Nodes, mutual TLS, delegated group admission, P-256 and reopened SQLite, not wire-0 trust. */
 class GroupTextTransferServiceTest {
     @Test
+    fun closingLocalGroupServiceDuringNodeDrainCancelsExitWithoutRemovingMembership() = withMembers { f ->
+        f.stores { aStore, bStore ->
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val boundary = object : DeviceRepository by bStore, GroupAdoptionRepository by bStore, GroupTextRepository by bStore {
+                override fun committedGroupAdoption(): lantern.domain.PendingGroupAdoption? {
+                    entered.countDown()
+                    check(release.await(8, TimeUnit.SECONDS))
+                    return bStore.committedGroupAdoption()
+                }
+            }
+            node(f.a, aStore).use { a -> node(f.b, boundary).use { b ->
+                LocalGroupService(f.b, bStore, b::leaveLocalGroup).use { group ->
+                    val displayed = runBlocking { withTimeout(5_000) {
+                        group.state.first { it is lantern.domain.LocalGroupState.Adopted }
+                    } }
+                    val closer = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    try {
+                        a.start(); b.start(); ports(a, b)
+                        b.receiveRosterText(peer(a))
+                        assertTrue(entered.await(5, TimeUnit.SECONDS))
+                        group.leave(displayed)
+                        runBlocking { withTimeout(5_000) { b.state.first { !it.active } } }
+                        assertEquals(f.anchor, bStore.localGroup())
+                        closer.submit { group.close() }.get(5, TimeUnit.SECONDS)
+                        assertEquals(lantern.domain.LocalGroupState.Closed, group.state.value)
+                        assertEquals(f.anchor, bStore.localGroup())
+                        assertFalse(b.state.value.active)
+                    } finally {
+                        release.countDown()
+                        closer.shutdownNow()
+                        check(closer.awaitTermination(5, TimeUnit.SECONDS))
+                    }
+                }
+            } }
+            // Both Node lifetimes are now drained: no delayed delete.
+            assertEquals(f.anchor, bStore.localGroup())
+            assertNotNull(bStore.committedGroupAdoption())
+        }
+        openDesktopRepository(f.directory.resolve("b.db")).use { assertEquals(f.anchor, it.localGroup()) }
+    }
+
+    @Test
     fun exitWaitsForEnteredTextCommitAndNeverAcknowledgesItAfterStop() = withMembers { f ->
         f.stores { aStore, bStore ->
             val entered = CountDownLatch(1)

@@ -11,16 +11,71 @@ import lantern.persistence.openDesktopRepository
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LocalGroupServiceTest {
+    @Test
+    fun concurrentCloseDuringEnteredExitWaitsForRemovalAndNeverRevivesState() = withDatabase { path ->
+        val identity = createDesktopIdentity().identity()
+        val anchor = GroupTrustAnchor("c".repeat(64), identity.id)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val removalFinished = CountDownLatch(1)
+        val writes = AtomicInteger()
+        val closers = Executors.newFixedThreadPool(2)
+        openDesktopRepository(path).use { repository ->
+            assertTrue(repository.foundLocalGroup(anchor, identity.id))
+            val service = LocalGroupService(identity, repository, { expected ->
+                writes.incrementAndGet()
+                entered.countDown()
+                try {
+                    check(release.await(5, TimeUnit.SECONDS))
+                    check(repository.leaveLocalGroup(expected, identity.id))
+                } finally { removalFinished.countDown() }
+            })
+            try {
+                val displayed = await(service) { it is LocalGroupState.Founded }
+                service.leave(displayed)
+                assertTrue(entered.await(5, TimeUnit.SECONDS))
+                val first = closers.submit { service.close() }
+                await(service) { it == LocalGroupState.Closed }
+                val second = closers.submit { service.close() }
+                assertFailsWith<TimeoutException> { first.get(150, TimeUnit.MILLISECONDS) }
+                assertFailsWith<TimeoutException> { second.get(150, TimeUnit.MILLISECONDS) }
+                service.leave(displayed)
+                service.create()
+                service.reload()
+                service.refreshMembership()
+                release.countDown()
+                first.get(5, TimeUnit.SECONDS)
+                second.get(5, TimeUnit.SECONDS)
+                assertEquals(LocalGroupState.Closed, service.state.value)
+                assertEquals(1, writes.get())
+                assertNull(repository.localGroup())
+            } finally {
+                release.countDown()
+                try {
+                    service.close()
+                    if (entered.count == 0L) check(removalFinished.await(5, TimeUnit.SECONDS))
+                } finally {
+                    closers.shutdownNow()
+                    check(closers.awaitTermination(5, TimeUnit.SECONDS))
+                }
+            }
+        }
+        openDesktopRepository(path).use { assertNull(it.localGroup()) }
+    }
+
     @Test
     fun exitRejectsStaleClicksAndUncertainAcknowledgementNeedsExplicitReload() = withDatabase { path ->
         val identity = createDesktopIdentity().identity()

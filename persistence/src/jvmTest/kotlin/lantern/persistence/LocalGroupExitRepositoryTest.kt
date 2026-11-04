@@ -7,6 +7,11 @@ import lantern.domain.PendingGroupAdoption
 import lantern.domain.SignedGroupText
 import java.nio.file.Files
 import java.nio.file.Path
+import java.sql.DriverManager
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.test.*
 
 class LocalGroupExitRepositoryTest {
@@ -14,6 +19,40 @@ class LocalGroupExitRepositoryTest {
     private val peer = "b".repeat(64)
     private val anchor = GroupTrustAnchor("c".repeat(64), local)
     private val pending = PendingGroupAdoption("d".repeat(64), local, peer, anchor, byteArrayOf(1, 2, 3))
+
+    @Test
+    fun competingConnectionCannotMakeStaleExitDeleteTheReplacementRoot() = database { path ->
+        val replacement = GroupTrustAnchor("f".repeat(64), local)
+        openDesktopRepository(path).use { repository ->
+            assertTrue(repository.foundLocalGroup(anchor, local))
+            DriverManager.getConnection("jdbc:sqlite:$path").use { writer ->
+                writer.autoCommit = false
+                writer.prepareStatement("UPDATE local_group SET group_id = ? WHERE singleton = 1").use {
+                    it.setString(1, replacement.groupId)
+                    assertEquals(1, it.executeUpdate())
+                }
+                val started = CountDownLatch(1)
+                val worker = Executors.newSingleThreadExecutor()
+                try {
+                    val staleExit = worker.submit<Boolean> {
+                        started.countDown()
+                        repository.leaveLocalGroup(anchor, local)
+                    }
+                    assertTrue(started.await(5, TimeUnit.SECONDS))
+                    assertFailsWith<TimeoutException> { staleExit.get(150, TimeUnit.MILLISECONDS) }
+                    writer.commit()
+                    assertFalse(staleExit.get(5, TimeUnit.SECONDS))
+                    assertEquals(replacement, repository.localGroup())
+                } finally {
+                    try { writer.rollback() } finally {
+                        worker.shutdownNow()
+                        check(worker.awaitTermination(5, TimeUnit.SECONDS))
+                    }
+                }
+            }
+        }
+        openDesktopRepository(path).use { assertEquals(replacement, it.localGroup()) }
+    }
 
     @Test
     fun foundationExitPreservesTextReceiptsCountersAndOtherLocalDataAcrossReopen() = database { path ->
