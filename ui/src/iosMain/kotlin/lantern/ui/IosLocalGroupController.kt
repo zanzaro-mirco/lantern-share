@@ -8,6 +8,7 @@ import lantern.domain.LocalGroupFailure
 import lantern.domain.LocalGroupState
 import lantern.protocol.localGroupPresentation
 import lantern.protocol.GroupAdmissionCertificate
+import platform.Foundation.NSRecursiveLock
 
 enum class IosLocalGroupDisplayPhase { LOADING, EMPTY, CREATING, FOUNDED, FAILED, CLOSED, ADOPTED, LEAVING }
 data class IosLocalGroupDisplay(val phase: IosLocalGroupDisplayPhase, val groupId: String, val failure: String)
@@ -25,6 +26,7 @@ class IosLocalGroupController(
     var leaveHandler: (() -> Unit)? = null
     private var exitAnchor: GroupTrustAnchor? = null
     private val exitRecoveryRequired = MutableStateFlow(false)
+    private val refreshGate = NSRecursiveLock()
     val maximumDerBytes: Int get() = GroupAdmissionCertificate.MAX_DER_BYTES
     private val mutable = MutableStateFlow<LocalGroupState>(LocalGroupState.Loading)
     private val refreshPending = MutableStateFlow(false)
@@ -75,10 +77,12 @@ class IosLocalGroupController(
     }
 
     fun exitFailed() {
-        exitRecoveryRequired.value = true
-        exitAnchor = null
-        refreshPending.value = false
-        mutable.compareAndSet(LocalGroupState.Leaving, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+        withRefreshGate {
+            exitRecoveryRequired.value = true
+            exitAnchor = null
+            refreshPending.value = false
+            mutable.compareAndSet(LocalGroupState.Leaving, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+        }
     }
 
     override fun reload() {
@@ -96,13 +100,29 @@ class IosLocalGroupController(
     }
 
     private fun drainRefresh() {
-        while (refreshPending.value) {
-            val current = mutable.value
-            if (current == LocalGroupState.Closed || current == LocalGroupState.Loading || current == LocalGroupState.Creating || current == LocalGroupState.Leaving) return
-            if (!mutable.compareAndSet(current, LocalGroupState.Loading)) continue
-            refreshPending.value = false
-            requestReload()
+        val reload = withRefreshGate {
+            // A caller may have passed refreshMembership's guard before exitFailed.
+            // Publish the failure and reserve Loading under the same gate.
+            if (exitRecoveryRequired.value) {
+                refreshPending.value = false
+                return@withRefreshGate false
+            }
+            while (refreshPending.value && !exitRecoveryRequired.value) {
+                val current = mutable.value
+                if (current == LocalGroupState.Closed || current == LocalGroupState.Loading || current == LocalGroupState.Creating || current == LocalGroupState.Leaving) return@withRefreshGate false
+                if (!mutable.compareAndSet(current, LocalGroupState.Loading)) continue
+                refreshPending.value = false
+                return@withRefreshGate true
+            }
+            false
         }
+        // Swift queues IO, and a synchronous callback may reenter the controller.
+        if (reload) requestReload()
+    }
+
+    private inline fun <T> withRefreshGate(operation: () -> T): T {
+        refreshGate.lock()
+        return try { operation() } finally { refreshGate.unlock() }
     }
 
     fun hasPendingCreation(): Boolean = mutable.value == LocalGroupState.Creating
