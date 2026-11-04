@@ -38,6 +38,67 @@ import kotlin.test.assertTrue
 /** Actual Nodes, mutual TLS, delegated group admission, P-256 and reopened SQLite, not wire-0 trust. */
 class GroupTextTransferServiceTest {
     @Test
+    fun failedExitRollsBackAdoptionKeepsLanStoppedAndRequiresExplicitRecovery() = withMembers { f ->
+        f.stores { aStore, bStore -> node(f.a, aStore).use { a -> node(f.b, bStore).use { b ->
+            a.start(); b.start(); ports(a, b)
+            val saved = rosterTransfer(a, b, "Preservato dopo uscita fallita")
+            val adoption = assertNotNull(bStore.committedGroupAdoption())
+            JdbcSqliteDriver("jdbc:sqlite:${f.directory.resolve("b.db")}").use { faults ->
+                faults.execute(null, "CREATE TRIGGER fail_exit AFTER DELETE ON group_adoption BEGIN SELECT RAISE(FAIL, 'exit failure'); END", 0)
+                try {
+                    LocalGroupService(f.b, bStore, b::leaveLocalGroup).use { group ->
+                        val displayed = runBlocking { withTimeout(5_000) {
+                            group.state.first { it is lantern.domain.LocalGroupState.Adopted }
+                        } }
+                        group.leave(displayed)
+                        val failed = runBlocking { withTimeout(5_000) {
+                            group.state.first { it is lantern.domain.LocalGroupState.Failed }
+                        } }
+                        assertEquals(lantern.domain.LocalGroupState.Failed(lantern.domain.LocalGroupFailure.STORAGE), failed)
+                        assertFalse(b.state.value.active)
+                        assertEquals(0, b.port)
+                        assertNull(b.lastRosterTextDelivery.value)
+                        assertEquals(f.anchor, bStore.localGroup())
+                        assertTrue(adoption.sameRecord(assertNotNull(bStore.committedGroupAdoption())))
+                        assertTrue(saved.sameMessage(assertNotNull(bStore.groupText(saved.content.id)).message))
+                        openDesktopRepository(f.directory.resolve("b.db")).use { reopened ->
+                            assertEquals(f.anchor, reopened.localGroup())
+                            assertTrue(adoption.sameRecord(assertNotNull(reopened.committedGroupAdoption())))
+                        }
+                        repeat(10) { group.refreshMembership(); group.leave(displayed); group.create() }
+                        assertEquals(failed, group.state.value)
+                        // Removing the fault cannot replay the failed request or restart LAN.
+                        faults.execute(null, "DROP TRIGGER fail_exit", 0)
+                        group.reload()
+                        val recovered = runBlocking { withTimeout(5_000) {
+                            group.state.first { it is lantern.domain.LocalGroupState.Adopted }
+                        } }
+                        assertFalse(b.state.value.active)
+                        assertEquals(f.anchor, bStore.localGroup())
+                        group.leave(displayed) // Same root after reload, but the old confirmation is stale.
+                        assertSame(recovered, group.state.value)
+                        group.leave(recovered)
+                        runBlocking { withTimeout(5_000) {
+                            group.state.first { it == lantern.domain.LocalGroupState.Empty }
+                        } }
+                        assertFalse(b.state.value.active)
+                        assertNull(bStore.localGroup())
+                        assertNull(bStore.committedGroupAdoption())
+                        assertNull(bStore.pendingGroupAdoption())
+                        assertNotNull(bStore.groupText(saved.content.id))
+                        assertEquals(f.anchor, aStore.localGroup())
+                        assertTrue(a.state.value.active)
+                    }
+                } finally { faults.execute(null, "DROP TRIGGER IF EXISTS fail_exit", 0) }
+            }
+        } } }
+        openDesktopRepository(f.directory.resolve("b.db")).use {
+            assertNull(it.localGroup())
+            assertNull(it.committedGroupAdoption())
+        }
+    }
+
+    @Test
     fun closingLocalGroupServiceDuringNodeDrainCancelsExitWithoutRemovingMembership() = withMembers { f ->
         f.stores { aStore, bStore ->
             val entered = CountDownLatch(1)

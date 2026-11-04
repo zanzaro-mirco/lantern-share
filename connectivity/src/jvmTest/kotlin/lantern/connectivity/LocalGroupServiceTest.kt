@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,6 +25,53 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LocalGroupServiceTest {
+    @Test
+    fun concurrentRefreshCannotHideUncertainExitOutcome() {
+        val identity = createDesktopIdentity().identity()
+        val root = GroupTrustAnchor("c".repeat(64), identity.id)
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            repeat(2_000) { iteration ->
+                val removed = AtomicBoolean(false)
+                val entered = CountDownLatch(1)
+                val release = CountDownLatch(1)
+                val stop = AtomicBoolean(false)
+                val refreshing = CountDownLatch(2)
+                val repository = object : LocalGroupRepository {
+                    override fun localGroup() = if (removed.get()) null else root
+                    override fun foundLocalGroup(anchor: GroupTrustAnchor, currentIdentityId: String) = error("unexpected create")
+                }
+                LocalGroupService(identity, repository, {
+                    removed.set(true)
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                    error("lost acknowledgement")
+                }).use { service ->
+                    val displayed = runBlocking { withTimeout(5_000) { service.state.first { it is LocalGroupState.Founded } } }
+                    service.leave(displayed)
+                    check(entered.await(5, TimeUnit.SECONDS))
+                    val readers = List(2) { workers.submit {
+                        refreshing.countDown()
+                        while (!stop.get()) service.refreshMembership()
+                    } }
+                    try {
+                        assertTrue(refreshing.await(5, TimeUnit.SECONDS))
+                        release.countDown()
+                        runBlocking { withTimeout(5_000) { service.state.first { it is LocalGroupState.Failed || it == LocalGroupState.Empty } } }
+                    } finally {
+                        release.countDown()
+                        stop.set(true)
+                        readers.forEach { it.get(5, TimeUnit.SECONDS) }
+                    }
+                    assertEquals(LocalGroupState.Failed(LocalGroupFailure.STORAGE), service.state.value, "iteration $iteration")
+                }
+            }
+        } finally {
+            workers.shutdownNow()
+            check(workers.awaitTermination(5, TimeUnit.SECONDS))
+        }
+    }
+
     @Test
     fun concurrentCloseDuringEnteredExitWaitsForRemovalAndNeverRevivesState() = withDatabase { path ->
         val identity = createDesktopIdentity().identity()

@@ -59,8 +59,10 @@ class LocalGroupService(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                exitRecoveryRequired.set(true)
-                mutable.compareAndSet(LocalGroupState.Leaving, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+                synchronized(lifecycleGate) {
+                    exitRecoveryRequired.set(true)
+                    mutable.compareAndSet(LocalGroupState.Leaving, LocalGroupState.Failed(LocalGroupFailure.STORAGE))
+                }
             } finally {
                 // A membership callback queued before the drain must not hide an uncertain write.
                 refreshPending.set(false)
@@ -118,15 +120,19 @@ class LocalGroupService(
     }
 
     private fun drainRefresh() {
-        while (!closed.get() && refreshPending.get()) {
-            val previous = mutable.value
-            if (previous == LocalGroupState.Loading || previous == LocalGroupState.Creating || previous == LocalGroupState.Leaving || previous == LocalGroupState.Closed) return
-            if (!refreshPending.compareAndSet(true, false)) continue
-            if (mutable.compareAndSet(previous, LocalGroupState.Loading)) {
-                load()
-                return
+        synchronized(lifecycleGate) {
+            // A refresh that passed its initial guard before an exit failed must not
+            // reserve Loading after Failed. Reserve under the same gate as the failure.
+            while (!closed.get() && !exitRecoveryRequired.get() && refreshPending.get()) {
+                val previous = mutable.value
+                if (previous == LocalGroupState.Loading || previous == LocalGroupState.Creating || previous == LocalGroupState.Leaving || previous == LocalGroupState.Closed) return
+                if (!refreshPending.compareAndSet(true, false)) continue
+                if (mutable.compareAndSet(previous, LocalGroupState.Loading)) {
+                    load()
+                    return
+                }
+                refreshPending.set(true)
             }
-            refreshPending.set(true)
         }
     }
 
