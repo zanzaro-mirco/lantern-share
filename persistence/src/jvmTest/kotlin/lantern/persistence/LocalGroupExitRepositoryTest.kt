@@ -140,6 +140,50 @@ class LocalGroupExitRepositoryTest {
         }
     }
 
+    @Test
+    fun journalForAnotherIdentityInTheSameGroupRollsBackExitAcrossReopen() = database { path ->
+        val foreign = PendingGroupAdoption(pending.attemptId, peer, local, anchor, pending.payload())
+        openDesktopRepository(path).use {
+            assertTrue(it.stageGroupAdoption(foreign, peer))
+            assertTrue(it.foundLocalGroup(anchor, local))
+            assertFailsWith<IllegalStateException> { it.leaveLocalGroup(anchor, local) }
+        }
+        openDesktopRepository(path).use {
+            assertEquals(anchor, it.localGroup())
+            assertTrue(foreign.sameRecord(assertNotNull(it.pendingGroupAdoption())))
+            assertNull(it.committedGroupAdoption())
+        }
+    }
+
+    @Test
+    fun conflictingFoundationAndAdoptionCannotBothBeDeletedByOneExit() = database { path ->
+        openDesktopRepository(path).use {
+            assertTrue(it.stageGroupAdoption(pending, local))
+            assertTrue(it.foundLocalGroup(anchor, local))
+        }
+        JdbcSqliteDriver("jdbc:sqlite:$path").use { driver ->
+            // Inject a conflicting durable state that normal admission cannot create.
+            driver.execute(null, "INSERT INTO group_adoption SELECT * FROM group_adoption_journal", 0)
+            val store = SqliteDeviceRepository(driver)
+            assertFailsWith<IllegalStateException> { store.leaveLocalGroup(anchor, local) }
+        }
+        openDesktopRepository(path).use {
+            assertTrue(pending.sameRecord(assertNotNull(it.committedGroupAdoption())))
+            assertTrue(pending.sameRecord(assertNotNull(it.pendingGroupAdoption())))
+            assertFails { it.localGroup() } // The conflict is preserved, never normalized.
+        }
+        DriverManager.getConnection("jdbc:sqlite:$path").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT group_id, founder_id FROM local_group").use {
+                    assertTrue(it.next())
+                    assertEquals(anchor.groupId, it.getString("group_id"))
+                    assertEquals(anchor.founderId, it.getString("founder_id"))
+                    assertFalse(it.next())
+                }
+            }
+        }
+    }
+
     private fun database(test: (Path) -> Unit) {
         val directory = Files.createTempDirectory("lantern-exit-store-")
         try { test(directory.resolve("test.db")) }
