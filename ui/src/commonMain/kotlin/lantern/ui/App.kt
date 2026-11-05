@@ -222,7 +222,7 @@ private fun RosterTextActions(controller: GroupRosterTextController, peers: List
     }
     OutlinedTextField(messageId, { messageId = it.trim() }, Modifier.fillMaxWidth(),
         label = { Text("ID copia già salvata su questo dispositivo (scritta o ricevuta)") })
-    Text("Per consegnare la stessa copia a un altro destinatario originale, usa il suo ID e scegli Ricevi sull'altro dispositivo. Anche chi l'ha ricevuta può inoltrarla, non all'autore. Serve la stessa sessione attiva; la storia non riattiva una sessione.")
+    Text("Per consegnare una copia salvata a un destinatario originale, indica l'ID della copia e scegli Ricevi sull'altro dispositivo. Può inoltrarla anche chi l'ha ricevuta, mai all'autore. Se il mittente conserva il roster della copia, chi riceve può mantenere un'altra sessione. La sola storia non ricostruisce il roster.")
     for (peer in peers) {
         OutlinedButton(onClick = { controller.deliverRosterText(peer, messageId) }, enabled = messageId.isNotBlank()) {
             Text("Consegna copia a ${peer.name}")

@@ -247,10 +247,16 @@ final class GroupAdmissionSession {
         } catch { fail(.failed) }
     }
 
-    private func proposeRoster(_ local: IosGroupMembershipEvidence, remote: IosGroupSessionOffer) throws -> IosGroupRosterSnapshot {
+    private func proposeRoster(_ local: IosGroupMembershipEvidence, remote: IosGroupSessionOffer, copy: Bool = false) throws -> IosGroupRosterSnapshot {
         guard textContextCurrent(), let anchor, let sessionOffer else { throw TextError.expired }
-        let selected = try sessionMemory.selectRoster(local: sessionOffer, remote: remote,
-            groupId: anchor.groupId, founderId: anchor.founderId, marker: membership)
+        let selected: IosGroupRosterSelection
+        if copy {
+            selected = try sessionMemory.selectRosterForCopy(local: sessionOffer, remote: remote,
+                groupId: anchor.groupId, founderId: anchor.founderId, marker: membership, sending: selection.sending)
+        } else {
+            selected = try sessionMemory.selectRoster(local: sessionOffer, remote: remote,
+                groupId: anchor.groupId, founderId: anchor.founderId, marker: membership)
+        }
         guard let exchange = selected.exchange else {
             rosterFailure = selected.failure ?? .failed
             textFailure = selected.failure == .sessionChoiceRequired ? .sessionChoiceRequired : .failed
@@ -343,9 +349,9 @@ final class GroupAdmissionSession {
         if selection.mode == .rosterText {
             guard owner.transferRosterText(membership: local, offer: sessionOffer, sending: sending,
                 verifyRemote: { [weak self] remote in try self?.verifyTextPeer(remote) ?? false },
-                propose: { [weak self] remote in
+                propose: { [weak self] remote, copy in
                     guard let self else { throw TextError.expired }
-                    return try self.proposeRoster(local, remote: remote)
+                    return try self.proposeRoster(local, remote: remote, copy: copy)
                 }, merge: { [weak self] payload, certificate in
                     guard let self else { throw TextError.expired }
                     return try self.mergeRoster(payload, certificate: certificate)

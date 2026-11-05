@@ -31,7 +31,8 @@ class IosGroupRosterSnapshot internal constructor(internal val roster: GroupSess
 class IosGroupRosterExchange internal constructor(private val memory: IosGroupSessionMemory,
     internal val revision: Long, internal val anchor: GroupTrustAnchor,
     internal val marker: IosGroupAdoptionJournalSnapshot?, internal val session: SessionCandidate,
-    private val requiredParticipants: Set<String>?, private val previous: GroupSessionRoster?) {
+    private val requiredParticipants: Set<String>?, private val previous: GroupSessionRoster?,
+    private val preservesSession: Boolean = false) {
     var failure: IosGroupRosterFailure = IosGroupRosterFailure.FAILED
         private set
     private var proposed: GroupSessionRoster? = null
@@ -80,6 +81,7 @@ class IosGroupRosterExchange internal constructor(private val memory: IosGroupSe
     fun install(snapshot: IosGroupRosterSnapshot, isCurrent: () -> Boolean) {
         current(isCurrent)
         check(merged === snapshot.roster)
+        check(!preservesSession) { "A copy cannot replace the held session" }
         memory.installRoster(this, snapshot.roster)
     }
 
@@ -99,6 +101,11 @@ class IosGroupRosterExchange internal constructor(private val memory: IosGroupSe
     fun installForText(snapshot: IosGroupRosterSnapshot, senderId: String, recipientId: String, digest: String,
                        savedCopy: Boolean, relayedCopy: Boolean, isCurrent: () -> Boolean): IosGroupTextContext {
         val context = GroupRosterTextContext(snapshot.roster, senderId, recipientId, digest, savedCopy, relayedCopy)
+        if (preservesSession) {
+            current(isCurrent)
+            check(merged === snapshot.roster && (savedCopy || relayedCopy))
+            return IosGroupTextContext(context, anchor, marker, revision)
+        }
         install(snapshot, isCurrent)
         return IosGroupTextContext(context, anchor, marker)
     }

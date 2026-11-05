@@ -861,6 +861,75 @@ class GroupTextTransferServiceTest {
     }
 
     @Test
+    fun originalFrozenRecipientReceivesOldCopyWithoutReplacingCurrentUsedSession() {
+        for (relayed in listOf(false, true)) withMembers { f ->
+            val third = createDesktopIdentity().identity()
+            openDesktopRepository(f.directory.resolve("third.db")).use { cStore ->
+                f.stores { aStore, bStore ->
+                    node(f.b, bStore).use { b -> node(third, cStore).use { c ->
+                        b.start(); c.start(); ports(b, c); admit(b, c)
+                    } }
+                    node(f.a, aStore).use { a -> node(f.b, bStore).use { b -> node(third, cStore).use { c ->
+                        a.start(); b.start(); c.start(); ports(a, b); ports(b, c)
+                        synchronize(a, b)
+                        a.stop() // Original frozen recipient, never received the old envelope.
+                        synchronize(b, c)
+                        val original = if (relayed) rosterTransfer(c, b, "Originale da inoltrare")
+                            else rosterTransfer(b, c, "Originale dell'autore")
+                        assertEquals(setOf(f.a.id, f.b.id, third.id), original.content.recipients.toSet())
+                        c.stop(); c.start(); a.start(); ports(a, c)
+                        val current = rosterTransfer(a, c, "Altra sessione usata")
+                        assertNotEquals(original.content.sessionId, current.content.sessionId)
+                        assertNull(aStore.groupText(original.content.id))
+
+                        // New text still cannot silently choose B's session.
+                        startText(b, a, "Richiede scelta", true)
+                        assertEquals(GroupTextFailure.SESSION_CHOICE_REQUIRED, assertIs<GroupTextState.Failed>(awaitText(b)).reason)
+                        assertIs<GroupTextState.Failed>(awaitText(a))
+                        JdbcSqliteDriver("jdbc:sqlite:${f.directory.resolve("a.db")}").use { fault ->
+                            fault.execute(null, "CREATE TRIGGER reject_frozen_copy AFTER INSERT ON group_text_recipient BEGIN SELECT RAISE(FAIL, 'copy fault'); END", 0)
+                            a.receiveRosterText(peer(b)); b.deliverRosterText(peer(a), original.content.id)
+                            assertIs<GroupTextState.Failed>(awaitText(b))
+                            assertIs<GroupTextState.Failed>(awaitText(a))
+                            assertNull(aStore.groupText(original.content.id))
+                            assertFalse(f.a.id in assertNotNull(bStore.groupText(original.content.id)).receivedBy)
+                            fault.execute(null, "DROP TRIGGER reject_frozen_copy", 0)
+                        }
+                        val afterFailure = rosterTransfer(a, c, "Sessione preservata anche dopo rollback")
+                        assertEquals(current.content.sessionId, afterFailure.content.sessionId)
+                        assertEquals(2L, afterFailure.content.authorSequence)
+                        deliverCopy(b, a, original.content.id, original)
+                        deliverCopy(b, a, original.content.id, original) // Idempotent, no counters or new signature.
+                        assertTrue(original.sameMessage(assertNotNull(aStore.groupText(original.content.id)).message))
+                        assertEquals(setOf(f.a.id), assertNotNull(aStore.groupText(original.content.id)).receivedBy)
+                        assertEquals(if (relayed) setOf(f.a.id, f.b.id) else setOf(f.a.id, f.b.id, third.id),
+                            assertNotNull(bStore.groupText(original.content.id)).receivedBy)
+                        assertEquals(1, aStore.groupTextHistory(f.anchor.groupId, original.content.sessionId).size)
+                        val next = rosterTransfer(a, c, "Sessione corrente preservata")
+                        assertEquals(current.content.sessionId, next.content.sessionId)
+                        assertEquals(current.content.recipients, next.content.recipients)
+                        assertEquals(3L, next.content.authorSequence)
+                        assertEquals(3, aStore.groupTextHistory(f.anchor.groupId, current.content.sessionId).size)
+
+                        // The keeper also retains its old session and the copy consumed no author counter.
+                        c.stop(); c.start(); ports(b, c)
+                        val fromKeeper = rosterTransfer(b, c, "Il mittente conserva la sua sessione")
+                        assertEquals(original.content.sessionId, fromKeeper.content.sessionId)
+                        assertEquals(if (relayed) 1L else 2L, fromKeeper.content.authorSequence)
+                        b.stop(); b.start(); ports(a, b)
+                        a.receiveRosterText(peer(b)); b.deliverRosterText(peer(a), original.content.id)
+                        assertIs<GroupTextState.Failed>(awaitText(b)) // SQLite history cannot reconstruct a lost roster.
+                        assertIs<GroupTextState.Failed>(awaitText(a))
+                        for (store in listOf(aStore, bStore, cStore)) {
+                            assertTrue(store.trusted().isEmpty()); assertNull(store.pendingGroupAdoption())
+                        }
+                    } } }
+                }
+            }
+        }
+    }
+
+    @Test
     fun receiverCommitFaultProducesNoAckAndDoesNotEraseSenderCopy() {
         for (roster in listOf(false, true)) withMembers { f ->
             f.stores { aStore, bStore ->

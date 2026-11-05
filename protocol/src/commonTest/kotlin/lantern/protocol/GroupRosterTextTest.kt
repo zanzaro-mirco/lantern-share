@@ -7,6 +7,8 @@ import lantern.domain.GroupTextRepository
 import lantern.domain.GroupTrustAnchor
 import lantern.domain.SignedGroupText
 import lantern.domain.StoredGroupText
+import lantern.domain.SessionCandidate
+import lantern.domain.SessionSelection
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -21,6 +23,24 @@ class GroupRosterTextTest {
     private val anchor = GroupTrustAnchor("d".repeat(64), a)
     private val session = "e".repeat(64)
     private val digest = "f".repeat(64)
+
+    @Test
+    fun copyUsesOnlySendersRetainedUsedSessionWhileNewTextStillRequiresChoice() {
+        val old = GroupSessionOffer(SessionCandidate(anchor.groupId, session, true))
+        val current = GroupSessionOffer(SessionCandidate(anchor.groupId, digest, true))
+        assertTrue(GroupRosterTextCodec.selectSession(anchor, old, current, true, false) is SessionSelection.Choose)
+        assertEquals(SessionSelection.Join(old.session), GroupRosterTextCodec.selectSession(anchor, old, current, true, true))
+        assertEquals(SessionSelection.Join(old.session), GroupRosterTextCodec.selectSession(anchor, current, old, false, true))
+        val empty = GroupSessionOffer(SessionCandidate(anchor.groupId, digest, false), established = false)
+        assertEquals(SessionSelection.Join(old.session), GroupRosterTextCodec.selectSession(anchor, empty, old, false, true))
+        // Existing recovery after the author restarts remains valid if its recipient kept the roster.
+        assertEquals(SessionSelection.Join(old.session), GroupRosterTextCodec.selectSession(anchor, empty, old, true, true))
+        assertEquals(SessionSelection.Join(old.session), GroupRosterTextCodec.selectSession(anchor, old, empty, false, true))
+        assertFails { GroupRosterTextCodec.selectSession(anchor, old.copy(session = old.session.copy(used = false)), current, true, true) }
+        val foreign = GroupSessionOffer(SessionCandidate(a, session, true))
+        assertFails { GroupRosterTextCodec.selectSession(anchor, current, foreign, false, true) }
+        assertFails { GroupRosterTextCodec.selectSession(anchor, foreign, old, false, true) }
+    }
     private fun join(id: String): GroupSessionJoin {
         val evidence = if (id == a) null else GroupAdmissionEvidence(
             GroupAdmissionProof(anchor, listOf(SignedGroupAdmission(GroupAdmissionClaim(anchor.groupId, a, id), "AAAA"))),

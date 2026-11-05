@@ -323,7 +323,7 @@ final class HandshakeV1Channel {
     func transferRosterText(
         membership: IosGroupMembershipEvidence, offer: IosGroupSessionOffer, sending: Bool,
         verifyRemote: @escaping (IosGroupMembershipEvidence) throws -> Bool,
-        propose: @escaping (IosGroupSessionOffer) throws -> IosGroupRosterSnapshot,
+        propose: @escaping (IosGroupSessionOffer, Bool) throws -> IosGroupRosterSnapshot,
         merge: @escaping (KotlinByteArray, SecCertificate) throws -> IosGroupRosterSnapshot,
         selectRoster: @escaping (IosGroupRosterSnapshot, String, Bool, Bool) throws -> IosGroupTextTransfer,
         outgoing: @escaping (IosGroupTextTransfer) throws -> IosGroupTextEnvelope,
@@ -340,7 +340,7 @@ final class HandshakeV1Channel {
             let savedCopy = try IosGroupRosterTextProtocol.shared.savedCopy(offers: offers, sending: sending)
             let relayedCopy = try IosGroupRosterTextProtocol.shared.relayedCopy(offers: offers, sending: sending)
             return beginRoster(membership: membership, offer: offer, awaitPeerClose: false,
-                verifyRemote: verifyRemote, propose: propose, merge: merge) { [weak self] snapshot in
+                verifyRemote: verifyRemote, propose: { remote in try propose(remote, savedCopy || relayedCopy) }, merge: merge) { [weak self] snapshot in
                 guard let self, try self.evidenceActive() else { return }
                 let digest = SHA256.hash(data: Self.data(try snapshot.payload())).map { String(format: "%02x", $0) }.joined()
                 let transfer = try selectRoster(snapshot, digest, savedCopy, relayedCopy)

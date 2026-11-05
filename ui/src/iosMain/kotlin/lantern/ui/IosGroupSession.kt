@@ -10,6 +10,7 @@ import lantern.protocol.GroupSessionOfferCodec
 import lantern.protocol.GroupSessionOfferFrameDecoder
 import lantern.protocol.GroupTextTransferContext
 import lantern.protocol.GroupSessionRoster
+import lantern.protocol.GroupRosterTextCodec
 
 /** Untrusted observation; only the native owner can establish live membership before using it. */
 class IosGroupSessionOffer internal constructor(internal val offer: GroupSessionOffer) {
@@ -97,6 +98,12 @@ class IosGroupSessionMemory {
     }
 
     internal fun checkCurrent(context: IosGroupTextContext) {
+        context.preservedRevision?.let {
+            check(revision == it && held?.let { current -> current.anchor == context.anchor && sameMarker(current.marker, context.marker) } == true) {
+                "Preserved group text session changed"
+            }
+            return
+        }
         check(held?.let { it.anchor == context.anchor && sameMarker(it.marker, context.marker) &&
             it.session.sessionId == context.context.sessionId && it.participants == context.context.recipients } == true) {
             "Group text session changed"
@@ -105,6 +112,8 @@ class IosGroupSessionMemory {
 
     internal fun markTextUsed(context: IosGroupTextContext) {
         checkCurrent(context)
+        // Saving a frozen copy does not participate in, or mark used, the held session.
+        if (context.preservedRevision != null) return
         checkNotNull(held).let { it.session = it.session.copy(used = true) }
         revision++
     }
@@ -112,14 +121,30 @@ class IosGroupSessionMemory {
     /** No installation until the owner has verified all entries and the exact live LRA. */
     @Throws(Exception::class)
     fun selectRoster(local: IosGroupSessionOffer, remote: IosGroupSessionOffer, groupId: String, founderId: String,
-                     marker: IosGroupAdoptionJournalSnapshot?): IosGroupRosterSelection {
+                     marker: IosGroupAdoptionJournalSnapshot?): IosGroupRosterSelection =
+        selectRosterExchange(local, remote, groupId, founderId, marker, sending = false, copy = false)
+
+    /** Copy mode must come from the live negotiated HELLO, never from the saved/incoming envelope. */
+    @Throws(Exception::class)
+    fun selectRosterForCopy(local: IosGroupSessionOffer, remote: IosGroupSessionOffer, groupId: String, founderId: String,
+                            marker: IosGroupAdoptionJournalSnapshot?, sending: Boolean): IosGroupRosterSelection =
+        selectRosterExchange(local, remote, groupId, founderId, marker, sending, copy = true)
+
+    private fun selectRosterExchange(local: IosGroupSessionOffer, remote: IosGroupSessionOffer, groupId: String, founderId: String,
+                                    marker: IosGroupAdoptionJournalSnapshot?, sending: Boolean, copy: Boolean): IosGroupRosterSelection {
         val anchor = GroupTrustAnchor(groupId, founderId)
-        val decision = local.offer.select(anchor, remote.offer)
+        val decision = GroupRosterTextCodec.selectSession(anchor, local.offer, remote.offer, sending, copy)
         if (decision !is SessionSelection.Join) return IosGroupRosterSelection(null, IosGroupRosterFailure.SESSION_CHOICE_REQUIRED)
         val previous = held?.takeIf { it.anchor == anchor && sameMarker(it.marker, marker) &&
             it.session.sessionId == decision.session.sessionId }
+        if (copy && sending && local.offer.established && remote.offer.established &&
+            local.offer.session.sessionId != remote.offer.session.sessionId && previous?.roster == null) {
+            return IosGroupRosterSelection(null, IosGroupRosterFailure.MISSING_PARTICIPANTS)
+        }
+        val preserve = copy && !sending && local.offer.established && local.offer.session.sessionId != decision.session.sessionId
+        if (preserve) check(held?.let { it.anchor == anchor && sameMarker(it.marker, marker) && it.session == local.offer.session } == true)
         return IosGroupRosterSelection(IosGroupRosterExchange(this, revision, anchor, marker, decision.session,
-            previous?.participants, previous?.roster), null)
+            previous?.participants, previous?.roster, preserve), null)
     }
 
     internal fun installRoster(exchange: IosGroupRosterExchange, roster: GroupSessionRoster) {

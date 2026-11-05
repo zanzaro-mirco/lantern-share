@@ -22,7 +22,7 @@ Adottare la sessione usata del peer non concede nulla di nuovo: lo stesso stato 
 
 - **Contatori:** il contatore dell'autore è nel database per gruppo e autore (`reserveGroupTextCounters`), non nella sessione in memoria: cambiare sessione non può riusarlo.
 - **Ambito:** con partecipanti ignoti il testo legacy resta rifiutato (`ROSTER_REQUIRED`). Il testo con roster ricostruisce l'ambito firmato nello stesso scambio, perché lo snapshot conservato dell'altro dispositivo lo ripristina; senza snapshot conservato nessuno dei due, il roster è rifiutato (partecipanti mancanti).
-- **Sessione abbandonata:** gli altri suoi membri continuano a elencare questo dispositivo come destinatario congelato. Le loro copie salvate ([ADR 019](ADR-019-COPIA-ORIGINALE-DOPO-NUOVI-INGRESSI.md)–[020](ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md)) non lo raggiungono finché non sceglie di nuovo quella sessione; non è corretto qui.
+- **Sessione abbandonata, limite originario di B12:** gli altri suoi membri continuano a elencare questo dispositivo come destinatario congelato. In B12 le loro copie salvate ([ADR 019](ADR-019-COPIA-ORIGINALE-DOPO-NUOVI-INGRESSI.md)–[020](ADR-020-COPIA-INOLTRATA-DA-DESTINATARIO.md)) non lo raggiungevano finché non sceglieva di nuovo quella sessione. Estensione approvata il 5 novembre: [ADR 024](ADR-024-COPIA-FRA-SESSIONI-DIVERSE.md), consegna esplicita con il roster conservato dal mittente senza sostituire la sessione corrente; verifiche e limiti Apple/hardware in STATO.
 
 ## Accettazione e verifica
 

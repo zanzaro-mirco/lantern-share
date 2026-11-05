@@ -536,7 +536,8 @@ final class GroupAdmissionSessionTests: XCTestCase {
                                 if rosterText {
                                     XCTAssertTrue(localOwner?.transferRosterText(membership: proof, offer: offer, sending: true,
                                         verifyRemote: { try GroupMembership.verify($0, anchor: anchor, peerID: higher.identity.id) },
-                                        propose: { remote in
+                                        propose: { remote, copy in
+                                            XCTAssertFalse(copy)
                                             let selected = try lower.sessionMemory.selectRoster(local: offer, remote: remote,
                                                 groupId: anchor.groupId, founderId: anchor.founderId, marker: lower.store.committedGroupAdoption())
                                             let exchange = try XCTUnwrap(selected.exchange)
@@ -1244,10 +1245,19 @@ final class GroupAdmissionSessionTests: XCTestCase {
             marker: sm, newSessionId: String(repeating: "c", count: 64))
         let ro = try receiver.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
             marker: rm, newSessionId: String(repeating: "d", count: 64))
-        let se = try XCTUnwrap(sender.sessionMemory.selectRoster(local: so, remote: ro,
-            groupId: anchor.groupId, founderId: anchor.founderId, marker: sm).exchange)
-        let re = try XCTUnwrap(receiver.sessionMemory.selectRoster(local: ro, remote: so,
-            groupId: anchor.groupId, founderId: anchor.founderId, marker: rm).exchange)
+        let senderSelection: IosGroupRosterSelection, receiverSelection: IosGroupRosterSelection
+        if savedCopy {
+            senderSelection = try sender.sessionMemory.selectRosterForCopy(local: so, remote: ro,
+                groupId: anchor.groupId, founderId: anchor.founderId, marker: sm, sending: true)
+            receiverSelection = try receiver.sessionMemory.selectRosterForCopy(local: ro, remote: so,
+                groupId: anchor.groupId, founderId: anchor.founderId, marker: rm, sending: false)
+        } else {
+            senderSelection = try sender.sessionMemory.selectRoster(local: so, remote: ro,
+                groupId: anchor.groupId, founderId: anchor.founderId, marker: sm)
+            receiverSelection = try receiver.sessionMemory.selectRoster(local: ro, remote: so,
+                groupId: anchor.groupId, founderId: anchor.founderId, marker: rm)
+        }
+        let se = try XCTUnwrap(senderSelection.exchange), re = try XCTUnwrap(receiverSelection.exchange)
         let sp = try proposeRoster(sender, exchange: se), rp = try proposeRoster(receiver, exchange: re)
         let mergedSender = try mergeRoster(se, payload: rp.payload(), peer: receiver)
         let mergedReceiver = try mergeRoster(re, payload: sp.payload(), peer: sender)
@@ -1286,6 +1296,44 @@ final class GroupAdmissionSessionTests: XCTestCase {
             try copyOut.acknowledge(payload: bytes(ack), envelope: saved, digest: digest, isCurrent: current)
             XCTAssertEqual(try receiver.store.groupText(id: message.id)?.receivedBy, [receiver.identity.id])
             XCTAssertEqual(Set(try XCTUnwrap(sender.store.groupText(id: message.id)).receivedBy), Set([sender.identity.id, receiver.identity.id]))
+        }
+    }
+
+    func testFrozenCopyFacadePreservesRevisionAndRejectsWrongSignatureOrReset() throws {
+        let pair = try fixture(founderInitiates: true)
+        let a = pair.issuer, b = pair.member
+        try confirmBoth(a, b)
+        closeAndDrain(a); closeAndDrain(b)
+        try queue.sync {
+            let current = { KotlinBoolean(bool: true) }
+            let (outgoing, _) = try rosterTransfers(a, b)
+            let original = try outgoing.prepareOutgoing(id: UUID().uuidString.lowercased(), body: "Originale",
+                isCurrent: current, sign: { try? a.identity.sign(self.data($0)) })
+            let anchor = try XCTUnwrap(b.store.localGroup()), marker = try b.store.committedGroupAdoption()
+            b.sessionMemory.reset()
+            let other = try b.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
+                marker: marker, newSessionId: String(repeating: "9", count: 64))
+            let selected = try b.sessionMemory.selectText(local: other, remote: other, groupId: anchor.groupId,
+                founderId: anchor.founderId, marker: marker, senderId: b.identity.id, recipientId: a.identity.id)
+            let local = IosGroupTextTransfer(persistence: b.store, memory: b.sessionMemory,
+                scope: try XCTUnwrap(selected.context), localIdentity: b.identity.id)
+            _ = try local.prepareOutgoing(id: UUID().uuidString.lowercased(), body: "Sessione corrente usata",
+                isCurrent: current, sign: { try? b.identity.sign(self.data($0)) })
+            let before = try data(b.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
+                marker: marker, newSessionId: String(repeating: "8", count: 64)).framedBytes())
+            let (copyOut, copyIn) = try rosterTransfers(a, b, savedCopy: true)
+            let saved = try copyOut.prepareSaved(id: original.id, isCurrent: current, verify: { bytes, signature in
+                KotlinBoolean(bool: AppleIdentity.verify(certificate: a.identity.certificate, message: self.data(bytes), signature: signature)) })
+            XCTAssertThrowsError(try copyIn.receive(payload: saved.payload(), isCurrent: current,
+                verify: { _, _ in KotlinBoolean(bool: false) }))
+            XCTAssertNil(try b.store.groupText(id: saved.id))
+            _ = try copyIn.receive(payload: saved.payload(), isCurrent: current, verify: { bytes, signature in
+                KotlinBoolean(bool: AppleIdentity.verify(certificate: a.identity.certificate, message: self.data(bytes), signature: signature)) })
+            XCTAssertEqual(try data(b.sessionMemory.propose(groupId: anchor.groupId, founderId: anchor.founderId,
+                marker: marker, newSessionId: String(repeating: "8", count: 64)).framedBytes()), before)
+            b.sessionMemory.reset()
+            XCTAssertThrowsError(try copyIn.receive(payload: saved.payload(), isCurrent: current,
+                verify: { _, _ in XCTFail("Reset must invalidate the detached context before verification"); return KotlinBoolean(bool: true) }))
         }
     }
 
@@ -1526,6 +1574,59 @@ final class GroupAdmissionSessionTests: XCTestCase {
             XCTAssertEqual(try a.store.groupText(id: first.messageId)?.receivedBy, [a.identity.id])
             XCTAssertEqual(Set(try XCTUnwrap(c.store.groupText(id: first.messageId)).receivedBy), Set([a.identity.id, c.identity.id]))
             XCTAssertEqual(Set(try XCTUnwrap(b.store.groupText(id: first.messageId)).receivedBy), Set([b.identity.id, c.identity.id]))
+        }
+    }
+
+    func testFrozenCopyAcrossUsedSessionsKeepsBothMemoriesAndOriginalEnvelope() throws {
+        for relayed in [false, true] {
+            let pair = try fixture(founderInitiates: true)
+            let a = pair.issuer, b = pair.member, c = try side()
+            try confirmBoth(a, b)
+            closeAndDrain(a); closeAndDrain(b)
+            beginRoster(a, b)
+            _ = awaitRoster(a, b)
+            closeAndDrain(a); closeAndDrain(b)
+            try connect(b, c); try confirmBoth(b, c)
+            closeAndDrain(b); closeAndDrain(c)
+            let author = relayed ? c : b, target = relayed ? b : c
+            try connect(author, target, rosterTextSender: author, rosterTextBody: "Copia originale per A offline")
+            let original = awaitText(author, target)
+            let payload = try queue.sync { try data(XCTUnwrap(b.store.groupText(id: original.messageId)).envelope.payload()) }
+            closeAndDrain(b); closeAndDrain(c)
+            queue.sync { a.sessionMemory.reset(); c.sessionMemory.reset() }
+            try connect(a, c, rosterTextSender: a, rosterTextBody: "Altra sessione usata")
+            let current = awaitText(a, c)
+            XCTAssertNotEqual(current.sessionId, original.sessionId)
+            closeAndDrain(a); closeAndDrain(c)
+            try connect(b, a, rosterTextSender: b, rosterTextMessageId: original.messageId)
+            XCTAssertEqual(awaitText(b, a).messageId, original.messageId)
+            closeAndDrain(b); closeAndDrain(a)
+            beginCopy(b, a, id: original.messageId)
+            XCTAssertEqual(awaitText(b, a).messageId, original.messageId)
+            closeAndDrain(b); closeAndDrain(a)
+            try queue.sync {
+                let copy = try XCTUnwrap(a.store.groupText(id: original.messageId))
+                XCTAssertEqual(try data(copy.envelope.payload()), payload)
+                XCTAssertEqual(Set(copy.envelope.recipients), Set([a.identity.id, b.identity.id, c.identity.id]))
+                XCTAssertEqual(copy.receivedBy, [a.identity.id])
+                let expectedReceipts = relayed ? [a.identity.id, b.identity.id] : [a.identity.id, b.identity.id, c.identity.id]
+                XCTAssertEqual(Set(try XCTUnwrap(b.store.groupText(id: original.messageId)).receivedBy), Set(expectedReceipts))
+            }
+            try connect(a, c, rosterTextSender: a, rosterTextBody: "Resto nella sessione corrente")
+            let next = awaitText(a, c)
+            XCTAssertEqual(next.sessionId, current.sessionId)
+            try queue.sync {
+                let saved = try XCTUnwrap(a.store.groupText(id: next.messageId)).envelope
+                XCTAssertEqual(saved.authorSequence, 2)
+                XCTAssertEqual(Set(saved.recipients), Set([a.identity.id, c.identity.id]))
+            }
+            closeAndDrain(a); closeAndDrain(c)
+            queue.sync { c.sessionMemory.reset() }
+            try connect(b, c, rosterTextSender: b, rosterTextBody: "Anche il mittente mantiene la sessione")
+            let keeperNext = awaitText(b, c)
+            XCTAssertEqual(keeperNext.sessionId, original.sessionId)
+            try queue.sync { XCTAssertEqual(try b.store.groupText(id: keeperNext.messageId)?.envelope.authorSequence, relayed ? 1 : 2) }
+            closeAndDrain(b); closeAndDrain(c)
         }
     }
 

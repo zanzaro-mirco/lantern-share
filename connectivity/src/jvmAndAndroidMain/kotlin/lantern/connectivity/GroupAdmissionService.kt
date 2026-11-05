@@ -419,12 +419,19 @@ internal class GroupAdmissionService(
         val texts = store as GroupTextRepository
         val anchor = checkNotNull(selection.anchor)
         val offer = checkNotNull(selection.sessionOffer)
+        var copyExchange: RosterExchange? = null
         fun checkContext() {
             checkLive(selection)
             checkMembership(selection, store)
         }
         fun markUsed(context: GroupTextDeliveryContext) = synchronized(sessionLock) {
             checkLive(selection)
+            val exchange = copyExchange
+            if (exchange?.preservesSession == true) {
+                // This receipt concerns the old signed envelope, not participation in its session.
+                exchange.checkPreservedSession(context)
+                return@synchronized
+            }
             val held = checkNotNull(localSession)
             check(held.anchor == anchor && sameMembership(held.membership, selection.membership) &&
                 held.candidate.sessionId == context.sessionId && held.participants == context.recipients)
@@ -512,8 +519,9 @@ internal class GroupAdmissionService(
         checkContext()
         if (selection.mode == GroupSelectionMode.ROSTER_TEXT) {
             val exchange = RosterExchange(selection)
+            copyExchange = exchange
             checkNotNull(bootstrap.transferRosterText(exchange.membership, offer, selection.sending,
-                exchange::verifyRemote, exchange::propose, exchange::mergeVerified,
+                exchange::verifyRemote, { remote, copy -> exchange.propose(remote, copy) }, exchange::mergeVerified,
                 installRoster = { roster ->
                     exchange.install(roster)
                     synchronized(sessionLock) {
@@ -561,7 +569,7 @@ internal class GroupAdmissionService(
     private fun synchronizeRoster(selection: Selection, bootstrap: HandshakeV1Connection) {
         val exchange = RosterExchange(selection)
         checkNotNull(bootstrap.synchronizeRoster(exchange.membership, checkNotNull(selection.sessionOffer),
-            exchange::verifyRemote, exchange::propose, exchange::mergeVerified,
+            exchange::verifyRemote, { remote -> exchange.propose(remote) }, exchange::mergeVerified,
             completed = { roster ->
                 exchange.install(roster)
                 synchronized(sessionLock) {
@@ -581,6 +589,10 @@ internal class GroupAdmissionService(
         private val certificate = GroupAdmissionCertificate(identity.id, Base64.getEncoder().encodeToString(identity.certificate.encoded))
         private var candidate: SessionCandidate? = null
         private var requiredParticipants = emptySet<String>()
+        var preservesSession = false
+            private set
+        private var preserved: LocalSession? = null
+        private var deliveryRoster: GroupSessionRoster? = null
 
         private fun checkContext() {
             checkLive(selection)
@@ -594,9 +606,9 @@ internal class GroupAdmissionService(
             return valid
         }
 
-        fun propose(remote: GroupSessionOffer): GroupSessionRoster {
+        fun propose(remote: GroupSessionOffer, copy: Boolean = false): GroupSessionRoster {
             checkContext()
-            val decision = offer.select(anchor, remote)
+            val decision = GroupRosterTextCodec.selectSession(anchor, offer, remote, selection.sending, copy)
             if (decision !is SessionSelection.Join) {
                 selection.rosterFailure = GroupRosterFailure.SESSION_CHOICE_REQUIRED
                 selection.textFailure = GroupTextFailure.SESSION_CHOICE_REQUIRED
@@ -605,9 +617,18 @@ internal class GroupAdmissionService(
             candidate = decision.session
             val held = synchronized(sessionLock) {
                 checkLive(selection)
+                preservesSession = copy && !selection.sending && offer.established &&
+                    offer.session.sessionId != decision.session.sessionId
+                if (preservesSession) {
+                    preserved = checkNotNull(localSession).also {
+                        check(it.anchor == anchor && sameMembership(it.membership, selection.membership) && it.candidate == offer.session)
+                    }
+                }
                 localSession?.takeIf { it.anchor == anchor && sameMembership(it.membership, selection.membership) &&
                     it.candidate.sessionId == decision.session.sessionId }
             }
+            if (copy && selection.sending && offer.established && remote.established &&
+                offer.session.sessionId != remote.session.sessionId && held?.roster == null) missing()
             requiredParticipants = held?.participants.orEmpty()
             val bytes = GroupSessionRosterCodec.signingBytes(decision.session.sessionId, membership, certificate)
             val own = GroupSessionJoin(decision.session.sessionId, membership, certificate, identity.sign(bytes))
@@ -646,8 +667,18 @@ internal class GroupAdmissionService(
             checkContext()
             synchronized(sessionLock) {
                 checkLive(selection)
-                localSession = LocalSession(anchor, selection.membership, checkNotNull(candidate), roster.participants, roster)
+                if (preservesSession) {
+                    check(localSession === preserved)
+                    deliveryRoster = roster
+                } else {
+                    localSession = LocalSession(anchor, selection.membership, checkNotNull(candidate), roster.participants, roster)
+                }
             }
+        }
+
+        fun checkPreservedSession(context: GroupTextDeliveryContext) {
+            check(preservesSession && localSession === preserved && context is GroupRosterTextContext &&
+                (context.savedCopy || context.relayedCopy) && context.roster === deliveryRoster)
         }
     }
 

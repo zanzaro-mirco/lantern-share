@@ -658,7 +658,7 @@ class HandshakeV1ConnectionTest {
                             try {
                                 owner.transferRosterText(membership, offer, true,
                                     verifyRemote = { verifyPeerMembership(it, anchor, recipient.id) },
-                                    propose = { assertEquals(offer, it); local },
+                                    propose = { remote, copy -> assertEquals(offer, remote); assertFalse(copy); local },
                                     mergeVerified = { a, b ->
                                         GroupRootAdoptionJournalInspector.withVerifier { verify -> check(a.verify(verify) && b.verify(verify)) }
                                         a.merge(b)

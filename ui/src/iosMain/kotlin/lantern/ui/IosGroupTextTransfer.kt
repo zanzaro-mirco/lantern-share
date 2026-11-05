@@ -20,7 +20,8 @@ class IosGroupTextSelection internal constructor(val context: IosGroupTextContex
 
 /** Independent run scope, not built from an incoming message or reusable transport authority. */
 class IosGroupTextContext internal constructor(internal val context: GroupTextDeliveryContext,
-    internal val anchor: GroupTrustAnchor, internal val marker: IosGroupAdoptionJournalSnapshot?)
+    internal val anchor: GroupTrustAnchor, internal val marker: IosGroupAdoptionJournalSnapshot?,
+    internal val preservedRevision: Long? = null)
 
 class IosGroupTextEnvelope internal constructor(internal val message: SignedGroupText) {
     val id: String get() = message.content.id

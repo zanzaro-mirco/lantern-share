@@ -341,7 +341,7 @@ internal class HandshakeV1Connection private constructor(
     fun transferRosterText(
         membership: GroupMembershipEvidence, offer: GroupSessionOffer, sending: Boolean,
         verifyRemote: (GroupMembershipEvidence) -> Boolean,
-        propose: (GroupSessionOffer) -> GroupSessionRoster,
+        propose: (GroupSessionOffer, Boolean) -> GroupSessionRoster,
         mergeVerified: (GroupSessionRoster, GroupSessionRoster) -> GroupSessionRoster,
         installRoster: (GroupSessionRoster) -> Unit,
         outgoing: (GroupRosterTextContext) -> SignedGroupText,
@@ -356,7 +356,7 @@ internal class HandshakeV1Connection private constructor(
                 GroupRosterTextCodec.relayedCopy(offers, sending))
         }
         var delivered: SignedGroupText? = null
-        exchangeRoster(membership, offer, verifyRemote, propose, mergeVerified, installRoster) { roster ->
+        exchangeRoster(membership, offer, verifyRemote, { remote -> propose(remote, savedCopy || relayedCopy) }, mergeVerified, installRoster) { roster ->
             fun checkLive() = synchronized(stateLock) { requireEvidenceActiveLocked() }
             fun beforeRead() = synchronized(stateLock) {
                 requireEvidenceActiveLocked()

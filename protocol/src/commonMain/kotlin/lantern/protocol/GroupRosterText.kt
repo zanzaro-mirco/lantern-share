@@ -1,6 +1,8 @@
 package lantern.protocol
 
 import lantern.domain.SignedGroupText
+import lantern.domain.GroupTrustAnchor
+import lantern.domain.SessionSelection
 
 /**
  * One delivery bound to the entire freshly verified session roster. A new text addresses all of
@@ -66,6 +68,18 @@ object GroupRosterTextCodec {
     const val ACK_BYTES = 360
     val requiredFeatures: Set<String> get() = setOf(FEATURE, GroupSessionRosterCodec.FEATURE,
         GroupMembershipEvidenceCodec.FEATURE, GroupSessionOfferCodec.FEATURE)
+
+    /** A negotiated copy uses the sender's retained session for this delivery only, never a payload's session. */
+    fun selectSession(anchor: GroupTrustAnchor, local: GroupSessionOffer, remote: GroupSessionOffer,
+                      sending: Boolean, copy: Boolean): SessionSelection {
+        require(local.session.groupId == anchor.groupId && remote.session.groupId == anchor.groupId)
+        if (!copy || !local.established || !remote.established || local.session.sessionId == remote.session.sessionId) {
+            return local.select(anchor, remote)
+        }
+        val sender = if (sending) local else remote
+        require(sender.established && sender.session.used) { "A copy requires a retained used session" }
+        return SessionSelection.Join(sender.session)
+    }
 
     fun sendsFirst(offers: ProtocolHandshakeOffers, sending: Boolean): Boolean {
         GroupSessionRosterCodec.sendsFirst(offers)
